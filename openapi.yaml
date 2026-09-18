@@ -1,0 +1,451 @@
+openapi: 3.1.0
+info:
+  title: Scientific Home Cluster API
+  version: 1.0.0
+  description: |
+    REST + WebSocket API for managing distributed scientific compute jobs
+    across a home GPU cluster.
+  contact:
+    name: Scientific Home Cluster
+servers:
+  - url: http://localhost:8000/api/v1
+    description: Local development
+  - url: https://api.cluster.example.com/api/v1
+    description: Production
+
+security:
+  - BearerAuth: []
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    # ===== Core Types (from src/lib/types.ts) =====
+    JobStatus:
+      type: string
+      enum: [PENDING, RUNNING, COMPLETED, FAILED, CANCELLED]
+    
+    JobSpec:
+      type: object
+      required: [name, command, resources]
+      properties:
+        name: { type: string, pattern: '^[a-zA-Z0-9_-]+$', minLength: 3 }
+        command: { type: string, minLength: 3 }
+        working_dir: { type: string, default: "/sync/projects/new-run" }
+        env: { type: object, additionalProperties: { type: string } }
+        resources:
+          type: object
+          required: [gpus, cpus, memory_gb]
+          properties:
+            gpus: { type: integer, minimum: 0, maximum: 8 }
+            cpus: { type: integer, minimum: 1, maximum: 128 }
+            memory_gb: { type: integer, minimum: 1, maximum: 1024 }
+        paths:
+          type: object
+          properties:
+            input: { type: string }
+            output: { type: string }
+        retry:
+          type: object
+          properties:
+            max_retries: { type: integer, minimum: 0, maximum: 10, default: 3 }
+            retry_delay_seconds: { type: integer, minimum: 0, maximum: 3600, default: 60 }
+
+    JobState:
+      type: object
+      required: [job_id, spec, status, created_at, retry_count]
+      properties:
+        job_id: { type: string, pattern: '^job-\\d+$' }
+        spec: { $ref: '#/components/schemas/JobSpec' }
+        status: { $ref: '#/components/schemas/JobStatus' }
+        node_id: { type: string, nullable: true }
+        created_at: { type: string, format: date-time }
+        started_at: { type: string, format: date-time, nullable: true }
+        completed_at: { type: string, format: date-time, nullable: true }
+        exit_code: { type: integer, nullable: true }
+        error: { type: string, nullable: true }
+        retry_count: { type: integer, minimum: 0 }
+
+    NodeSpec:
+      type: object
+      required: [node_id, hostname, gpus, cpus, memory_gb, os, status, last_heartbeat]
+      properties:
+        node_id: { type: string }
+        hostname: { type: string }
+        gpus:
+          type: array
+          items:
+            type: object
+            required: [name, memory_gb]
+            properties:
+              name: { type: string }
+              memory_gb: { type: integer }
+        cpus: { type: integer }
+        memory_gb: { type: integer }
+        os: { type: string }
+        status: { type: string, enum: [ONLINE, OFFLINE] }
+        last_heartbeat: { type: string, format: date-time }
+        current_job_id: { type: string, nullable: true }
+
+    GPUMetric:
+      type: object
+      required: [timestamp, gpu_index, memory_used_mb, memory_total_mb, utilization_percent, temperature_c]
+      properties:
+        timestamp: { type: string, format: date-time }
+        gpu_index: { type: integer }
+        memory_used_mb: { type: integer }
+        memory_total_mb: { type: integer }
+        utilization_percent: { type: integer }
+        temperature_c: { type: integer }
+
+    CPUMetric:
+      type: object
+      required: [timestamp, cpu_percent, memory_percent]
+      properties:
+        timestamp: { type: string, format: date-time }
+        cpu_percent: { type: integer }
+        memory_percent: { type: integer }
+
+    JobMetrics:
+      type: object
+      required: [job_id, gpu_metrics, cpu_metrics, summary]
+      properties:
+        job_id: { type: string }
+        gpu_metrics: { type: array, items: { $ref: '#/components/schemas/GPUMetric' } }
+        cpu_metrics: { type: array, items: { $ref: '#/components/schemas/CPUMetric' } }
+        summary:
+          type: object
+          required: [gpu_memory_min_mb, gpu_memory_max_mb, gpu_memory_avg_mb, gpu_util_min, gpu_util_max, gpu_util_avg, cpu_avg_percent]
+          properties:
+            gpu_memory_min_mb: { type: integer }
+            gpu_memory_max_mb: { type: integer }
+            gpu_memory_avg_mb: { type: integer }
+            gpu_util_min: { type: integer }
+            gpu_util_max: { type: integer }
+            gpu_util_avg: { type: integer }
+            cpu_avg_percent: { type: integer }
+
+    JobListResult:
+      type: object
+      required: [items, total]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/JobState' } }
+        total: { type: integer }
+
+    JobQuery:
+      type: object
+      properties:
+        status: { $ref: '#/components/schemas/JobStatus', enum: [PENDING, RUNNING, COMPLETED, FAILED, CANCELLED, ALL], default: ALL }
+        node: { type: string }
+        search: { type: string }
+        limit: { type: integer, minimum: 1, maximum: 100, default: 10 }
+        offset: { type: integer, minimum: 0, default: 0 }
+
+    ErrorResponse:
+      type: object
+      required: [status, title, detail, instance]
+      properties:
+        status: { type: integer }
+        title: { type: string }
+        detail: { type: string }
+        instance: { type: string }
+
+    TokenValidationRequest:
+      type: object
+      required: [token]
+      properties:
+        token: { type: string, minLength: 8 }
+
+    TokenValidationResponse:
+      type: object
+      required: [valid]
+      properties:
+        valid: { type: boolean }
+
+  parameters:
+    jobIdParam:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, pattern: '^job-\\d+$' }
+      description: Job ID (e.g., job-1041)
+    nodeIdParam:
+      name: id
+      in: path
+      required: true
+      schema: { type: string }
+      description: Node ID (e.g., node-alpha)
+
+paths:
+  # ===== Jobs =====
+  /jobs:
+    get:
+      summary: List jobs with filtering and pagination
+      operationId: listJobs
+      security: [{ BearerAuth: [] }]
+      parameters:
+        - name: status
+          in: query
+          schema: { $ref: '#/components/schemas/JobStatus', enum: [PENDING, RUNNING, COMPLETED, FAILED, CANCELLED, ALL], default: ALL }
+        - name: node
+          in: query
+          schema: { type: string }
+        - name: search
+          in: query
+          schema: { type: string }
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 100, default: 10 }
+        - name: offset
+          in: query
+          schema: { type: integer, minimum: 0, default: 0 }
+      responses:
+        '200':
+          description: Paginated job list
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/JobListResult' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+    post:
+      summary: Create a new job from YAML spec
+      operationId: createJob
+      security: [{ BearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [job.yaml]
+              properties:
+                'job.yaml':
+                  type: string
+                  format: binary
+                  description: YAML-encoded JobSpec
+      responses:
+        '201':
+          description: Created job
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/JobState' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /jobs/{id}:
+    get:
+      summary: Get job details
+      operationId: getJob
+      security: [{ BearerAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/jobIdParam' }]
+      responses:
+        '200':
+          description: Job details
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/JobState' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+    delete:
+      summary: Delete a job
+      operationId: deleteJob
+      security: [{ BearerAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/jobIdParam' }]
+      responses:
+        '204': { description: Job deleted }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /jobs/{id}/metrics:
+    get:
+      summary: Get job GPU/CPU metrics
+      operationId: getJobMetrics
+      security: [{ BearerAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/jobIdParam' }]
+      responses:
+        '200':
+          description: Job metrics with summary
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/JobMetrics' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /jobs/{id}/logs:
+    get:
+      summary: Get job logs (HTTP fallback)
+      operationId: getJobLogs
+      security: [{ BearerAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/jobIdParam' }]
+      responses:
+        '200':
+          description: Array of log lines
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { type: string }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /jobs/{id}/logs/stream:
+    get:
+      summary: Stream job logs via WebSocket
+      operationId: streamJobLogs
+      security: [{ BearerAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/jobIdParam' }]
+      responses:
+        '101':
+          description: WebSocket upgrade
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  type: { type: string, enum: [log, status] }
+                  payload: { type: string }
+          headers:
+            Sec-WebSocket-Protocol:
+              schema: { type: string }
+              description: Subprotocol for structured messages
+      x-webhooks:
+        logStream:
+          post:
+            summary: Server-sent log line
+            requestBody:
+              content:
+                application/json:
+                  schema:
+                    type: object
+                    required: [type, payload]
+                    properties:
+                      type: { const: "log" }
+                      payload: { type: string }
+        statusStream:
+          post:
+            summary: Connection status change
+            requestBody:
+              content:
+                application/json:
+                  schema:
+                    type: object
+                    required: [type, payload]
+                    properties:
+                      type: { const: "status" }
+                      payload: { type: string, enum: [connecting, open, closed] }
+
+  /jobs/{id}/retry:
+    post:
+      summary: Retry a failed/cancelled job
+      operationId: retryJob
+      security: [{ BearerAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/jobIdParam' }]
+      responses:
+        '200':
+          description: Retried job
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/JobState' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: Job not in retryable state
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+  /jobs/{id}/cancel:
+    post:
+      summary: Cancel a running/pending job
+      operationId: cancelJob
+      security: [{ BearerAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/jobIdParam' }]
+      responses:
+        '200':
+          description: Cancelled job
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/JobState' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: Job not cancellable
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+  # ===== Nodes =====
+  /nodes:
+    get:
+      summary: List all cluster nodes
+      operationId: listNodes
+      security: [{ BearerAuth: [] }]
+      responses:
+        '200':
+          description: Array of nodes
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/NodeSpec' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /nodes/{id}:
+    get:
+      summary: Get node details
+      operationId: getNode
+      security: [{ BearerAuth: [] }]
+      parameters: [{ $ref: '#/components/parameters/nodeIdParam' }]
+      responses:
+        '200':
+          description: Node details
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/NodeSpec' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  # ===== Auth =====
+  /auth/validate:
+    post:
+      summary: Validate bearer token
+      operationId: validateToken
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/TokenValidationRequest' }
+      responses:
+        '200':
+          description: Token validation result
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TokenValidationResponse' }
+
+  # ===== Shared Responses =====
+  responses:
+    Unauthorized:
+      description: Missing or invalid token
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+          example:
+            status: 401
+            title: Unauthorized
+            detail: Missing bearer token
+            instance: /jobs
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+    BadRequest:
+      description: Invalid request body
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
