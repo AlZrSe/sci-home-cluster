@@ -2,6 +2,21 @@
 
 A distributed platform for running scientific long-running applications on various computers connected to the internet.
 
+## Project Status
+
+| Component | Status | Description |
+|-----------|--------|-------------|
+| **Frontend Dashboard** | ✅ **Complete** | React + TypeScript + Vite + Tailwind (see `frontend/`) |
+| Project Setup | ⏳ Ready | Issue [#1](https://github.com/AlZrSe/sci-home-cluster/issues/1) |
+| Shared Schemas & File Ops | ⏳ Ready | Issue [#2](https://github.com/AlZrSe/sci-home-cluster/issues/2) |
+| API Server Core | ⏳ Ready | Issue [#3](https://github.com/AlZrSe/sci-home-cluster/issues/3) |
+| Syncthing Sync Service | ⏳ Ready | Issue [#4](https://github.com/AlZrSe/sci-home-cluster/issues/4) |
+| Worker Agent | 📋 Planned | Phase 2 |
+| CLI | 📋 Planned | Phase 2 |
+| Docker/Production | 📋 Planned | Phase 3 |
+
+**Current Focus**: Phase 1 - Backend Foundation (FastAPI + SQLite + Syncthing sync)
+
 ## Architecture Overview
 
 This platform uses a client-server architecture with:
@@ -77,11 +92,11 @@ sci-run logs <job-id> --follow
 ## Project Structure
 ```
 sci-cluster/
+├── frontend/              # React Dashboard (Vite + Tailwind) ✅ COMPLETE
 ├── shared/               # Shared code (schemas, utilities)
 ├── server/               # API Server (FastAPI + SQLite)
 ├── agent/                # Worker Node Agent
 ├── cli/                  # User CLI (Typer)
-├── web-ui/               # React Dashboard (Vite + Tailwind)
 ├── tests/                # Test suite
 ├── docker/               # Docker configurations
 ├── PROCESS.md            # Development workflow documentation
