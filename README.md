@@ -37,23 +37,24 @@ This platform uses a client-server architecture with:
 
 ## Getting Started
 
-### 1. Create GitHub Repository
-First, create the repository on GitHub:
-1. Go to https://github.com/new
-2. Repository name: `sci-home-cluster`
-3. Description: Distributed scientific computing platform
-4. Initialize with a README (optional)
-5. Click "Create repository"
-
-### 2. Set Up Local Repository
+### 1. Clone Repository (with submodules)
 ```bash
-# Clone the repository
-git clone https://github.com/AlZrSe/sci-home-cluster.git
+# Clone with submodules
+git clone --recurse-submodules https://github.com/AlZrSe/sci-home-cluster.git
 cd sci-home-cluster
 
-# Verify remote
-git remote -v
-# Should show origin pointing to GitHub
+# Or if already cloned:
+git submodule update --init --recursive
+```
+
+### 2. Frontend Repository
+The frontend is a separate repository: [AlZrSe/sci-home-cluster-frontend](https://github.com/AlZrSe/sci-home-cluster-frontend)
+
+```bash
+# To work on frontend independently:
+cd frontend
+npm install
+npm run dev
 ```
 
 ### 3. Development Setup
