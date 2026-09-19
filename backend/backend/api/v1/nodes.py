@@ -2,43 +2,37 @@
 Node management API endpoints.
 """
 
+from typing import List
 from fastapi import APIRouter, Depends
 from backend.core.deps import get_current_token_payload
+from backend.models.node_spec import NodeSpec
+from backend.services.node_service import NodeService
 
 router = APIRouter()
 
 
-@router.get("/")
-async def list_nodes(payload: dict = Depends(get_current_token_payload)):
+@router.get("/", response_model=List[NodeSpec])
+async def list_nodes(
+    payload: dict = Depends(get_current_token_payload)
+):
     """
-    List all nodes.
+    List all cluster nodes.
     """
-    # TODO: Implement node listing
-    return {"message": "List nodes endpoint - to be implemented"}
+    # TODO: Implement actual node listing logic
+    node_service = NodeService()
+    nodes = await node_service.list_nodes()
+    return nodes
 
 
-@router.post("/")
-async def register_node(payload: dict = Depends(get_current_token_payload)):
+@router.get("/{node_id}", response_model=NodeSpec)
+async def get_node(
+    node_id: str,
+    payload: dict = Depends(get_current_token_payload)
+):
     """
-    Register a new node.
+    Get node details.
     """
-    # TODO: Implement node registration
-    return {"message": "Register node endpoint - to be implemented"}
-
-
-@router.get("/{node_id}")
-async def get_node(node_id: str, payload: dict = Depends(get_current_token_payload)):
-    """
-    Get a specific node by ID.
-    """
-    # TODO: Implement get node
-    return {"message": f"Get node {node_id} endpoint - to be implemented"}
-
-
-@router.delete("/{node_id}")
-async def deregister_node(node_id: str, payload: dict = Depends(get_current_token_payload)):
-    """
-    Deregister a node by ID.
-    """
-    # TODO: Implement node deregistration
-    return {"message": f"Deregister node {node_id} endpoint - to be implemented"}
+    # TODO: Implement get node logic
+    node_service = NodeService()
+    node = await node_service.get_node(node_id)
+    return node
