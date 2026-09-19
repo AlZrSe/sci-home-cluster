@@ -20,6 +20,24 @@ A distributed platform for running scientific long-running applications on vario
 ## Architecture Overview
 
 This platform uses a client-server architecture with:
+
+```
++----------------+     +----------------+     +----------------+
+|                |     |                |     |                |
+|  API Server    |<---->|  Syncthing     |<---->|  Worker Agents |
+|  (FastAPI)     |     |  (File Sync)   |     |  (Python)      |
+|                |     |                |     |                |
++----------------+     +----------------+     +----------------+
+        ^                         ^
+        |                         |
++----------------+     +----------------+
+|                |     |                |
+|    CLI/Web     |     |    Monitoring  |
+|    Interface   |     |    Tools       |
+|                |     |                |
++----------------+     +----------------+
+```
+
 - **API Server**: FastAPI + SQLite for job management and scheduling
 - **Worker Agents**: Python scripts running on each node to execute jobs
 - **Data Layer**: Syncthing for file sharing between nodes
@@ -66,20 +84,29 @@ source venv/bin/activate  # On Windows: venv\Scripts\activate
 # Install dependencies
 pip install -e .
 
+# Install development dependencies (for running tests, linting, etc.)
+pip install -e .[dev]
+
 # Install pre-commit hooks (optional but recommended)
 pre-commit install
 ```
 
-### 4. Syncthing Setup
+### 4. Running Tests
+```bash
+# Run the test suite
+pytest
+```
+
+### 5. Syncthing Setup
 1. Install Syncthing on all machines (including server)
 2. Create a shared folder (e.g., `/syncthing-shared` or `D:\syncthing`)
 3. Share the folder between all machines using Syncthing device IDs
 4. Set the environment variable: `export SYNCTHING_ROOT=/path/to/syncthing-shared`
 
-### 5. Running the Platform
+### 6. Running the Platform
 ```bash
 # Start the API server
-uvicorn server.main:app --host 0.0.0.0 --port 8000
+uvicorn backend.main:app --host 0.0.0.0 --port 8000
 
 # Start an agent (on each worker node)
 python agent/run_agent.py --node-id node-01 --syncthing-root /path/to/syncthing
@@ -95,7 +122,7 @@ sci-run logs <job-id> --follow
 sci-cluster/
 ├── frontend/              # React Dashboard (Vite + Tailwind) ✅ COMPLETE
 ├── shared/               # Shared code (schemas, utilities)
-├── server/               # API Server (FastAPI + SQLite)
+├── backend/              # API Server (FastAPI + SQLite)
 ├── agent/                # Worker Node Agent
 ├── cli/                  # User CLI (Typer)
 ├── tests/                # Test suite
