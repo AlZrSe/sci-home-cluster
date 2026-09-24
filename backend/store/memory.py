@@ -330,7 +330,7 @@ class InMemoryStore:
                     jobs = [job for job in jobs if job.status == job_status]
                 except ValueError:
                     # Invalid status, return empty list
-                    pass
+                    return [], 0
 
             if node_id:
                 jobs = [job for job in jobs if job.node_id == node_id]
@@ -607,6 +607,9 @@ class InMemoryStore:
                 # Initialize log history if not present
                 self._log_history[job_id] = self._generate_job_logs(job_id)
 
+        # Subscribe the callback to receive log lines
+        self.subscribe_to_log_stream(job_id, on_line)
+
         # Create a task that will periodically add new log lines
         async def _stream_worker():
             step = 5000  # Starting step from the mock server
@@ -669,6 +672,13 @@ class InMemoryStore:
             except asyncio.CancelledError:
                 # Task was cancelled, exit gracefully
                 pass
+            finally:
+                # Clean up when stream stops (job no longer running or cancelled)
+                if job_id in self._log_stream_tasks:
+                    del self._log_stream_tasks[job_id]
+                # Clean up subscribers
+                if job_id in self._log_stream_subscribers:
+                    del self._log_stream_subscribers[job_id]
 
         task = asyncio.create_task(_stream_worker())
         self._log_stream_tasks[job_id] = task
@@ -683,11 +693,11 @@ class InMemoryStore:
                 await task
             except asyncio.CancelledError:
                 pass
-            del self._log_stream_tasks[job_id]
+            # Task might have already been cleaned up by finally block
+            self._log_stream_tasks.pop(job_id, None)
 
         # Clean up subscribers
-        if job_id in self._log_stream_subscribers:
-            del self._log_stream_subscribers[job_id]
+        self._log_stream_subscribers.pop(job_id, None)
 
     def subscribe_to_log_stream(self, job_id: str, on_line: Callable[[str], None]):
         """Subscribe to log stream updates for a job."""

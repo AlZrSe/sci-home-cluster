@@ -9,34 +9,20 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, Request, HTTPException
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from backend.core.config import settings
+from backend.core.database import init_database, close_database, run_migrations
 from backend.api.v1 import auth, nodes, syncthing, jobs
 from backend.models.error_response import ErrorResponse
 from backend.store.memory import get_store
 from backend.services.syncthing_service import SyncthingService
-from alembic.config import Config
-from alembic import command
 
 # Configure logging
 logging.basicConfig(level=getattr(logging, settings.LOG_LEVEL))
 logger = logging.getLogger(__name__)
-
-
-def run_migrations():
-    """Run Alembic migrations to ensure database schema is up to date."""
-    try:
-        # Get the alembic.ini path
-        alembic_ini_path = Path(__file__).parent / "alembic.ini"
-        alembic_cfg = Config(str(alembic_ini_path))
-        # Run migrations
-        command.upgrade(alembic_cfg, "head")
-        logger.info("Database migrations applied successfully")
-    except Exception as e:
-        logger.error(f"Failed to apply database migrations: {e}")
-        raise
 
 
 @asynccontextmanager
@@ -45,8 +31,11 @@ async def lifespan(app: FastAPI):
     # Startup
     logger.info("Starting Scientific Home Cluster API")
 
+    # Initialize database connection
+    await init_database()
+
     # Run database migrations
-    run_migrations()
+    await run_migrations()
 
     # Initialize the in-memory store (singleton)
     get_store()
@@ -66,6 +55,9 @@ async def lifespan(app: FastAPI):
     # Stop Syncthing watcher
     if hasattr(app.state, "syncthing_service"):
         await app.state.syncthing_service.stop()
+
+    # Close database connections
+    await close_database()
 
     logger.info("Shutdown complete")
 
@@ -124,6 +116,12 @@ async def http_exception_handler(request: Request, exc: HTTPException):
         title = "Unauthorized"
     elif exc.status_code == 404:
         title = "Not Found"
+    elif exc.status_code == 403:
+        title = "Forbidden"
+    elif exc.status_code == 409:
+        title = "Conflict"
+    elif exc.status_code == 400:
+        title = "Bad Request"
     else:
         title = "Error"
 
@@ -133,6 +131,39 @@ async def http_exception_handler(request: Request, exc: HTTPException):
             status=exc.status_code,
             title=title,
             detail=exc.detail,
+            instance=str(request.url),
+        ).model_dump(),
+    )
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    """Convert RequestValidationError to ErrorResponse format."""
+    logger.warning(f"Validation error for {request.url}: {exc.errors()}")
+    return JSONResponse(
+        status_code=422,
+        content=ErrorResponse(
+            status=422,
+            title="Unprocessable Entity",
+            detail="Validation failed: " + ", ".join(
+                f"{'.'.join(str(e) for e in err['loc'])}: {err['msg']}"
+                for err in exc.errors()
+            ),
+            instance=str(request.url),
+        ).model_dump(),
+    )
+
+
+@app.exception_handler(Exception)
+async def generic_exception_handler(request: Request, exc: Exception):
+    """Convert any unhandled exception to ErrorResponse format."""
+    logger.exception(f"Unhandled exception for {request.url}: {exc}")
+    return JSONResponse(
+        status_code=500,
+        content=ErrorResponse(
+            status=500,
+            title="Internal Server Error",
+            detail="An unexpected error occurred",
             instance=str(request.url),
         ).model_dump(),
     )
@@ -164,7 +195,9 @@ async def root():
 
 @app.get(f"{settings.API_V1_STR}/health")
 async def health_check():
-    """Enhanced health check with store, config, and syncthing status."""
+    """Enhanced health check with store, config, syncthing, and database status."""
+    from backend.core.database import get_engine
+
     store = get_store()
 
     # Check store status
@@ -178,15 +211,30 @@ async def health_check():
     if not settings.SYNCTHING_ROOT:
         config_status = "degraded"
 
-    # Check Syncthing status (placeholder for Task 3)
+    # Check Syncthing status
     syncthing_status = "not_configured"
     syncthing_path = Path(settings.SYNCTHING_ROOT)
     if syncthing_path.exists():
         syncthing_status = "available"
 
-    # Overall status: healthy if store is healthy (API is functional)
-    # Syncthing is a separate service, not required for API health
-    overall_status = "healthy" if store_status == "healthy" else "degraded"
+    # Check database status
+    database_status = "healthy"
+    try:
+        from sqlalchemy import text
+        engine = get_engine()
+        # Test database connectivity
+        async with engine.connect() as conn:
+            await conn.execute(text("SELECT 1"))
+    except Exception as e:
+        logger.warning(f"Database health check failed: {e}")
+        database_status = "unhealthy"
+
+    # Overall status: healthy if store and database are healthy
+    overall_status = (
+        "healthy"
+        if store_status == "healthy" and database_status == "healthy"
+        else "degraded"
+    )
 
     return {
         "status": overall_status,
@@ -204,5 +252,13 @@ async def health_check():
         "syncthing": {
             "status": syncthing_status,
             "path": settings.SYNCTHING_ROOT,
+        },
+        "database": {
+            "status": database_status,
+            "url": (
+                settings.DATABASE_URL.split("///")[-1]
+                if "///" in settings.DATABASE_URL
+                else "memory"
+            ),
         },
     }

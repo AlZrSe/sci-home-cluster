@@ -177,9 +177,9 @@ def create_job_spec(
     """
     factory_kwargs = {
         "resources": ResourcesFactory(
-            gpus=gpus or 1,
-            cpus=cpus or 4,
-            memory_gb=memory_gb or 16,
+            gpus=gpus if gpus is not None else 1,
+            cpus=cpus if cpus is not None else 4,
+            memory_gb=memory_gb if memory_gb is not None else 16,
         ),
         **kwargs,
     }

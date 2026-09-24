@@ -43,14 +43,24 @@ def reset_singleton_store():
     This ensures test isolation for store-dependent tests.
     """
     # Import here to avoid circular imports
-
     store = get_store()
     # Use the existing reset method on the store instance
     import asyncio
 
-    asyncio.run(store.reset())
+    # Run reset in the current event loop if available, otherwise create new
+    try:
+        loop = asyncio.get_running_loop()
+        # Schedule the reset as a task
+        asyncio.run_coroutine_threadsafe(store.reset(), loop).result(timeout=5)
+    except RuntimeError:
+        # No running loop, use asyncio.run
+        asyncio.run(store.reset())
     yield
-    asyncio.run(store.reset())
+    try:
+        loop = asyncio.get_running_loop()
+        asyncio.run_coroutine_threadsafe(store.reset(), loop).result(timeout=5)
+    except RuntimeError:
+        asyncio.run(store.reset())
 
 
 # ============================================================================
@@ -65,7 +75,7 @@ async def client() -> AsyncGenerator[AsyncClient, None]:
     Function-scoped to avoid event loop issues.
     """
     async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
+        transport=ASGITransport(app=app), base_url="http://testserver"
     ) as ac:
         yield ac
 

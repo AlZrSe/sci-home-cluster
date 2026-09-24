@@ -4,6 +4,7 @@ Integration tests for the main application.
 
 from fastapi.testclient import TestClient
 from backend.main import app
+from backend.core.config import settings
 
 
 def test_root_endpoint():
@@ -21,4 +22,9 @@ def test_health_endpoint():
     assert response.status_code == 200
     data = response.json()
     assert data["status"] == "healthy"
-    assert data["version"] == "1.0.0"
+    assert data["version"] == settings.VERSION
+    # Check that all required health check sections are present
+    assert "store" in data
+    assert "config" in data
+    assert "syncthing" in data
+    assert "database" in data
