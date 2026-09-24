@@ -2,6 +2,7 @@
 Syncthing API endpoints.
 Provides status and manual scan trigger for Syncthing synchronization.
 """
+
 from fastapi import APIRouter
 from backend.services.syncthing_service import SyncthingService
 from backend.core.config import settings

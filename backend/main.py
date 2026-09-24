@@ -4,6 +4,7 @@ Main entry point for the Scientific Home Cluster Backend API.
 
 import logging
 import time
+import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -12,15 +13,30 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from backend.core.config import settings
-from backend.api.v1 import auth, nodes, syncthing
-from backend.routers import jobs
+from backend.api.v1 import auth, nodes, syncthing, jobs
 from backend.models.error_response import ErrorResponse
 from backend.store.memory import get_store
 from backend.services.syncthing_service import SyncthingService
+from alembic.config import Config
+from alembic import command
 
 # Configure logging
 logging.basicConfig(level=getattr(logging, settings.LOG_LEVEL))
 logger = logging.getLogger(__name__)
+
+
+def run_migrations():
+    """Run Alembic migrations to ensure database schema is up to date."""
+    try:
+        # Get the alembic.ini path
+        alembic_ini_path = Path(__file__).parent / "alembic.ini"
+        alembic_cfg = Config(str(alembic_ini_path))
+        # Run migrations
+        command.upgrade(alembic_cfg, "head")
+        logger.info("Database migrations applied successfully")
+    except Exception as e:
+        logger.error(f"Failed to apply database migrations: {e}")
+        raise
 
 
 @asynccontextmanager
@@ -28,6 +44,9 @@ async def lifespan(app: FastAPI):
     """Application lifespan handler for startup and shutdown."""
     # Startup
     logger.info("Starting Scientific Home Cluster API")
+
+    # Run database migrations
+    run_migrations()
 
     # Initialize the in-memory store (singleton)
     get_store()
@@ -56,13 +75,29 @@ app = FastAPI(
     version=settings.VERSION,
     openapi_url=f"{settings.API_V1_STR}/openapi.json",
     lifespan=lifespan,
+    docs_url="/docs",
+    redoc_url="/redoc",
 )
+
+
+@app.middleware("http")
+async def request_id_middleware(request: Request, call_next):
+    """Add request ID to each request for tracing."""
+    request_id = request.headers.get("X-Request-ID", str(uuid.uuid4()))
+    request.state.request_id = request_id
+
+    response = await call_next(request)
+
+    # Add request ID to response headers
+    response.headers["X-Request-ID"] = request_id
+    return response
 
 
 @app.middleware("http")
 async def request_logging_middleware(request: Request, call_next):
     """Log incoming requests with method, path, status, and duration."""
     start_time = time.perf_counter()
+    request_id = getattr(request.state, "request_id", "unknown")
 
     # Process request
     response = await call_next(request)
@@ -74,7 +109,8 @@ async def request_logging_middleware(request: Request, call_next):
     logger.info(
         f"{request.method} {request.url.path} - "
         f"Status: {response.status_code} - "
-        f"Duration: {duration_ms:.2f}ms"
+        f"Duration: {duration_ms:.2f}ms - "
+        f"Request-ID: {request_id}"
     )
 
     return response
@@ -116,7 +152,9 @@ if settings.BACKEND_CORS_ORIGINS:
 app.include_router(auth.router, prefix=f"{settings.API_V1_STR}/auth", tags=["auth"])
 app.include_router(jobs.router, prefix=f"{settings.API_V1_STR}/jobs", tags=["jobs"])
 app.include_router(nodes.router, prefix=f"{settings.API_V1_STR}/nodes", tags=["nodes"])
-app.include_router(syncthing.router, prefix=f"{settings.API_V1_STR}/syncthing", tags=["syncthing"])
+app.include_router(
+    syncthing.router, prefix=f"{settings.API_V1_STR}/syncthing", tags=["syncthing"]
+)
 
 
 @app.get("/")

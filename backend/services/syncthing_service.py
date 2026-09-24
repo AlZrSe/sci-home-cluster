@@ -2,6 +2,7 @@
 Syncthing service for scanning and monitoring the Syncthing shared folder.
 Provides read-only access to job and node state files.
 """
+
 import asyncio
 import logging
 import time
@@ -60,18 +61,25 @@ class SyncthingEventHandler(FileSystemEventHandler):
         self._pending_events[file_path] = time.time()
         # Schedule debounced processing
         if self._loop and not self._loop.is_closed():
-            asyncio.run_coroutine_threadsafe(self._debounced_process(file_path), self._loop)
+            asyncio.run_coroutine_threadsafe(
+                self._debounced_process(file_path), self._loop
+            )
 
     def _schedule_delete(self, file_path: str):
         """Schedule a file deletion for processing."""
         if self._loop and not self._loop.is_closed():
-            asyncio.run_coroutine_threadsafe(self._process_delete(file_path), self._loop)
+            asyncio.run_coroutine_threadsafe(
+                self._process_delete(file_path), self._loop
+            )
 
     async def _debounced_process(self, file_path: str):
         """Process file after debounce period."""
         await asyncio.sleep(self._debounce_ms / 1000.0)
         # Check if another event came in during debounce
-        if self._pending_events.get(file_path, 0) > time.time() - self._debounce_ms / 1000.0:
+        if (
+            self._pending_events.get(file_path, 0)
+            > time.time() - self._debounce_ms / 1000.0
+        ):
             return  # Another event will handle it
         self._pending_events.pop(file_path, None)
         await self._process_file(file_path)
@@ -201,7 +209,9 @@ class SyncthingService:
                     node_id = node_file.stem
                     await self._process_node_file(node_id, str(node_file))
 
-        logger.info(f"Initial scan complete. Processed {len(self._processed_files)} files")
+        logger.info(
+            f"Initial scan complete. Processed {len(self._processed_files)} files"
+        )
 
     async def _process_job_file(self, job_id: str, file_path: str):
         """Process a job state YAML file."""
@@ -312,7 +322,10 @@ class SyncthingService:
                         delta = (now - last_hb).total_seconds()
                         if delta > 90 and node.status == "ONLINE":
                             await store.update_node(node.node_id, status="OFFLINE")
-                            logger.info(f"Node {node.node_id} marked OFFLINE (last heartbeat {delta:.0f}s ago)")
+                            logger.info(
+                                f"Node {node.node_id} marked OFFLINE "
+                                f"(last heartbeat {delta:.0f}s ago)"
+                            )
                         elif delta <= 90 and node.status == "OFFLINE":
                             await store.update_node(node.node_id, status="ONLINE")
                             logger.info(f"Node {node.node_id} marked ONLINE")

@@ -1,6 +1,7 @@
 """
 Authentication API endpoints.
 """
+
 from datetime import timedelta
 from fastapi import APIRouter, Depends, HTTPException, status
 from backend.core.config import settings
@@ -35,7 +36,7 @@ async def validate_token(
 async def create_token(request: TokenCreateRequest):
     """
     Create a new JWT access token by validating against shared token.
-    
+
     This endpoint accepts a shared token and returns a JWT token if valid.
     """
     auth_service = AuthService()
@@ -70,7 +71,7 @@ async def create_token(request: TokenCreateRequest):
 async def refresh_token(request: TokenRefreshRequest):
     """
     Refresh an existing JWT token.
-    
+
     Returns a new token with extended expiration if the current token is valid.
     """
     auth_service = AuthService()

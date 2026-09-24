@@ -1,6 +1,7 @@
 """
 Auth service layer containing business logic for authentication.
 """
+
 from datetime import timedelta
 from typing import Optional
 from jose import JWTError
@@ -23,10 +24,10 @@ class AuthService:
     async def validate_token(self, token: str) -> bool:
         """
         Validate bearer token against shared token or JWT.
-        
+
         Args:
             token: The bearer token to validate
-            
+
         Returns:
             True if valid, False otherwise
         """
@@ -39,7 +40,7 @@ class AuthService:
 
         # Try to validate as JWT
         try:
-            payload = decode_access_token(token)
+            _ = decode_access_token(token)
             # Check expiration is already done in decode_access_token
             return True
         except JWTError:
@@ -47,14 +48,16 @@ class AuthService:
         except Exception:
             return False
 
-    async def create_token(self, subject: str = "user", expires_delta: Optional[timedelta] = None) -> str:
+    async def create_token(
+        self, subject: str = "user", expires_delta: Optional[timedelta] = None
+    ) -> str:
         """
         Create a new JWT access token.
-        
+
         Args:
             subject: The subject (user identifier) for the token
             expires_delta: Optional custom expiration
-            
+
         Returns:
             JWT token string
         """
@@ -64,10 +67,10 @@ class AuthService:
     async def refresh_token(self, token: str) -> Optional[str]:
         """
         Refresh an existing token by creating a new one with same subject.
-        
+
         Args:
             token: The current valid token
-            
+
         Returns:
             New token string if valid, None otherwise
         """
@@ -78,7 +81,10 @@ class AuthService:
             payload = decode_access_token(token)
             subject = payload.get("sub", "user")
             # Create new token with fresh expiration (add 1 second to ensure difference)
-            return await self.create_token(subject, expires_delta=timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES))
+            return await self.create_token(
+                subject,
+                expires_delta=timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES),
+            )
         except Exception:
             return None
 

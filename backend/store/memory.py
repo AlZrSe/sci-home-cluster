@@ -174,9 +174,13 @@ class InMemoryStore:
 
         def makeSpec(name: str) -> JobSpec:
             gpus = rnd.randint(1, 2)  # 1 or 2
+            script_name = name.replace("-", "_")
             return JobSpec(
                 name=name,
-                command=f"python -u scripts/{name.replace('-', '_')}.py --config configs/{name}.yaml",
+                command=(
+                    f"python -u scripts/{script_name}.py "
+                    f"--config configs/{name}.yaml"
+                ),
                 working_dir=f"/sync/projects/{name}",
                 env={"PYTHONUNBUFFERED": "1", "CUDA_VISIBLE_DEVICES": "0"},
                 resources={
@@ -253,8 +257,8 @@ class InMemoryStore:
             if job_num > self._job_counter:
                 self._job_counter = job_num
 
-            # Initialize empty log history for the job
-            self._log_history[job_id] = []
+            # Note: Don't pre-initialize _log_history[job_id] = [] here.
+            # Let get_job_logs() generate logs on first access.
 
     # Job CRUD operations
     async def create_job(self, job_spec: JobSpec) -> JobState:
@@ -277,9 +281,8 @@ class InMemoryStore:
             # Store the job
             self._jobs[job_id] = job_state
 
-            # Initialize empty log history for the job
-            async with self._logs_lock:
-                self._log_history[job_id] = []
+            # Note: Don't pre-initialize _log_history[job_id] = [] here.
+            # Let get_job_logs() generate logs on first access.
 
             return job_state
 
@@ -289,9 +292,8 @@ class InMemoryStore:
             # Store the job with the provided job_id
             self._jobs[job_state.job_id] = job_state
 
-            # Initialize empty log history for the job
-            async with self._logs_lock:
-                self._log_history[job_state.job_id] = []
+            # Note: Don't pre-initialize _log_history[job_id] = [] here.
+            # Let get_job_logs() generate logs on first access.
 
             # Update job counter if needed
             job_num = int(job_state.job_id.split("-")[1])
@@ -525,16 +527,18 @@ class InMemoryStore:
         # Calculate summary
         mems = [m.memory_used_mb for m in gpu_metrics]
         utils = [m.utilization_percent for m in gpu_metrics]
-        avg = lambda a: round(sum(a) / len(a)) if a else 0
+
+        def _avg(values: list) -> int:
+            return round(sum(values) / len(values)) if values else 0
 
         summary = JobMetricsSummary(
             gpu_memory_min_mb=min(mems),
             gpu_memory_max_mb=max(mems),
-            gpu_memory_avg_mb=avg(mems),
+            gpu_memory_avg_mb=_avg(mems),
             gpu_util_min=min(utils),
             gpu_util_max=max(utils),
-            gpu_util_avg=avg(utils),
-            cpu_avg_percent=avg([m.cpu_percent for m in cpu_metrics]),
+            gpu_util_avg=_avg(utils),
+            cpu_avg_percent=_avg([m.cpu_percent for m in cpu_metrics]),
         )
 
         return JobMetrics(
@@ -566,15 +570,13 @@ class InMemoryStore:
             return datetime.now().isoformat().replace("T", " ")[:19]
 
         log_templates = [
-            (lambda s: f"INFO  step={s} loss={(2.4 - s * 0.0007):.4f} lr=3.0e-4"),
-            (
-                lambda s: f"INFO  step={s} throughput={(180 + rnd.random() * 40):.1f} samples/s"
-            ),
-            (
-                lambda s: f"DEBUG allocator: reserved={(8 + rnd.random() * 6):.2f} GiB step={s}"
-            ),
-            (lambda s: f"INFO  checkpoint written to data/out/ckpt-{s}.pt"),
-            (lambda s: "WARN  syncthing folder scan delayed by 1.4s"),
+            lambda s: f"INFO  step={s} loss={(2.4 - s * 0.0007):.4f} lr=3.0e-4",
+            lambda s: f"INFO  step={s} throughput="
+            f"{(180 + rnd.random() * 40):.1f} samples/s",
+            lambda s: "DEBUG allocator: "
+            f"reserved={(8 + rnd.random() * 6):.2f} GiB step={s}",
+            lambda s: f"INFO  checkpoint written to data/out/ckpt-{s}.pt",
+            lambda _: "WARN  syncthing folder scan delayed by 1.4s",
         ]
 
         lines = [
@@ -628,22 +630,26 @@ class InMemoryStore:
                     rnd = random.Random(seed)
                     template = rnd.choice(
                         [
-                            (
-                                lambda s: f"INFO  step={s} loss={(2.4 - s * 0.0007):.4f} lr=3.0e-4"
+                            lambda s: (
+                                f"INFO  step={s} "
+                                f"loss={(2.4 - s * 0.0007):.4f} lr=3.0e-4"
                             ),
-                            (
-                                lambda s: f"INFO  step={s} throughput={(180 + rnd.random() * 40):.1f} samples/s"
+                            lambda s: (
+                                "INFO  step={s} throughput="
+                                f"{(180 + rnd.random() * 40):.1f} samples/s"
                             ),
-                            (
-                                lambda s: f"DEBUG allocator: reserved={(8 + rnd.random() * 6):.2f} GiB step={s}"
+                            lambda s: (
+                                "DEBUG allocator: "
+                                f"reserved={(8 + rnd.random() * 6):.2f} GiB step={s}"
                             ),
-                            (
-                                lambda s: f"INFO  checkpoint written to data/out/ckpt-{s}.pt"
+                            lambda s: (
+                                f"INFO  checkpoint written to " f"data/out/ckpt-{s}.pt"
                             ),
-                            (lambda s: "WARN  syncthing folder scan delayed by 1.4s"),
+                            lambda _: "WARN  syncthing folder scan delayed by 1.4s",
                         ]
                     )
-                    line = f"{datetime.now().isoformat().replace('T', ' ')[:19]} {template(step)}"
+                    timestamp = datetime.now().isoformat().replace("T", " ")[:19]
+                    line = f"{timestamp} {template(step)}"
 
                     # Add the line to the job's log history
                     async with self._logs_lock:

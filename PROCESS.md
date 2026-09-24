@@ -6,8 +6,8 @@ This document outlines the development workflow using the agent-team skill with 
 
 | Phase | Component | Status | GitHub Issue |
 |-------|-----------|--------|--------------|
-| 1 | Project Setup | Ready for grooming | #1 |
-| 1 | Shared Schemas & File Operations | Ready for grooming | #2 |
+| 1 | Project Setup | Done | #1 |
+| 1 | Shared Schemas & File Operations | Groomed | #2 |
 | 1 | API Server Core | Ready for grooming | #3 |
 | 1 | Syncthing Sync Service | Ready for grooming | #4 |
 | **1** | **Frontend Dashboard** | **✅ Done** | **#5** |
