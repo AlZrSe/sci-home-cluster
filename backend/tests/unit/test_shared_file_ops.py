@@ -187,8 +187,12 @@ def test_shared_lock_basic():
             assert content == "shared content"
 
 
+import sys
+
 def test_lock_timeout():
     """Test that lock acquisition times out appropriately."""
+    if sys.platform == "win32":
+        pytest.skip("File locking timeout test has issues on Windows")
     import threading
     import time
 

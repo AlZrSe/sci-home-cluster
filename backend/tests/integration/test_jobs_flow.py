@@ -8,13 +8,6 @@ from backend.main import app
 from backend.tests.factories import JobSpecFactory, create_job_spec
 from backend.models.job_spec import JobSpec
 from backend.models.job_status import JobStatus
-import io
-import yaml
-
-
-def job_spec_to_yaml_bytes(job_spec: JobSpec) -> bytes:
-    """Convert JobSpec to YAML bytes for upload."""
-    return yaml.dump(job_spec.model_dump(mode="json")).encode("utf-8")
 
 
 @pytest.mark.integration
@@ -32,22 +25,21 @@ class TestJobLifecycle:
             yield client
 
     @pytest.fixture
-    def job_yaml_bytes(self):
-        """Create a valid job YAML as bytes for upload."""
+    def job_spec_dict(self):
+        """Create a valid job spec as dict for JSON payload."""
         job_spec = create_job_spec(
             name="integration-test-job",
             gpus=1,
             cpus=4,
             memory_gb=16,
         )
-        return job_spec_to_yaml_bytes(job_spec)
+        return job_spec.model_dump(mode="json")
 
     @pytest.mark.asyncio
-    async def test_create_job_success(self, async_client, job_yaml_bytes):
-        """Test creating a job via YAML upload."""
+    async def test_create_job_success(self, async_client, job_spec_dict):
+        """Test creating a job via JSON payload."""
         # Act
-        files = {"job.yaml": ("job.yaml", io.BytesIO(job_yaml_bytes), "application/yaml")}
-        response = await async_client.post("/api/v1/jobs/", files=files)
+        response = await async_client.post("/api/v1/jobs/", json=job_spec_dict)
 
         # Assert
         assert response.status_code == 201
@@ -63,19 +55,18 @@ class TestJobLifecycle:
 
     @pytest.mark.asyncio
     async def test_create_job_invalid_yaml(self, async_client):
-        """Test creating a job with invalid YAML returns 400."""
+        """Test creating a job with invalid JSON returns 400."""
         # Arrange
-        invalid_yaml = b"invalid: yaml: content: ["
-        files = {"job.yaml": ("job.yaml", io.BytesIO(invalid_yaml), "application/yaml")}
+        invalid_spec = {"name": "invalid-job"}  # Missing required fields
 
         # Act
-        response = await async_client.post("/api/v1/jobs/", files=files)
+        response = await async_client.post("/api/v1/jobs/", json=invalid_spec)
 
         # Assert
-        assert response.status_code == 400
+        assert response.status_code == 422
         data = response.json()
-        assert data["status"] == 400
-        assert "Invalid job specification" in data["detail"]
+        assert data["status"] == 422
+        assert "Field required" in data["detail"]
 
     @pytest.mark.asyncio
     async def test_create_job_missing_required_fields(self, async_client):
@@ -85,26 +76,21 @@ class TestJobLifecycle:
             "name": "incomplete-job",
             # Missing command, working_dir, resources, paths, retry
         }
-        yaml_content = yaml.dump(incomplete_spec).encode("utf-8")
-        files = {"job.yaml": ("job.yaml", io.BytesIO(yaml_content), "application/yaml")}
 
         # Act
-        response = await async_client.post("/api/v1/jobs/", files=files)
+        response = await async_client.post("/api/v1/jobs/", json=incomplete_spec)
 
         # Assert
-        assert response.status_code == 400
+        assert response.status_code == 422
 
     @pytest.mark.asyncio
-    async def test_list_jobs(self, async_client, job_yaml_bytes):
+    async def test_list_jobs(self, async_client, job_spec_dict):
         """Test listing jobs with pagination and filtering."""
         # Arrange - create a couple of jobs
-        files1 = {"job.yaml": ("job.yaml", io.BytesIO(job_yaml_bytes), "application/yaml")}
-        await async_client.post("/api/v1/jobs/", files=files1)
+        await async_client.post("/api/v1/jobs/", json=job_spec_dict)
 
         job_spec2 = create_job_spec(name="integration-test-job-2", gpus=2)
-        yaml_content2 = job_spec_to_yaml_bytes(job_spec2)
-        files2 = {"job.yaml": ("job.yaml", io.BytesIO(yaml_content2), "application/yaml")}
-        await async_client.post("/api/v1/jobs/", files=files2)
+        await async_client.post("/api/v1/jobs/", json=job_spec2.model_dump(mode="json"))
 
         # Act - list all jobs
         response = await async_client.get("/api/v1/jobs/")
@@ -144,11 +130,10 @@ class TestJobLifecycle:
         assert data["total"] >= len(data["items"])
 
     @pytest.mark.asyncio
-    async def test_list_jobs_with_search(self, async_client, job_yaml_bytes):
+    async def test_list_jobs_with_search(self, async_client, job_spec_dict):
         """Test listing jobs with search filter."""
         # Arrange
-        files = {"job.yaml": ("job.yaml", io.BytesIO(job_yaml_bytes), "application/yaml")}
-        await async_client.post("/api/v1/jobs/", files=files)
+        await async_client.post("/api/v1/jobs/", json=job_spec_dict)
 
         # Act
         response = await async_client.get("/api/v1/jobs/", params={"search": "integration"})
@@ -160,11 +145,10 @@ class TestJobLifecycle:
             assert "integration" in job["spec"]["name"].lower()
 
     @pytest.mark.asyncio
-    async def test_get_job_success(self, async_client, job_yaml_bytes):
+    async def test_get_job_success(self, async_client, job_spec_dict):
         """Test getting a specific job by ID."""
         # Arrange - create a job first
-        files = {"job.yaml": ("job.yaml", io.BytesIO(job_yaml_bytes), "application/yaml")}
-        create_response = await async_client.post("/api/v1/jobs/", files=files)
+        create_response = await async_client.post("/api/v1/jobs/", json=job_spec_dict)
         job_id = create_response.json()["job_id"]
 
         # Act
@@ -191,11 +175,10 @@ class TestJobLifecycle:
         assert "not found" in data["detail"].lower()
 
     @pytest.mark.asyncio
-    async def test_get_job_metrics(self, async_client, job_yaml_bytes):
+    async def test_get_job_metrics(self, async_client, job_spec_dict):
         """Test getting job metrics."""
         # Arrange - create a job
-        files = {"job.yaml": ("job.yaml", io.BytesIO(job_yaml_bytes), "application/yaml")}
-        create_response = await async_client.post("/api/v1/jobs/", files=files)
+        create_response = await async_client.post("/api/v1/jobs/", json=job_spec_dict)
         job_id = create_response.json()["job_id"]
 
         # Act
@@ -223,11 +206,10 @@ class TestJobLifecycle:
         assert response.status_code == 404
 
     @pytest.mark.asyncio
-    async def test_get_job_logs(self, async_client, job_yaml_bytes):
+    async def test_get_job_logs(self, async_client, job_spec_dict):
         """Test getting job logs via HTTP endpoint."""
         # Arrange - create a job
-        files = {"job.yaml": ("job.yaml", io.BytesIO(job_yaml_bytes), "application/yaml")}
-        create_response = await async_client.post("/api/v1/jobs/", files=files)
+        create_response = await async_client.post("/api/v1/jobs/", json=job_spec_dict)
         job_id = create_response.json()["job_id"]
 
         # Act
@@ -256,11 +238,10 @@ class TestJobLifecycle:
         assert len(data) > 0
 
     @pytest.mark.asyncio
-    async def test_retry_job_not_retryable(self, async_client, job_yaml_bytes):
+    async def test_retry_job_not_retryable(self, async_client, job_spec_dict):
         """Test retrying a PENDING job returns 409 (not retryable)."""
         # Arrange - create a PENDING job
-        files = {"job.yaml": ("job.yaml", io.BytesIO(job_yaml_bytes), "application/yaml")}
-        create_response = await async_client.post("/api/v1/jobs/", files=files)
+        create_response = await async_client.post("/api/v1/jobs/", json=job_spec_dict)
         job_id = create_response.json()["job_id"]
 
         # Act
@@ -274,11 +255,10 @@ class TestJobLifecycle:
         assert "not in retryable state" in data["detail"]
 
     @pytest.mark.asyncio
-    async def test_retry_job_success(self, async_client, job_yaml_bytes):
+    async def test_retry_job_success(self, async_client, job_spec_dict):
         """Test retrying a FAILED job succeeds."""
         # Arrange - create a job and manually set it to FAILED
-        files = {"job.yaml": ("job.yaml", io.BytesIO(job_yaml_bytes), "application/yaml")}
-        create_response = await async_client.post("/api/v1/jobs/", files=files)
+        create_response = await async_client.post("/api/v1/jobs/", json=job_spec_dict)
         job_id = create_response.json()["job_id"]
 
         # Directly update job status to FAILED via store
@@ -300,11 +280,10 @@ class TestJobLifecycle:
         assert data["exit_code"] is None
 
     @pytest.mark.asyncio
-    async def test_cancel_job_pending(self, async_client, job_yaml_bytes):
+    async def test_cancel_job_pending(self, async_client, job_spec_dict):
         """Test cancelling a PENDING job."""
         # Arrange - create a PENDING job
-        files = {"job.yaml": ("job.yaml", io.BytesIO(job_yaml_bytes), "application/yaml")}
-        create_response = await async_client.post("/api/v1/jobs/", files=files)
+        create_response = await async_client.post("/api/v1/jobs/", json=job_spec_dict)
         job_id = create_response.json()["job_id"]
 
         # Act
@@ -319,11 +298,10 @@ class TestJobLifecycle:
         assert data["completed_at"] is not None
 
     @pytest.mark.asyncio
-    async def test_cancel_job_not_cancellable(self, async_client, job_yaml_bytes):
+    async def test_cancel_job_not_cancellable(self, async_client, job_spec_dict):
         """Test cancelling a COMPLETED job returns 409."""
         # Arrange - create a job and set to COMPLETED
-        files = {"job.yaml": ("job.yaml", io.BytesIO(job_yaml_bytes), "application/yaml")}
-        create_response = await async_client.post("/api/v1/jobs/", files=files)
+        create_response = await async_client.post("/api/v1/jobs/", json=job_spec_dict)
         job_id = create_response.json()["job_id"]
 
         from backend.store.memory import get_store
@@ -340,11 +318,10 @@ class TestJobLifecycle:
         assert "not cancellable" in data["detail"]
 
     @pytest.mark.asyncio
-    async def test_delete_job(self, async_client, job_yaml_bytes):
+    async def test_delete_job(self, async_client, job_spec_dict):
         """Test deleting a job."""
         # Arrange
-        files = {"job.yaml": ("job.yaml", io.BytesIO(job_yaml_bytes), "application/yaml")}
-        create_response = await async_client.post("/api/v1/jobs/", files=files)
+        create_response = await async_client.post("/api/v1/jobs/", json=job_spec_dict)
         job_id = create_response.json()["job_id"]
 
         # Act
@@ -367,11 +344,10 @@ class TestJobLifecycle:
         assert response.status_code == 404
 
     @pytest.mark.asyncio
-    async def test_full_job_lifecycle(self, async_client, job_yaml_bytes):
+    async def test_full_job_lifecycle(self, async_client, job_spec_dict):
         """Test complete job lifecycle: create → list → get → metrics → logs → cancel."""
         # 1. Create job
-        files = {"job.yaml": ("job.yaml", io.BytesIO(job_yaml_bytes), "application/yaml")}
-        create_response = await async_client.post("/api/v1/jobs/", files=files)
+        create_response = await async_client.post("/api/v1/jobs/", json=job_spec_dict)
         assert create_response.status_code == 201
         job_id = create_response.json()["job_id"]
 
@@ -438,9 +414,7 @@ class TestJobAuthentication:
     async def test_create_job_requires_auth(self, unauthenticated_client):
         """Test that creating a job requires authentication."""
         job_spec = JobSpecFactory()
-        yaml_content = job_spec_to_yaml_bytes(job_spec)
-        files = {"job.yaml": ("job.yaml", io.BytesIO(yaml_content), "application/yaml")}
-        response = await unauthenticated_client.post("/api/v1/jobs/", files=files)
+        response = await unauthenticated_client.post("/api/v1/jobs/", json=job_spec.model_dump(mode="json"))
         # On localhost, this succeeds due to bypass
         assert response.status_code in (201, 401)
 
@@ -461,10 +435,7 @@ class TestJobValidation:
     async def test_create_job_zero_gpus(self, async_client):
         """Test creating a job with 0 GPUs (CPU-only)."""
         job_spec = create_job_spec(name="cpu-only-job", gpus=0, cpus=8, memory_gb=32)
-        yaml_content = job_spec_to_yaml_bytes(job_spec)
-        files = {"job.yaml": ("job.yaml", io.BytesIO(yaml_content), "application/yaml")}
-
-        response = await async_client.post("/api/v1/jobs/", files=files)
+        response = await async_client.post("/api/v1/jobs/", json=job_spec.model_dump(mode="json"))
         assert response.status_code == 201
         data = response.json()
         assert data["spec"]["resources"]["gpus"] == 0
@@ -473,10 +444,7 @@ class TestJobValidation:
     async def test_create_job_high_resources(self, async_client):
         """Test creating a job with high resource requirements."""
         job_spec = create_job_spec(name="high-resource-job", gpus=8, cpus=64, memory_gb=512)
-        yaml_content = job_spec_to_yaml_bytes(job_spec)
-        files = {"job.yaml": ("job.yaml", io.BytesIO(yaml_content), "application/yaml")}
-
-        response = await async_client.post("/api/v1/jobs/", files=files)
+        response = await async_client.post("/api/v1/jobs/", json=job_spec.model_dump(mode="json"))
         assert response.status_code == 201
         data = response.json()
         assert data["spec"]["resources"]["gpus"] == 8
@@ -499,10 +467,7 @@ class TestJobValidation:
             "CUSTOM_VAR": "custom_value",
             "ANOTHER_VAR": "another_value",
         }
-        yaml_content = job_spec_to_yaml_bytes(job_spec)
-        files = {"job.yaml": ("job.yaml", io.BytesIO(yaml_content), "application/yaml")}
-
-        response = await async_client.post("/api/v1/jobs/", files=files)
+        response = await async_client.post("/api/v1/jobs/", json=job_spec.model_dump(mode="json"))
         assert response.status_code == 201
         data = response.json()
         assert data["spec"]["env"]["CUSTOM_VAR"] == "custom_value"
@@ -514,10 +479,7 @@ class TestJobValidation:
         job_spec = create_job_spec(name="custom-retry-job")
         job_spec.retry.max_retries = 5
         job_spec.retry.retry_delay_seconds = 120
-        yaml_content = job_spec_to_yaml_bytes(job_spec)
-        files = {"job.yaml": ("job.yaml", io.BytesIO(yaml_content), "application/yaml")}
-
-        response = await async_client.post("/api/v1/jobs/", files=files)
+        response = await async_client.post("/api/v1/jobs/", json=job_spec.model_dump(mode="json"))
         assert response.status_code == 201
         data = response.json()
         assert data["spec"]["retry"]["max_retries"] == 5
