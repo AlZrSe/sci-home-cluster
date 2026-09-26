@@ -477,14 +477,98 @@ class InMemoryStore:
             if metrics_key in self._metrics_cache:
                 return self._metrics_cache[metrics_key]
 
-        # If not in cache, generate metrics (reuse job metrics generation with node prefix)
-        metrics = await self._generate_job_metrics(metrics_key)
+        # If not in cache, generate metrics (generate node-specific metrics)
+        metrics = await self._generate_node_metrics(node_id)
 
         # Cache the metrics
         async with self._metrics_lock:
             self._metrics_cache[metrics_key] = metrics
 
         return metrics
+
+    async def _generate_node_metrics(self, node_id: str) -> Optional[JobMetrics]:
+        """Generate node metrics using deterministic algorithm."""
+        # Verify the node exists
+        node = await self.get_node(node_id)
+        if not node:
+            return None
+
+        # Use a node-specific seed derived from the node ID and the global seed (1337)
+        seed = 1337 + hash(f"node:{node_id}")
+        rnd = random.Random(seed)
+
+        # Determine if node has GPUs
+        has_gpus = len(node.gpus) > 0
+        gpu_count = len(node.gpus)
+
+        # Constants for metrics generation
+        total = 24_576 if has_gpus else 0
+        util = 55 if has_gpus else 0
+        mem = 9_000 if has_gpus else 0
+        cpu = 30
+
+        gpu_metrics: List[GPUMetric] = []
+        cpu_metrics: List[CPUMetric] = []
+
+        for i in range(120, -1, -1):
+            if has_gpus:
+                util = min(99, max(6, util + (rnd.random() - 0.5) * 18))
+                mem = min(total, max(1200, mem + (rnd.random() - 0.45) * 900))
+            cpu = min(100, max(4, cpu + (rnd.random() - 0.5) * 14))
+            
+            ms_ago = i * 30_000
+            timestamp = datetime.fromtimestamp(
+                datetime.now().timestamp() - (ms_ago / 1000.0)
+            )
+
+            if has_gpus:
+                for gpu_idx in range(gpu_count):
+                    gpu_metrics.append(
+                        GPUMetric(
+                            timestamp=timestamp,
+                            gpu_index=gpu_idx,
+                            memory_used_mb=round(mem),
+                            memory_total_mb=total,
+                            utilization_percent=round(util),
+                            temperature_c=round(48 + util * 0.28),
+                        )
+                    )
+
+            cpu_metrics.append(
+                CPUMetric(
+                    timestamp=timestamp,
+                    cpu_percent=round(cpu),
+                    memory_percent=round(30 + cpu * 0.4),
+                )
+            )
+
+        # Calculate summary
+        if has_gpus:
+            mems = [m.memory_used_mb for m in gpu_metrics]
+            utils = [m.utilization_percent for m in gpu_metrics]
+        else:
+            mems = [0]
+            utils = [0]
+
+        def _avg(values: list) -> int:
+            return round(sum(values) / len(values)) if values else 0
+
+        summary = JobMetricsSummary(
+            gpu_memory_min_mb=min(mems) if has_gpus else 0,
+            gpu_memory_max_mb=max(mems) if has_gpus else 0,
+            gpu_memory_avg_mb=_avg(mems) if has_gpus else 0,
+            gpu_util_min=min(utils) if has_gpus else 0,
+            gpu_util_max=max(utils) if has_gpus else 0,
+            gpu_util_avg=_avg(utils) if has_gpus else 0,
+            cpu_avg_percent=_avg([m.cpu_percent for m in cpu_metrics]),
+        )
+
+        return JobMetrics(
+            job_id=f"node:{node_id}",
+            gpu_metrics=gpu_metrics,
+            cpu_metrics=cpu_metrics,
+            summary=summary,
+        )
 
     async def _generate_job_metrics(self, job_id: str) -> Optional[JobMetrics]:
         """Generate job metrics using the same algorithm as the mock server."""
