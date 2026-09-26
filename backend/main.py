@@ -7,6 +7,7 @@ import time
 import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Dict
 
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.exceptions import RequestValidationError
@@ -23,6 +24,50 @@ from backend.services.syncthing_service import SyncthingService
 # Configure logging
 logging.basicConfig(level=getattr(logging, settings.LOG_LEVEL))
 logger = logging.getLogger(__name__)
+
+
+# Error code mapping for HTTP status codes
+ERROR_CODE_MAP: Dict[int, str] = {
+    400: "VALIDATION_FAILED",
+    401: "AUTH_TOKEN_INVALID",
+    403: "AUTH_FORBIDDEN",
+    404: "NOT_FOUND",
+    409: "RESOURCE_CONFLICT",
+    422: "VALIDATION_FAILED",
+    500: "INTERNAL_ERROR",
+    503: "SERVICE_UNAVAILABLE",
+}
+
+# Specific error codes for common scenarios
+SPECIFIC_ERROR_CODES: Dict[str, str] = {
+    "not authenticated": "AUTH_TOKEN_MISSING",
+    "could not validate credentials": "AUTH_TOKEN_INVALID",
+    "invalid or expired token": "AUTH_TOKEN_EXPIRED",
+    "invalid shared token": "AUTH_SHARED_TOKEN_INVALID",
+    "shared token not configured": "SHARED_TOKEN_NOT_CONFIGURED",
+    "job": "JOB_NOT_FOUND",
+    "node": "NODE_NOT_FOUND",
+    "metrics for job": "METRICS_NOT_FOUND",
+    "logs for job": "LOGS_NOT_FOUND",
+    "not in retryable state": "JOB_NOT_RETRYABLE",
+    "not cancellable": "JOB_NOT_CANCELLABLE",
+    "syncthing not configured": "SYNCTHING_UNAVAILABLE",
+    "syncthing": "SYNCTHING_UNAVAILABLE",
+    "database": "DATABASE_UNAVAILABLE",
+}
+
+
+def get_error_code(status_code: int, detail: str) -> str:
+    """Determine the appropriate error code based on status code and detail message."""
+    detail_lower = detail.lower()
+
+    # Check for specific error patterns first
+    for pattern, code in SPECIFIC_ERROR_CODES.items():
+        if pattern in detail_lower:
+            return code
+
+    # Fall back to status code mapping
+    return ERROR_CODE_MAP.get(status_code, "INTERNAL_ERROR")
 
 
 @asynccontextmanager
@@ -111,6 +156,8 @@ async def request_logging_middleware(request: Request, call_next):
 @app.exception_handler(HTTPException)
 async def http_exception_handler(request: Request, exc: HTTPException):
     """Convert HTTPException to ErrorResponse format."""
+    error_code = get_error_code(exc.status_code, str(exc.detail))
+
     # Determine title based on status code
     if exc.status_code == 401:
         title = "Unauthorized"
@@ -132,6 +179,7 @@ async def http_exception_handler(request: Request, exc: HTTPException):
             title=title,
             detail=exc.detail,
             instance=str(request.url),
+            error_code=error_code,
         ).model_dump(),
     )
 
@@ -140,16 +188,19 @@ async def http_exception_handler(request: Request, exc: HTTPException):
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
     """Convert RequestValidationError to ErrorResponse format."""
     logger.warning(f"Validation error for {request.url}: {exc.errors()}")
+    error_code = "VALIDATION_FAILED"
     return JSONResponse(
         status_code=422,
         content=ErrorResponse(
             status=422,
             title="Unprocessable Entity",
-            detail="Validation failed: " + ", ".join(
+            detail="Validation failed: "
+            + ", ".join(
                 f"{'.'.join(str(e) for e in err['loc'])}: {err['msg']}"
                 for err in exc.errors()
             ),
             instance=str(request.url),
+            error_code=error_code,
         ).model_dump(),
     )
 
@@ -165,6 +216,7 @@ async def generic_exception_handler(request: Request, exc: Exception):
             title="Internal Server Error",
             detail="An unexpected error occurred",
             instance=str(request.url),
+            error_code="INTERNAL_ERROR",
         ).model_dump(),
     )
 
@@ -221,6 +273,7 @@ async def health_check():
     database_status = "healthy"
     try:
         from sqlalchemy import text
+
         engine = get_engine()
         # Test database connectivity
         async with engine.connect() as conn:

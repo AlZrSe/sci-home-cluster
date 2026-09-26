@@ -3,7 +3,7 @@ Syncthing API endpoints.
 Provides status and manual scan trigger for Syncthing synchronization.
 """
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Request, HTTPException, status
 from pathlib import Path
 from backend.core.config import settings
 from backend.services.syncthing_service import SyncthingService
@@ -23,17 +23,28 @@ async def get_syncthing_status(request: Request):
     Returns information about the service state and Syncthing folder.
     """
     service = get_syncthing_service(request)
-    status = service.get_status()
+
+    # Check if Syncthing is configured
+    if not settings.SYNCTHING_ROOT or not Path(settings.SYNCTHING_ROOT).exists():
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=(
+                "Syncthing is not configured on the server. "
+                "Set SYNCTHING_ROOT env var and restart the API server."
+            ),
+        )
+
+    status_data = service.get_status()
 
     # Add folder info
     jobs_dir = Path(settings.SYNCTHING_ROOT) / "jobs"
     nodes_dir = Path(settings.SYNCTHING_ROOT) / "nodes"
 
-    status["jobs_folder"] = {
+    status_data["jobs_folder"] = {
         "exists": jobs_dir.exists(),
         "path": str(jobs_dir),
     }
-    status["nodes_folder"] = {
+    status_data["nodes_folder"] = {
         "exists": nodes_dir.exists(),
         "path": str(nodes_dir),
     }
@@ -41,17 +52,17 @@ async def get_syncthing_status(request: Request):
     # Count files
     if jobs_dir.exists():
         job_files = list(jobs_dir.rglob("state.yaml"))
-        status["jobs_folder"]["state_files"] = len(job_files)
+        status_data["jobs_folder"]["state_files"] = len(job_files)
     else:
-        status["jobs_folder"]["state_files"] = 0
+        status_data["jobs_folder"]["state_files"] = 0
 
     if nodes_dir.exists():
         node_files = list(nodes_dir.glob("*.yaml"))
-        status["nodes_folder"]["state_files"] = len(node_files)
+        status_data["nodes_folder"]["state_files"] = len(node_files)
     else:
-        status["nodes_folder"]["state_files"] = 0
+        status_data["nodes_folder"]["state_files"] = 0
 
-    return status
+    return status_data
 
 
 @router.post("/scan")
@@ -61,6 +72,17 @@ async def trigger_syncthing_scan(request: Request):
     Scans for new or updated job/node state files.
     """
     service = get_syncthing_service(request)
+
+    # Check if Syncthing is configured
+    if not settings.SYNCTHING_ROOT or not Path(settings.SYNCTHING_ROOT).exists():
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=(
+                "Syncthing is not configured on the server. "
+                "Set SYNCTHING_ROOT env var and restart the API server."
+            ),
+        )
+
     result = await service.manual_scan()
     return {
         "message": "Scan completed",

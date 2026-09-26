@@ -471,7 +471,7 @@ class InMemoryStore:
         """Get node metrics, generating and caching if not present."""
         # Use a special key for node metrics
         metrics_key = f"node:{node_id}"
-        
+
         # First check cache
         async with self._metrics_lock:
             if metrics_key in self._metrics_cache:
@@ -515,7 +515,7 @@ class InMemoryStore:
                 util = min(99, max(6, util + (rnd.random() - 0.5) * 18))
                 mem = min(total, max(1200, mem + (rnd.random() - 0.45) * 900))
             cpu = min(100, max(4, cpu + (rnd.random() - 0.5) * 14))
-            
+
             ms_ago = i * 30_000
             timestamp = datetime.fromtimestamp(
                 datetime.now().timestamp() - (ms_ago / 1000.0)

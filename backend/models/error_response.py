@@ -6,3 +6,4 @@ class ErrorResponse(BaseModel):
     title: str
     detail: str
     instance: str
+    error_code: str

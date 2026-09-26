@@ -371,7 +371,9 @@ class SyncthingService:
                     job_id = relative_path.parts[1]
                     if relative_path.parts[2] == "state.yaml":
                         await self._handle_job_deleted(job_id)
-                elif relative_path.parts[0] == "nodes" and len(relative_path.parts) >= 2:
+                elif (
+                    relative_path.parts[0] == "nodes" and len(relative_path.parts) >= 2
+                ):
                     node_id = relative_path.parts[1].replace(".yaml", "")
                     await self._handle_node_deleted(node_id)
             except Exception as e:

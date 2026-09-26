@@ -31,7 +31,10 @@ async def get_current_token_payload(
     if token is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Not authenticated",
+            detail=(
+                "Authentication required. "
+                "Please provide a valid bearer token in the Authorization header."
+            ),
             headers={"WWW-Authenticate": "Bearer"},
         )
 
@@ -41,7 +44,10 @@ async def get_current_token_payload(
     except Exception:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Could not validate credentials",
+            detail=(
+                "Invalid or expired token. "
+                "Please log in again to get a new access token."
+            ),
             headers={"WWW-Authenticate": "Bearer"},
         )
 
@@ -74,7 +80,7 @@ async def get_ws_token_payload(
     if not token:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Not authenticated",
+            detail=("Authentication required. " "Please provide a valid bearer token."),
             headers={"WWW-Authenticate": "Bearer"},
         )
 
@@ -84,6 +90,9 @@ async def get_ws_token_payload(
     except Exception:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Could not validate credentials",
+            detail=(
+                "Invalid or expired token. "
+                "Please log in again to get a new access token."
+            ),
             headers={"WWW-Authenticate": "Bearer"},
         )

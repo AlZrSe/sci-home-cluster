@@ -147,12 +147,13 @@ components:
 
     ErrorResponse:
       type: object
-      required: [status, title, detail, instance]
+      required: [status, title, detail, instance, error_code]
       properties:
         status: { type: integer }
         title: { type: string }
         detail: { type: string }
         instance: { type: string }
+        error_code: { type: string }
 
     TokenValidationRequest:
       type: object

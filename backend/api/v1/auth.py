@@ -29,7 +29,7 @@ async def verify_token(
     """
     if not authorization or not authorization.startswith("Bearer "):
         return TokenValidationResponse(valid=False)
-    
+
     token = authorization[7:]  # Remove "Bearer " prefix
     auth_service = AuthService()
     is_valid = await auth_service.validate_token(token)
@@ -62,14 +62,20 @@ async def create_token(request: TokenCreateRequest):
     if not auth_service.get_shared_token():
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Shared token not configured on server",
+            detail=(
+                "Shared token is not configured on the server. "
+                "Set the SHARED_TOKEN environment variable and restart the API server."
+            ),
         )
 
     is_valid = await auth_service.verify_shared_token(request.shared_token)
     if not is_valid:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid shared token",
+            detail=(
+                "The provided shared token is invalid. "
+                "Please check your credentials and try again."
+            ),
             headers={"WWW-Authenticate": "Bearer"},
         )
 
@@ -97,7 +103,10 @@ async def refresh_token(request: TokenRefreshRequest):
     if not new_token:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid or expired token",
+            detail=(
+                "Your session has expired or the token is invalid. "
+                "Please log in again to get a new access token."
+            ),
             headers={"WWW-Authenticate": "Bearer"},
         )
 
