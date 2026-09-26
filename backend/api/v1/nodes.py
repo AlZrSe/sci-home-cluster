@@ -6,6 +6,7 @@ from typing import List
 from fastapi import APIRouter, Depends, HTTPException, status
 from backend.core.deps import get_current_token_payload
 from backend.models.node_spec import NodeSpec
+from backend.models.job_metrics import JobMetrics
 from backend.services.node_service import NodeService
 
 router = APIRouter()
@@ -33,3 +34,20 @@ async def get_node(node_id: str, payload: dict = Depends(get_current_token_paylo
             status_code=status.HTTP_404_NOT_FOUND, detail=f"Node {node_id} not found"
         )
     return node
+
+
+@router.get("/{node_id}/metrics", response_model=JobMetrics)
+async def get_node_metrics(
+    node_id: str, payload: dict = Depends(get_current_token_payload)
+):
+    """
+    Get node GPU/CPU metrics.
+    """
+    node_service = NodeService()
+    metrics = await node_service.get_node_metrics(node_id)
+    if metrics is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Metrics for node {node_id} not found",
+        )
+    return metrics

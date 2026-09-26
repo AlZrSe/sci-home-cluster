@@ -338,9 +338,53 @@ class SyncthingService:
     async def manual_scan(self) -> Dict[str, int]:
         """Manually trigger a full scan of the Syncthing folder."""
         logger.info("Manual scan triggered")
+
+        jobs_dir = self.root_path / "jobs"
+        nodes_dir = self.root_path / "nodes"
+
+        # Get current files
+        current_job_files = set()
+        current_node_files = set()
+
+        if jobs_dir.exists():
+            for job_dir in jobs_dir.iterdir():
+                if job_dir.is_dir():
+                    state_file = job_dir / "state.yaml"
+                    if state_file.exists():
+                        current_job_files.add(str(state_file))
+
+        if nodes_dir.exists():
+            for node_file in nodes_dir.glob("*.yaml"):
+                if node_file.is_file():
+                    current_node_files.add(str(node_file))
+
+        current_files = current_job_files | current_node_files
+
+        # Detect deleted files
+        deleted_files = self._processed_files - current_files
+        for file_path in deleted_files:
+            try:
+                path_obj = Path(file_path)
+                relative_path = path_obj.relative_to(self.root_path)
+
+                if relative_path.parts[0] == "jobs" and len(relative_path.parts) >= 3:
+                    job_id = relative_path.parts[1]
+                    if relative_path.parts[2] == "state.yaml":
+                        await self._handle_job_deleted(job_id)
+                elif relative_path.parts[0] == "nodes" and len(relative_path.parts) >= 2:
+                    node_id = relative_path.parts[1].replace(".yaml", "")
+                    await self._handle_node_deleted(node_id)
+            except Exception as e:
+                logger.error(f"Error handling deleted file {file_path}: {e}")
+
+        # Process new/updated files
         initial_count = len(self._processed_files)
         await self._initial_scan()
         new_count = len(self._processed_files) - initial_count
+
+        # Update processed files to match current state
+        self._processed_files = current_files
+
         return {"scanned": new_count, "total_processed": len(self._processed_files)}
 
     def get_status(self) -> Dict:

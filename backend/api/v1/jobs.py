@@ -9,8 +9,6 @@ from fastapi import (
     Depends,
     Query,
     status,
-    UploadFile,
-    File,
     HTTPException,
     WebSocket,
 )
@@ -19,7 +17,6 @@ from backend.models.job_state import JobState
 from backend.models.job_list_result import JobListResult
 from backend.models.job_spec import JobSpec
 from backend.models.job_metrics import JobMetrics
-import yaml
 from backend.services.job_service import JobService
 
 router = APIRouter()
@@ -46,30 +43,15 @@ async def list_jobs(
 
 @router.post("/", response_model=JobState, status_code=status.HTTP_201_CREATED)
 async def create_job(
-    job_yaml: UploadFile = File(..., alias="job.yaml"),
+    job_spec: JobSpec,
     payload: dict = Depends(get_current_token_payload),
 ):
     """
-    Create a new job from YAML spec.
+    Create a new job from JSON spec.
     """
-    try:
-        # Read and parse the YAML file
-        content = await job_yaml.read()
-        job_data = yaml.safe_load(content)
-
-        # Validate against JobSpec model
-        job_spec = JobSpec(**job_data)
-
-        # Create the job
-        job_service = JobService()
-        created_job = await job_service.create_job(job_spec)
-
-        return created_job
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Invalid job specification: {str(e)}",
-        )
+    job_service = JobService()
+    created_job = await job_service.create_job(job_spec)
+    return created_job
 
 
 @router.get("/{job_id}", response_model=JobState)
@@ -132,7 +114,15 @@ async def get_job_logs(job_id: str, payload: dict = Depends(get_current_token_pa
     return logs
 
 
-@router.websocket("/{job_id}/logs/stream")
+@router.get("/{job_id}/logs/history")
+async def get_job_logs_history(job_id: str, payload: dict = Depends(get_current_token_payload)):
+    """
+    Get job logs history (alias for /logs).
+    """
+    return await get_job_logs(job_id, payload)
+
+
+@router.websocket("/{job_id}/logs")
 async def stream_job_logs(
     websocket: WebSocket,
     job_id: str,

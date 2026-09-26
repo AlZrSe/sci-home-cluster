@@ -5,6 +5,7 @@ Node service layer containing business logic for node management.
 from typing import List, Optional
 from backend.store.memory import InMemoryStore, get_store
 from backend.models.node_spec import NodeSpec
+from backend.models.job_metrics import JobMetrics
 
 
 class NodeService:
@@ -19,6 +20,10 @@ class NodeService:
     async def get_node(self, node_id: str) -> Optional[NodeSpec]:
         """Get a node by ID."""
         return await self._store.get_node(node_id)
+
+    async def get_node_metrics(self, node_id: str) -> Optional[JobMetrics]:
+        """Get node GPU/CPU metrics."""
+        return await self._store.get_node_metrics(node_id)
 
     async def update_node(self, node_id: str, **kwargs) -> Optional[NodeSpec]:
         """Update a node's fields and return the updated node."""

@@ -467,6 +467,25 @@ class InMemoryStore:
 
         return metrics
 
+    async def get_node_metrics(self, node_id: str) -> Optional[JobMetrics]:
+        """Get node metrics, generating and caching if not present."""
+        # Use a special key for node metrics
+        metrics_key = f"node:{node_id}"
+        
+        # First check cache
+        async with self._metrics_lock:
+            if metrics_key in self._metrics_cache:
+                return self._metrics_cache[metrics_key]
+
+        # If not in cache, generate metrics (reuse job metrics generation with node prefix)
+        metrics = await self._generate_job_metrics(metrics_key)
+
+        # Cache the metrics
+        async with self._metrics_lock:
+            self._metrics_cache[metrics_key] = metrics
+
+        return metrics
+
     async def _generate_job_metrics(self, job_id: str) -> Optional[JobMetrics]:
         """Generate job metrics using the same algorithm as the mock server."""
         # Verify the job exists

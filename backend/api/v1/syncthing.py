@@ -3,32 +3,26 @@ Syncthing API endpoints.
 Provides status and manual scan trigger for Syncthing synchronization.
 """
 
-from fastapi import APIRouter
-from backend.services.syncthing_service import SyncthingService
-from backend.core.config import settings
+from fastapi import APIRouter, Request
 from pathlib import Path
+from backend.core.config import settings
+from backend.services.syncthing_service import SyncthingService
 
 router = APIRouter()
 
-# Global service instance (initialized in main.py lifespan)
-_syncthing_service: SyncthingService | None = None
 
-
-def get_syncthing_service() -> SyncthingService:
-    """Get the Syncthing service instance."""
-    global _syncthing_service
-    if _syncthing_service is None:
-        _syncthing_service = SyncthingService(Path(settings.SYNCTHING_ROOT))
-    return _syncthing_service
+def get_syncthing_service(request: Request) -> "SyncthingService":
+    """Get the Syncthing service instance from app state."""
+    return request.app.state.syncthing_service
 
 
 @router.get("/status")
-async def get_syncthing_status():
+async def get_syncthing_status(request: Request):
     """
     Get Syncthing sync service status.
     Returns information about the service state and Syncthing folder.
     """
-    service = get_syncthing_service()
+    service = get_syncthing_service(request)
     status = service.get_status()
 
     # Add folder info
@@ -61,12 +55,12 @@ async def get_syncthing_status():
 
 
 @router.post("/scan")
-async def trigger_syncthing_scan():
+async def trigger_syncthing_scan(request: Request):
     """
     Trigger a manual scan of the Syncthing folder.
     Scans for new or updated job/node state files.
     """
-    service = get_syncthing_service()
+    service = get_syncthing_service(request)
     result = await service.manual_scan()
     return {
         "message": "Scan completed",

@@ -3,7 +3,7 @@ Authentication API endpoints.
 """
 
 from datetime import timedelta
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Header
 from backend.core.config import settings
 from backend.core.deps import get_current_token_payload
 from backend.models.token_validation import (
@@ -19,13 +19,30 @@ from backend.services.auth_service import AuthService
 router = APIRouter()
 
 
+@router.get("/verify", response_model=TokenValidationResponse)
+async def verify_token(
+    authorization: str = Header(None),
+    payload: dict = Depends(get_current_token_payload),
+):
+    """
+    Validate bearer token via GET with Authorization header.
+    """
+    if not authorization or not authorization.startswith("Bearer "):
+        return TokenValidationResponse(valid=False)
+    
+    token = authorization[7:]  # Remove "Bearer " prefix
+    auth_service = AuthService()
+    is_valid = await auth_service.validate_token(token)
+    return TokenValidationResponse(valid=is_valid)
+
+
 @router.post("/validate", response_model=TokenValidationResponse)
 async def validate_token(
     request: TokenValidationRequest,
     payload: dict = Depends(get_current_token_payload),
 ):
     """
-    Validate bearer token.
+    Validate bearer token via POST with JSON body.
     """
     auth_service = AuthService()
     is_valid = await auth_service.validate_token(request.token)
