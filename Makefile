@@ -3,7 +3,7 @@
 
 .PHONY: help install install-dev test test-unit test-integration test-watch lint format typecheck clean
 .PHONY: backend-dev backend-build backend-migrate frontend-dev frontend-build frontend-lint frontend-format
-.PHONY: run-agent db-upgrade db-downgrade db-revision
+.PHONY: run-agent db-upgrade db-downgrade db-revision run
 
 # Default target
 help:
@@ -119,6 +119,8 @@ clean:
 
 # Development shortcuts
 dev: backend-dev
+
+run: dev-full
 
 dev-full:
 	@echo "Starting backend and frontend..."
