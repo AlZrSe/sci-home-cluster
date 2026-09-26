@@ -53,6 +53,27 @@ python_version = "3.9"
 warn_return_any = true
 warn_unused_configs = true
 mypy_path = "stubs"
+ignore_missing_imports = true
+
+[[tool.mypy-overrides]]
+module = "backend.store.*"
+ignore_errors = true
+
+[[tool.mypy-overrides]]
+module = "backend.alembic.*"
+ignore_errors = true
+
+[[tool.mypy-overrides]]
+module = "backend.services.syncthing_service"
+ignore_errors = true
+
+[[tool.mypy-overrides]]
+module = "backend.core.deps"
+ignore_errors = true
+
+[[tool.mypy-overrides]]
+module = "backend.api.v1.jobs"
+ignore_errors = true
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

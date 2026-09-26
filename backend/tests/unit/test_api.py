@@ -8,7 +8,7 @@ from httpx import AsyncClient, ASGITransport
 from backend.main import app
 from backend.tests.factories import create_job_spec
 from backend.models.job_status import JobStatus
-from backend.store.memory import get_store
+from backend.store import get_store
 
 
 @pytest.fixture

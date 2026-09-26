@@ -8,7 +8,7 @@ from backend.models.job_state import JobState
 from backend.models.job_spec import JobSpec
 from backend.models.job_status import JobStatus
 from backend.models.job_metrics import JobMetrics
-from backend.store.memory import get_store
+from backend.store import get_store
 
 
 class JobService:

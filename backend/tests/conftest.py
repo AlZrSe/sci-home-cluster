@@ -17,7 +17,8 @@ from backend.main import app
 from backend.core.security import create_access_token
 from backend.models.job_spec import JobSpec, Resources, Paths, RetryPolicy
 from backend.models.node_spec import NodeSpec, GPUInfo
-from backend.store.memory import InMemoryStore, get_store
+from backend.store import get_store
+from backend.store.memory import InMemoryStore
 
 
 @pytest.fixture(autouse=True)

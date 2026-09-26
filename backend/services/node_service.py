@@ -3,7 +3,7 @@ Node service layer containing business logic for node management.
 """
 
 from typing import List, Optional
-from backend.store.memory import InMemoryStore, get_store
+from backend.store import get_store
 from backend.models.node_spec import NodeSpec
 from backend.models.job_metrics import JobMetrics
 
@@ -11,7 +11,7 @@ from backend.models.job_metrics import JobMetrics
 class NodeService:
     def __init__(self):
         # Initialize the store
-        self._store: InMemoryStore = get_store()
+        self._store = get_store()
 
     async def list_nodes(self) -> List[NodeSpec]:
         """List all cluster nodes."""

@@ -45,7 +45,7 @@ class JobModel(Base):
     retry_count = Column(Integer, nullable=False, default=0)
 
     # Relationship to node
-    node = relationship("NodeModel", back_populates="jobs")
+    node = relationship("NodeModel", back_populates="jobs", foreign_keys=[node_id])
 
     # Indexes
     __table_args__ = (
@@ -75,7 +75,9 @@ class NodeModel(Base):
     current_job_id = Column(String(50), ForeignKey("jobs.job_id"), nullable=True)
 
     # Relationship to jobs
-    jobs = relationship("JobModel", back_populates="node")
+    jobs = relationship(
+        "JobModel", back_populates="node", foreign_keys="JobModel.node_id"
+    )
 
     # Indexes
     __table_args__ = (

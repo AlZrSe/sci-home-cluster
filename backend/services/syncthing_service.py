@@ -14,7 +14,7 @@ from watchdog.events import FileSystemEventHandler
 
 from backend.models.job_state import JobState
 from backend.models.node_spec import NodeSpec
-from backend.store.memory import get_store
+from backend.store import get_store
 from shared.file_ops import read_yaml
 
 logger = logging.getLogger(__name__)
