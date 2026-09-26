@@ -386,3 +386,112 @@ class TestAuthEdgeCases:
         assert "token_type" in data
         assert "expires_in" in data
         assert data["token_type"] == "bearer"
+
+
+@pytest.mark.integration
+class TestAuthVerifyGet:
+    """Integration tests for GET /auth/verify endpoint (Bearer header)."""
+
+    @pytest.fixture
+    async def async_client(self) -> AsyncClient:
+        """Create an async client for testing."""
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://testserver"
+        ) as client:
+            yield client
+
+    @pytest.mark.asyncio
+    async def test_verify_token_get_valid_shared_token(self, async_client):
+        """Test GET /auth/verify with valid shared token via Bearer header."""
+        with patch.object(settings, "SHARED_TOKEN", "test-shared-token-123"):
+            response = await async_client.get(
+                "/api/v1/auth/verify",
+                headers={"Authorization": "Bearer test-shared-token-123"},
+            )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["valid"] is True
+
+    @pytest.mark.asyncio
+    async def test_verify_token_get_invalid_shared_token(self, async_client):
+        """Test GET /auth/verify with invalid shared token via Bearer header."""
+        with patch.object(settings, "SHARED_TOKEN", "test-shared-token-123"):
+            response = await async_client.get(
+                "/api/v1/auth/verify",
+                headers={"Authorization": "Bearer invalid-token"},
+            )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["valid"] is False
+
+    @pytest.mark.asyncio
+    async def test_verify_token_get_missing_header(self, async_client):
+        """Test GET /auth/verify without Authorization header."""
+        response = await async_client.get("/api/v1/auth/verify")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["valid"] is False
+
+    @pytest.mark.asyncio
+    async def test_verify_token_get_malformed_header(self, async_client):
+        """Test GET /auth/verify with malformed Authorization header."""
+        response = await async_client.get(
+            "/api/v1/auth/verify",
+            headers={"Authorization": "NotBearer token"},
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["valid"] is False
+
+    @pytest.mark.asyncio
+    async def test_verify_token_get_with_jwt(self, async_client):
+        """Test GET /auth/verify with valid JWT via Bearer header."""
+        with patch.object(settings, "SHARED_TOKEN", None):
+            token = create_access_token({"sub": "test-user"})
+            response = await async_client.get(
+                "/api/v1/auth/verify",
+                headers={"Authorization": f"Bearer {token}"},
+            )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["valid"] is True
+
+    @pytest.mark.asyncio
+    async def test_verify_token_get_with_expired_jwt(self, async_client):
+        """Test GET /auth/verify with expired JWT via Bearer header."""
+        with patch.object(settings, "SHARED_TOKEN", None):
+            expired_token = create_access_token(
+                {"sub": "test-user"}, expires_delta=timedelta(seconds=-1)
+            )
+            response = await async_client.get(
+                "/api/v1/auth/verify",
+                headers={"Authorization": f"Bearer {expired_token}"},
+            )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["valid"] is False
+
+    @pytest.mark.asyncio
+    async def test_verify_vs_validate_consistency(self, async_client):
+        """Test GET /verify and POST /validate return same result for same token."""
+        with patch.object(settings, "SHARED_TOKEN", "test-shared-token-123"):
+            # Test GET /verify
+            get_response = await async_client.get(
+                "/api/v1/auth/verify",
+                headers={"Authorization": "Bearer test-shared-token-123"},
+            )
+
+            # Test POST /validate
+            post_response = await async_client.post(
+                "/api/v1/auth/validate", json={"token": "test-shared-token-123"}
+            )
+
+            assert get_response.status_code == 200
+            assert post_response.status_code == 200
+            assert get_response.json()["valid"] == post_response.json()["valid"]

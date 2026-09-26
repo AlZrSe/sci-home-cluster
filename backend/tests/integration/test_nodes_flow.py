@@ -292,3 +292,98 @@ class TestNodesValidation:
             assert len(hostname) > 0
             # Should contain a dot (e.g., alpha.lan)
             assert "." in hostname
+
+
+@pytest.mark.integration
+class TestNodeMetrics:
+    """Integration tests for GET /nodes/{id}/metrics endpoint."""
+
+    @pytest.fixture
+    async def auth_client(self) -> AsyncClient:
+        """Create an async client with localhost bypass auth."""
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://testserver"
+        ) as client:
+            client.headers["Authorization"] = "Bearer localhost-no-auth"
+            yield client
+
+    @pytest.mark.asyncio
+    async def test_get_node_metrics_success(self, auth_client):
+        """Test GET /nodes/{id}/metrics returns metrics for existing node."""
+        # Use a known seed node with GPUs
+        response = await auth_client.get("/api/v1/nodes/node-alpha/metrics")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["job_id"] == "node:node-alpha"
+        assert "gpu_metrics" in data
+        assert "cpu_metrics" in data
+        assert "summary" in data
+        assert len(data["gpu_metrics"]) > 0
+        assert len(data["cpu_metrics"]) > 0
+
+    @pytest.mark.asyncio
+    async def test_get_node_metrics_not_found(self, auth_client):
+        """Test GET /nodes/{id}/metrics returns 404 for non-existent node."""
+        response = await auth_client.get("/api/v1/nodes/non-existent-node/metrics")
+
+        assert response.status_code == 404
+        data = response.json()
+        assert data["status"] == 404
+        assert data["title"] == "Not Found"
+        assert "not found" in data["detail"].lower()
+
+    @pytest.mark.asyncio
+    async def test_get_node_metrics_structure(self, auth_client):
+        """Test node metrics response matches JobMetrics schema."""
+        response = await auth_client.get("/api/v1/nodes/node-alpha/metrics")
+
+        assert response.status_code == 200
+        data = response.json()
+
+        # GPU metrics structure
+        for gpu in data["gpu_metrics"]:
+            assert "timestamp" in gpu
+            assert "gpu_index" in gpu
+            assert "memory_used_mb" in gpu
+            assert "memory_total_mb" in gpu
+            assert "utilization_percent" in gpu
+            assert "temperature_c" in gpu
+            assert isinstance(gpu["gpu_index"], int)
+            assert isinstance(gpu["memory_used_mb"], int)
+            assert isinstance(gpu["memory_total_mb"], int)
+            assert isinstance(gpu["utilization_percent"], int)
+            assert isinstance(gpu["temperature_c"], int)
+
+        # CPU metrics structure
+        for cpu in data["cpu_metrics"]:
+            assert "timestamp" in cpu
+            assert "cpu_percent" in cpu
+            assert "memory_percent" in cpu
+            assert isinstance(cpu["cpu_percent"], int)
+            assert isinstance(cpu["memory_percent"], int)
+
+        # Summary structure
+        summary = data["summary"]
+        assert "gpu_memory_min_mb" in summary
+        assert "gpu_memory_max_mb" in summary
+        assert "gpu_memory_avg_mb" in summary
+        assert "gpu_util_min" in summary
+        assert "gpu_util_max" in summary
+        assert "gpu_util_avg" in summary
+        assert "cpu_avg_percent" in summary
+        for key in summary:
+            assert isinstance(summary[key], int)
+
+    @pytest.mark.asyncio
+    async def test_get_node_metrics_cpu_only_node(self, auth_client):
+        """Test metrics for node without GPUs (node-delta)."""
+        response = await auth_client.get("/api/v1/nodes/node-delta/metrics")
+
+        # node-delta has no GPUs, but metrics should still be generated
+        assert response.status_code == 200
+        data = response.json()
+        assert data["job_id"] == "node:node-delta"
+        assert "gpu_metrics" in data
+        assert "cpu_metrics" in data
+        assert "summary" in data
