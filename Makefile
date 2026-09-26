@@ -4,6 +4,7 @@
 .PHONY: help install install-dev test test-unit test-integration test-watch lint format typecheck clean
 .PHONY: backend-dev backend-build backend-migrate frontend-dev frontend-build frontend-lint frontend-format
 .PHONY: run-agent db-upgrade db-downgrade db-revision run
+.PHONY: test-e2e test-e2e-ui test-e2e-headed test-all
 
 # Default target
 help:
@@ -29,6 +30,9 @@ help:
 	@echo "  make frontend-build-dev Build frontend for development"
 	@echo "  make frontend-lint    Run eslint on frontend"
 	@echo "  make frontend-format  Format frontend with prettier"
+	@echo "  make test-e2e         Run Playwright E2E tests"
+	@echo "  make test-e2e-ui      Run Playwright E2E tests with UI"
+	@echo "  make test-e2e-headed  Run Playwright E2E tests in headed mode"
 	@echo ""
 	@echo "Database:"
 	@echo "  make db-upgrade       Run alembic upgrade head"
@@ -38,6 +42,7 @@ help:
 	@echo "General:"
 	@echo "  make clean            Remove build artifacts and cache"
 	@echo "  make check            Run lint, format, and typecheck"
+	@echo "  make test-all         Run all backend tests + frontend E2E tests"
 
 # Backend setup
 install-dev:
@@ -109,6 +114,19 @@ frontend-lint:
 
 frontend-format:
 	cd frontend && npm run format
+
+# Frontend E2E tests
+test-e2e:
+	cd frontend && npm run test:e2e
+
+test-e2e-ui:
+	cd frontend && npm run test:e2e:ui
+
+test-e2e-headed:
+	cd frontend && npm run test:e2e:headed
+
+# Test all
+test-all: test test-e2e
 
 # Cleanup
 clean:
