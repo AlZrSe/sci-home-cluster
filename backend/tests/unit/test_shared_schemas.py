@@ -2,8 +2,6 @@
 Unit tests for shared Pydantic schemas.
 """
 
-import pytest
-from pydantic import ValidationError
 from shared.schemas.job_spec import JobSpec
 from shared.schemas.job_state import JobState
 from shared.schemas.job_resources import JobResources
@@ -45,6 +43,7 @@ def test_gpu_info():
 def test_gpu_metric():
     """Test GPUMetric model."""
     from datetime import datetime, timezone
+
     metric = GPUMetric(
         timestamp=1234567890.0,
         gpu_index=0,
@@ -75,6 +74,7 @@ def test_gpu_metric():
 def test_cpu_metric():
     """Test CPUMetric model."""
     from datetime import datetime, timezone
+
     metric = CPUMetric(timestamp=1234567890.0, cpu_percent=45.5, memory_percent=60.2)
     expected_ts = datetime.fromtimestamp(1234567890.0, tz=timezone.utc)
     assert metric.timestamp == expected_ts
@@ -263,7 +263,6 @@ def test_node_spec():
 
 def test_job_metrics():
     """Test JobMetrics model."""
-    from datetime import datetime, timezone
     gpu_metric = GPUMetric(
         timestamp=1234567890.0,
         gpu_index=0,

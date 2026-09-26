@@ -7,7 +7,6 @@ These tests require a running app with proper lifespan initialization.
 import pytest
 import asyncio
 import io
-import yaml
 from httpx import AsyncClient, ASGITransport
 from backend.main import app
 from backend.store.memory import get_store
@@ -16,10 +15,11 @@ from backend.tests.factories import create_job_spec
 from backend.core.security import create_access_token
 from backend.core.config import settings
 from unittest.mock import patch
-from backend.models.job_spec import JobSpec
 
 
-@pytest.mark.skip(reason="ASGI WebSocket testing has limitations with FastAPI lifespan and app.state")
+@pytest.mark.skip(
+    reason="ASGI WebSocket testing has limitations with FastAPI lifespan and app.state"
+)
 @pytest.mark.unit
 class TestWebSocketConnection:
     """Tests for WebSocket connection establishment."""
@@ -80,7 +80,9 @@ class TestWebSocketConnection:
                 pass
 
 
-@pytest.mark.skip(reason="ASGI WebSocket testing has limitations with FastAPI lifespan and app.state")
+@pytest.mark.skip(
+    reason="ASGI WebSocket testing has limitations with FastAPI lifespan and app.state"
+)
 @pytest.mark.unit
 class TestWebSocketAuthentication:
     """Tests for WebSocket authentication."""
@@ -107,7 +109,9 @@ class TestWebSocketAuthentication:
         return response.json()["job_id"]
 
     @pytest.mark.asyncio
-    async def test_websocket_localhost_bypass(self, unauthenticated_client, test_job_id):
+    async def test_websocket_localhost_bypass(
+        self, unauthenticated_client, test_job_id
+    ):
         """Test WebSocket connection works with localhost bypass."""
         # TestClient with base_url="http://test" simulates localhost
         async with unauthenticated_client.websocket_connect(
@@ -156,7 +160,9 @@ class TestWebSocketAuthentication:
                         pass
 
 
-@pytest.mark.skip(reason="ASGI WebSocket testing has limitations with FastAPI lifespan and app.state")
+@pytest.mark.skip(
+    reason="ASGI WebSocket testing has limitations with FastAPI lifespan and app.state"
+)
 @pytest.mark.unit
 class TestWebSocketMessageStreaming:
     """Tests for WebSocket message streaming and structured messages."""
@@ -176,6 +182,7 @@ class TestWebSocketMessageStreaming:
         yaml_content = job_spec_to_yaml_bytes(job_spec)
 
         import io
+
         files = {"job.yaml": ("job.yaml", io.BytesIO(yaml_content), "application/yaml")}
         response = await async_client.post("/api/v1/jobs", files=files)
         assert response.status_code == 201
@@ -245,7 +252,9 @@ class TestWebSocketMessageStreaming:
                 await ws.close()
 
 
-@pytest.mark.skip(reason="ASGI WebSocket testing has limitations with FastAPI lifespan and app.state")
+@pytest.mark.skip(
+    reason="ASGI WebSocket testing has limitations with FastAPI lifespan and app.state"
+)
 @pytest.mark.unit
 class TestWebSocketDisconnect:
     """Tests for WebSocket graceful disconnection."""
@@ -291,7 +300,9 @@ class TestWebSocketDisconnect:
         assert True
 
     @pytest.mark.asyncio
-    async def test_websocket_server_cleanup_on_disconnect(self, async_client, running_job_id):
+    async def test_websocket_server_cleanup_on_disconnect(
+        self, async_client, running_job_id
+    ):
         """Test server cleans up resources on client disconnect."""
         store = get_store()
 
@@ -313,7 +324,9 @@ class TestWebSocketDisconnect:
         assert job.status == JobStatus.RUNNING
 
     @pytest.mark.asyncio
-    async def test_websocket_reconnect_after_disconnect(self, async_client, running_job_id):
+    async def test_websocket_reconnect_after_disconnect(
+        self, async_client, running_job_id
+    ):
         """Test reconnecting after disconnect works."""
         # First connection
         ws1 = await async_client.websocket_connect(
@@ -334,7 +347,9 @@ class TestWebSocketDisconnect:
             await ws2.close()
 
 
-@pytest.mark.skip(reason="ASGI WebSocket testing has limitations with FastAPI lifespan and app.state")
+@pytest.mark.skip(
+    reason="ASGI WebSocket testing has limitations with FastAPI lifespan and app.state"
+)
 @pytest.mark.unit
 class TestWebSocketEdgeCases:
     """Tests for WebSocket edge cases."""
@@ -412,7 +427,9 @@ class TestWebSocketEdgeCases:
             assert len(messages) >= 1
 
 
-@pytest.mark.skip(reason="ASGI WebSocket testing has limitations with FastAPI lifespan and app.state")
+@pytest.mark.skip(
+    reason="ASGI WebSocket testing has limitations with FastAPI lifespan and app.state"
+)
 @pytest.mark.unit
 class TestWebSocketWithJWTAuth:
     """Tests for WebSocket with JWT authentication (non-localhost)."""
@@ -434,14 +451,22 @@ class TestWebSocketWithJWTAuth:
                 job_spec = create_job_spec(name="ws-jwt-job")
                 yaml_content = job_spec_to_yaml_bytes(job_spec)
 
-                files = {"job.yaml": ("job.yaml", io.BytesIO(yaml_content), "application/yaml")}
+                files = {
+                    "job.yaml": (
+                        "job.yaml",
+                        io.BytesIO(yaml_content),
+                        "application/yaml",
+                    )
+                }
                 response = await client.post("/api/v1/jobs/", files=files)
                 assert response.status_code == 201
                 job_id = response.json()["job_id"]
 
                 # Set to RUNNING
                 store = get_store()
-                await store.update_job(job_id, status=JobStatus.RUNNING, node_id="node-alpha")
+                await store.update_job(
+                    job_id, status=JobStatus.RUNNING, node_id="node-alpha"
+                )
 
             # Now connect with token in query param
             async with AsyncClient(
@@ -468,13 +493,21 @@ class TestWebSocketWithJWTAuth:
                 job_spec = create_job_spec(name="ws-jwt-header-job")
                 yaml_content = job_spec_to_yaml_bytes(job_spec)
 
-                files = {"job.yaml": ("job.yaml", io.BytesIO(yaml_content), "application/yaml")}
+                files = {
+                    "job.yaml": (
+                        "job.yaml",
+                        io.BytesIO(yaml_content),
+                        "application/yaml",
+                    )
+                }
                 response = await client.post("/api/v1/jobs", files=files)
                 assert response.status_code == 201
                 job_id = response.json()["job_id"]
 
                 store = get_store()
-                await store.update_job(job_id, status=JobStatus.RUNNING, node_id="node-alpha")
+                await store.update_job(
+                    job_id, status=JobStatus.RUNNING, node_id="node-alpha"
+                )
 
             async with AsyncClient(
                 transport=ASGITransport(app=app), base_url="http://test"

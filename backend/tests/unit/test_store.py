@@ -283,7 +283,9 @@ class TestJobCRUD:
         job1 = await store.create_job(sample_job_spec)
         job2 = await store.create_job(sample_job_spec)
 
-        await store.update_job(job1.job_id, status=JobStatus.RUNNING, node_id=sample_node.node_id)
+        await store.update_job(
+            job1.job_id, status=JobStatus.RUNNING, node_id=sample_node.node_id
+        )
 
         node_jobs, node_total = await store.list_jobs(node_id=sample_node.node_id)
         other_jobs, other_total = await store.list_jobs(node_id="other-node")
@@ -445,7 +447,10 @@ class TestMetrics:
         assert metrics1.job_id != metrics2.job_id
         # But same job should always return same metrics
         metrics1_again = await store.get_job_metrics(job1.job_id)
-        assert metrics1.gpu_metrics[0].memory_used_mb == metrics1_again.gpu_metrics[0].memory_used_mb
+        assert (
+            metrics1.gpu_metrics[0].memory_used_mb
+            == metrics1_again.gpu_metrics[0].memory_used_mb
+        )
 
 
 class TestLogs:

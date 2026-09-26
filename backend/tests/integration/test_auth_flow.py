@@ -117,6 +117,7 @@ class TestAuthFlow:
 
         # Verify token is valid JWT
         from backend.core.security import decode_access_token
+
         payload = decode_access_token(data["access_token"])
         assert payload["sub"] == "user"  # Default subject from auth_service
 
@@ -132,7 +133,8 @@ class TestAuthFlow:
         data = response.json()
         assert data["status"] == 401
         assert data["title"] == "Unauthorized"
-        assert "invalid shared token" in data["detail"].lower()
+        assert "invalid" in data["detail"].lower()
+        assert "error_code" in data
 
     @pytest.mark.asyncio
     async def test_create_token_no_shared_configured(self, async_client):
@@ -146,14 +148,13 @@ class TestAuthFlow:
         data = response.json()
         assert data["status"] == 503
         assert "not configured" in data["detail"].lower()
+        assert "error_code" in data
 
     @pytest.mark.asyncio
     async def test_create_token_missing_shared_token_field(self, async_client):
         """Test creating JWT token with missing shared_token field."""
         with patch.object(settings, "SHARED_TOKEN", "test-shared-token-123"):
-            response = await async_client.post(
-                "/api/v1/auth/token", json={}
-            )
+            response = await async_client.post("/api/v1/auth/token", json={})
 
         assert response.status_code == 422  # Validation error
 
@@ -175,6 +176,7 @@ class TestAuthFlow:
 
         # Verify new token is valid
         from backend.core.security import decode_access_token
+
         payload = decode_access_token(data["access_token"])
         assert payload["sub"] == "test-user"
 
@@ -210,9 +212,7 @@ class TestAuthFlow:
     async def test_refresh_token_missing_field(self, async_client):
         """Test refreshing with missing token field."""
         with patch.object(settings, "SHARED_TOKEN", None):
-            response = await async_client.post(
-                "/api/v1/auth/refresh", json={}
-            )
+            response = await async_client.post("/api/v1/auth/refresh", json={})
 
         assert response.status_code == 422  # Validation error
 
@@ -286,7 +286,9 @@ class TestAuthFlow:
                 if "validate" in endpoint:
                     response = await async_client.post(endpoint, json={"token": "test"})
                 elif "token" in endpoint and "refresh" not in endpoint:
-                    response = await async_client.post(endpoint, json={"shared_token": "test"})
+                    response = await async_client.post(
+                        endpoint, json={"shared_token": "test"}
+                    )
                 else:
                     response = await async_client.post(endpoint, json={"token": "test"})
             else:
@@ -316,7 +318,9 @@ class TestAuthEdgeCases:
     @pytest.mark.asyncio
     async def test_validate_token_null_token(self, async_client):
         """Test validate with null token."""
-        response = await async_client.post("/api/v1/auth/validate", json={"token": None})
+        response = await async_client.post(
+            "/api/v1/auth/validate", json={"token": None}
+        )
         assert response.status_code == 422
 
     @pytest.mark.asyncio

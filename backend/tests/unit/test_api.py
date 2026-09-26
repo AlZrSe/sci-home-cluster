@@ -7,7 +7,6 @@ import pytest
 from httpx import AsyncClient, ASGITransport
 from backend.main import app
 from backend.tests.factories import create_job_spec
-from backend.models.job_spec import JobSpec
 from backend.models.job_status import JobStatus
 from backend.store.memory import get_store
 
@@ -101,7 +100,9 @@ class TestAuthEndpoints:
     @pytest.mark.asyncio
     async def test_validate_token_too_short(self, async_client):
         """Test POST /auth/validate with too short token."""
-        response = await async_client.post("/api/v1/auth/validate", json={"token": "short"})
+        response = await async_client.post(
+            "/api/v1/auth/validate", json={"token": "short"}
+        )
         assert response.status_code == 422
 
     @pytest.mark.asyncio
@@ -226,7 +227,9 @@ class TestJobsEndpoints:
     @pytest.mark.asyncio
     async def test_list_jobs_with_pagination(self, auth_client):
         """Test GET /jobs with limit and offset."""
-        response = await auth_client.get("/api/v1/jobs/", params={"limit": 5, "offset": 0})
+        response = await auth_client.get(
+            "/api/v1/jobs/", params={"limit": 5, "offset": 0}
+        )
         assert response.status_code == 200
         data = response.json()
         assert len(data["items"]) <= 5
@@ -305,6 +308,8 @@ class TestJobsEndpoints:
         data = response.json()
         assert data["status"] == 404
         assert data["title"] == "Not Found"
+        assert "does not exist" in data["detail"]
+        assert "error_code" in data
 
     @pytest.mark.asyncio
     async def test_get_job_metrics(self, auth_client, job_spec_dict):
@@ -361,7 +366,8 @@ class TestJobsEndpoints:
         assert response.status_code == 409
         data = response.json()
         assert data["status"] == 409
-        assert "not in retryable state" in data["detail"]
+        assert "cannot be retried" in data["detail"]
+        assert "error_code" in data
 
     @pytest.mark.asyncio
     async def test_retry_job_success(self, auth_client, job_spec_dict):
@@ -371,7 +377,9 @@ class TestJobsEndpoints:
 
         # Set job to FAILED
         store = get_store()
-        await store.update_job(job_id, status=JobStatus.FAILED, error="Test error", exit_code=1)
+        await store.update_job(
+            job_id, status=JobStatus.FAILED, error="Test error", exit_code=1
+        )
 
         response = await auth_client.post(f"/api/v1/jobs/{job_id}/retry")
         assert response.status_code == 200
@@ -409,7 +417,8 @@ class TestJobsEndpoints:
         assert response.status_code == 409
         data = response.json()
         assert data["status"] == 409
-        assert "not cancellable" in data["detail"]
+        assert "cannot be cancelled" in data["detail"]
+        assert "error_code" in data
 
     @pytest.mark.asyncio
     async def test_delete_job(self, auth_client, job_spec_dict):
@@ -481,7 +490,8 @@ class TestNodesEndpoints:
         data = response.json()
         assert data["status"] == 404
         assert data["title"] == "Not Found"
-        assert "not found" in data["detail"].lower()
+        assert "does not exist" in data["detail"].lower()
+        assert "error_code" in data
 
     @pytest.mark.asyncio
     async def test_node_data_structure_validation(self, auth_client):
@@ -514,12 +524,15 @@ class TestNodesEndpoints:
 
         # Timestamps are valid ISO 8601
         from datetime import datetime
+
         for node in nodes.values():
             dt = datetime.fromisoformat(node["last_heartbeat"].replace(" ", "T"))
             assert dt is not None
 
 
-@pytest.mark.skip(reason="Requires app.state.syncthing_service which is set by lifespan (not run in unit tests)")
+@pytest.mark.skip(
+    reason="Requires app.state.syncthing_service which is set by lifespan (not run in unit tests)"
+)
 class TestSyncthingEndpoints:
     """Test Syncthing API endpoints - SKIPPED: requires app.state.syncthing_service from lifespan."""
 
@@ -591,7 +604,9 @@ class TestErrorResponses:
     @pytest.mark.asyncio
     async def test_422_error_format(self, auth_client):
         """Test 422 validation errors follow ErrorResponse format."""
-        response = await auth_client.post("/api/v1/auth/validate", json={"token": "short"})
+        response = await auth_client.post(
+            "/api/v1/auth/validate", json={"token": "short"}
+        )
         assert response.status_code == 422
         data = response.json()
         assert data["status"] == 422
@@ -603,10 +618,16 @@ class TestErrorResponses:
     async def test_400_error_format(self, auth_client):
         """Test 400 errors follow ErrorResponse format."""
         # For JSON API, 400 errors are now 422, but we can test invalid spec
-        invalid_spec = {"name": "test", "command": "cmd", "resources": {"gpus": 1, "cpus": 4, "memory_gb": 16}}
+        invalid_spec = {
+            "name": "test",
+            "command": "cmd",
+            "resources": {"gpus": 1, "cpus": 4, "memory_gb": 16},
+        }
         # This would be valid, so test a case that gives 400 - e.g. cancel completed job
         job_spec = create_job_spec(name="test-400", gpus=1, cpus=4, memory_gb=16)
-        create_response = await auth_client.post("/api/v1/jobs/", json=job_spec.model_dump(mode="json"))
+        create_response = await auth_client.post(
+            "/api/v1/jobs/", json=job_spec.model_dump(mode="json")
+        )
         job_id = create_response.json()["job_id"]
 
         store = get_store()
@@ -636,7 +657,9 @@ class TestRequestIdMiddleware:
     async def test_request_id_echoed(self, auth_client):
         """Test that custom X-Request-ID is echoed back."""
         custom_id = "custom-request-id-12345"
-        response = await auth_client.get("/api/v1/health", headers={"X-Request-ID": custom_id})
+        response = await auth_client.get(
+            "/api/v1/health", headers={"X-Request-ID": custom_id}
+        )
         assert response.status_code == 200
         assert response.headers["X-Request-ID"] == custom_id
 
@@ -649,7 +672,10 @@ class TestCORS:
         """Test CORS headers are present for allowed origins."""
         response = await async_client.options(
             "/api/v1/health",
-            headers={"Origin": "http://localhost:3000", "Access-Control-Request-Method": "GET"},
+            headers={
+                "Origin": "http://localhost:3000",
+                "Access-Control-Request-Method": "GET",
+            },
         )
         # Should not be 404
         assert response.status_code != 404

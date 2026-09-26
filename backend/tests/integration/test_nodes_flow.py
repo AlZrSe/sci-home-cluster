@@ -54,7 +54,9 @@ class TestNodesFlow:
             assert node["status"] in ["ONLINE", "OFFLINE"]
 
             # current_job_id is string or null
-            assert node["current_job_id"] is None or isinstance(node["current_job_id"], str)
+            assert node["current_job_id"] is None or isinstance(
+                node["current_job_id"], str
+            )
 
     @pytest.mark.asyncio
     async def test_list_nodes_structure_validation(self, async_client):
@@ -139,7 +141,8 @@ class TestNodesFlow:
         data = response.json()
         assert data["status"] == 404
         assert data["title"] == "Not Found"
-        assert "not found" in data["detail"].lower()
+        assert "does not exist" in data["detail"].lower()
+        assert "error_code" in data
         # Instance should be a full URL
         assert data["instance"] == "http://testserver/api/v1/nodes/non-existent-node"
 
@@ -331,7 +334,8 @@ class TestNodeMetrics:
         data = response.json()
         assert data["status"] == 404
         assert data["title"] == "Not Found"
-        assert "not found" in data["detail"].lower()
+        assert "not available" in data["detail"].lower()
+        assert "error_code" in data
 
     @pytest.mark.asyncio
     async def test_get_node_metrics_structure(self, auth_client):

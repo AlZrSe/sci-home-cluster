@@ -6,7 +6,6 @@ import pytest
 from httpx import AsyncClient, ASGITransport
 from backend.main import app
 from backend.tests.factories import JobSpecFactory, create_job_spec
-from backend.models.job_spec import JobSpec
 from backend.models.job_status import JobStatus
 
 
@@ -121,7 +120,9 @@ class TestJobLifecycle:
     async def test_list_jobs_with_pagination(self, async_client):
         """Test listing jobs with limit and offset."""
         # Act
-        response = await async_client.get("/api/v1/jobs/", params={"limit": 5, "offset": 0})
+        response = await async_client.get(
+            "/api/v1/jobs/", params={"limit": 5, "offset": 0}
+        )
 
         # Assert
         assert response.status_code == 200
@@ -136,7 +137,9 @@ class TestJobLifecycle:
         await async_client.post("/api/v1/jobs/", json=job_spec_dict)
 
         # Act
-        response = await async_client.get("/api/v1/jobs/", params={"search": "integration"})
+        response = await async_client.get(
+            "/api/v1/jobs/", params={"search": "integration"}
+        )
 
         # Assert
         assert response.status_code == 200
@@ -172,7 +175,8 @@ class TestJobLifecycle:
         data = response.json()
         assert data["status"] == 404
         assert data["title"] == "Not Found"
-        assert "not found" in data["detail"].lower()
+        assert "does not exist" in data["detail"]
+        assert "error_code" in data
 
     @pytest.mark.asyncio
     async def test_get_job_metrics(self, async_client, job_spec_dict):
@@ -252,7 +256,8 @@ class TestJobLifecycle:
         data = response.json()
         assert data["status"] == 409
         assert data["title"] == "Conflict"
-        assert "not in retryable state" in data["detail"]
+        assert "cannot be retried" in data["detail"]
+        assert "error_code" in data
 
     @pytest.mark.asyncio
     async def test_retry_job_success(self, async_client, job_spec_dict):
@@ -263,8 +268,11 @@ class TestJobLifecycle:
 
         # Directly update job status to FAILED via store
         from backend.store.memory import get_store
+
         store = get_store()
-        await store.update_job(job_id, status=JobStatus.FAILED, error="Test error", exit_code=1)
+        await store.update_job(
+            job_id, status=JobStatus.FAILED, error="Test error", exit_code=1
+        )
 
         # Act
         response = await async_client.post(f"/api/v1/jobs/{job_id}/retry")
@@ -305,6 +313,7 @@ class TestJobLifecycle:
         job_id = create_response.json()["job_id"]
 
         from backend.store.memory import get_store
+
         store = get_store()
         await store.update_job(job_id, status=JobStatus.COMPLETED, exit_code=0)
 
@@ -315,7 +324,8 @@ class TestJobLifecycle:
         assert response.status_code == 409
         data = response.json()
         assert data["status"] == 409
-        assert "not cancellable" in data["detail"]
+        assert "cannot be cancelled" in data["detail"]
+        assert "error_code" in data
 
     @pytest.mark.asyncio
     async def test_delete_job(self, async_client, job_spec_dict):
@@ -352,7 +362,9 @@ class TestJobLifecycle:
         job_id = create_response.json()["job_id"]
 
         # 2. List jobs - should include our job
-        list_response = await async_client.get("/api/v1/jobs/", params={"search": "integration"})
+        list_response = await async_client.get(
+            "/api/v1/jobs/", params={"search": "integration"}
+        )
         assert list_response.status_code == 200
         jobs = list_response.json()["items"]
         assert any(j["job_id"] == job_id for j in jobs)
@@ -379,7 +391,9 @@ class TestJobLifecycle:
         assert cancel_response.json()["status"] == "CANCELLED"
 
         # 7. Verify cancelled job appears in list with correct status
-        list_response = await async_client.get("/api/v1/jobs/", params={"status": "CANCELLED"})
+        list_response = await async_client.get(
+            "/api/v1/jobs/", params={"status": "CANCELLED"}
+        )
         assert list_response.status_code == 200
         cancelled_jobs = list_response.json()["items"]
         assert any(j["job_id"] == job_id for j in cancelled_jobs)
@@ -414,7 +428,9 @@ class TestJobAuthentication:
     async def test_create_job_requires_auth(self, unauthenticated_client):
         """Test that creating a job requires authentication."""
         job_spec = JobSpecFactory()
-        response = await unauthenticated_client.post("/api/v1/jobs/", json=job_spec.model_dump(mode="json"))
+        response = await unauthenticated_client.post(
+            "/api/v1/jobs/", json=job_spec.model_dump(mode="json")
+        )
         # On localhost, this succeeds due to bypass
         assert response.status_code in (201, 401)
 
@@ -435,7 +451,9 @@ class TestJobValidation:
     async def test_create_job_zero_gpus(self, async_client):
         """Test creating a job with 0 GPUs (CPU-only)."""
         job_spec = create_job_spec(name="cpu-only-job", gpus=0, cpus=8, memory_gb=32)
-        response = await async_client.post("/api/v1/jobs/", json=job_spec.model_dump(mode="json"))
+        response = await async_client.post(
+            "/api/v1/jobs/", json=job_spec.model_dump(mode="json")
+        )
         assert response.status_code == 201
         data = response.json()
         assert data["spec"]["resources"]["gpus"] == 0
@@ -443,8 +461,12 @@ class TestJobValidation:
     @pytest.mark.asyncio
     async def test_create_job_high_resources(self, async_client):
         """Test creating a job with high resource requirements."""
-        job_spec = create_job_spec(name="high-resource-job", gpus=8, cpus=64, memory_gb=512)
-        response = await async_client.post("/api/v1/jobs/", json=job_spec.model_dump(mode="json"))
+        job_spec = create_job_spec(
+            name="high-resource-job", gpus=8, cpus=64, memory_gb=512
+        )
+        response = await async_client.post(
+            "/api/v1/jobs/", json=job_spec.model_dump(mode="json")
+        )
         assert response.status_code == 201
         data = response.json()
         assert data["spec"]["resources"]["gpus"] == 8
@@ -467,7 +489,9 @@ class TestJobValidation:
             "CUSTOM_VAR": "custom_value",
             "ANOTHER_VAR": "another_value",
         }
-        response = await async_client.post("/api/v1/jobs/", json=job_spec.model_dump(mode="json"))
+        response = await async_client.post(
+            "/api/v1/jobs/", json=job_spec.model_dump(mode="json")
+        )
         assert response.status_code == 201
         data = response.json()
         assert data["spec"]["env"]["CUSTOM_VAR"] == "custom_value"
@@ -479,7 +503,9 @@ class TestJobValidation:
         job_spec = create_job_spec(name="custom-retry-job")
         job_spec.retry.max_retries = 5
         job_spec.retry.retry_delay_seconds = 120
-        response = await async_client.post("/api/v1/jobs/", json=job_spec.model_dump(mode="json"))
+        response = await async_client.post(
+            "/api/v1/jobs/", json=job_spec.model_dump(mode="json")
+        )
         assert response.status_code == 201
         data = response.json()
         assert data["spec"]["retry"]["max_retries"] == 5

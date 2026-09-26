@@ -227,7 +227,9 @@ class TestSyncthingService:
 class TestSyncthingAPI:
     """Tests for Syncthing API endpoints - skipped due to missing app.state.syncthing_service in test environment."""
 
-    @pytest.mark.skip(reason="Requires app.state.syncthing_service which is set by lifespan (not run in unit tests)")
+    @pytest.mark.skip(
+        reason="Requires app.state.syncthing_service which is set by lifespan (not run in unit tests)"
+    )
     def test_syncthing_status_endpoint(self, client):
         """Test GET /api/v1/syncthing/status"""
         response = client.get("/api/v1/syncthing/status")
@@ -238,7 +240,9 @@ class TestSyncthingAPI:
         assert "jobs_folder" in data
         assert "nodes_folder" in data
 
-    @pytest.mark.skip(reason="Requires app.state.syncthing_service which is set by lifespan (not run in unit tests)")
+    @pytest.mark.skip(
+        reason="Requires app.state.syncthing_service which is set by lifespan (not run in unit tests)"
+    )
     def test_syncthing_scan_endpoint(self, client):
         """Test POST /api/v1/syncthing/scan"""
         response = client.post("/api/v1/syncthing/scan")

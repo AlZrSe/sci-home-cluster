@@ -189,6 +189,7 @@ def test_shared_lock_basic():
 
 import sys
 
+
 def test_lock_timeout():
     """Test that lock acquisition times out appropriately."""
     if sys.platform == "win32":

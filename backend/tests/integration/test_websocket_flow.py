@@ -93,7 +93,12 @@ class TestJobLogsHTTP:
 
         # Check first few lines have expected format
         first_line = data[0]
-        assert "INFO" in first_line or "DEBUG" in first_line or "WARN" in first_line or "ERROR" in first_line
+        assert (
+            "INFO" in first_line
+            or "DEBUG" in first_line
+            or "WARN" in first_line
+            or "ERROR" in first_line
+        )
         assert "job-" in first_line
 
     @pytest.mark.asyncio
