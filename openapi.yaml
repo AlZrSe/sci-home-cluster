@@ -104,11 +104,13 @@ components:
 
     CPUMetric:
       type: object
-      required: [timestamp, cpu_percent, memory_percent]
+      required: [timestamp, cpu_percent, memory_percent, temperature_c, memory_used_gb]
       properties:
         timestamp: { type: string, format: date-time }
         cpu_percent: { type: integer }
         memory_percent: { type: integer }
+        temperature_c: { type: integer }
+        memory_used_gb: { type: number, format: float }
 
     JobMetrics:
       type: object
