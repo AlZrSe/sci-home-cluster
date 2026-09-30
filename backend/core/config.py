@@ -87,6 +87,10 @@ class Settings(BaseSettings):
 
     # Database configuration
     DATABASE_URL: str = "sqlite:///./scientific_home_cluster.db"
+    # Connection pool strategy: "pooled" (default) or "null".
+    # "null" opens a fresh connection per session, which the test suite uses
+    # so that connections are never shared between event loops.
+    DB_POOL: str = "pooled"
 
     # CORS origins
     BACKEND_CORS_ORIGINS: List[Union[str, AnyHttpUrl]] = [

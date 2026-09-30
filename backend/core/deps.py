@@ -1,3 +1,5 @@
+from typing import Optional
+
 from fastapi import Depends, Request, WebSocket
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from backend.core.config import settings
@@ -69,6 +71,12 @@ async def get_ws_token_payload(
         if auth_header and auth_header.startswith("Bearer "):
             token = auth_header[7:]  # Remove "Bearer " prefix
 
+    # Fall back to the WebSocket subprotocol. A browser's WebSocket
+    # constructor can set neither query parameters nor headers, so this is
+    # the only way a web client can authenticate a log stream.
+    if not token:
+        token = _token_from_subprotocol(websocket)
+
     if not token:
         raise auth_token_missing(
             "Authentication required. Please provide a valid bearer token."
@@ -81,3 +89,38 @@ async def get_ws_token_payload(
         raise auth_token_expired(
             "Invalid or expired token. Please log in again to get a new access token."
         )
+
+
+def _token_from_subprotocol(websocket: WebSocket) -> Optional[str]:
+    """
+    Extract a token sent as a WebSocket subprotocol.
+
+    The client offers e.g. ["bearer", "<token>"]. We accept the handshake
+    only if "bearer" was among the offered protocols, so that echoing the
+    accepted subprotocol stays a valid token per RFC 6455.
+    """
+    offered = websocket.headers.get("sec-websocket-protocol")
+    if not offered:
+        return None
+    protocols = [part.strip() for part in offered.split(",") if part.strip()]
+    if "bearer" not in [p.lower() for p in protocols]:
+        return None
+    candidates = [p for p in protocols if p.lower() != "bearer"]
+    return candidates[0] if candidates else None
+
+
+def ws_accepted_subprotocol(websocket: WebSocket) -> Optional[str]:
+    """
+    The subprotocol to echo back when accepting the handshake.
+
+    Returns "bearer" when the client offered it, so the browser's
+    WebSocket object reports the connection as open rather than failing the
+    protocol check.
+    """
+    offered = websocket.headers.get("sec-websocket-protocol")
+    if not offered:
+        return None
+    for part in offered.split(","):
+        if part.strip().lower() == "bearer":
+            return "bearer"
+    return None

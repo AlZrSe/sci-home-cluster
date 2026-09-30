@@ -78,11 +78,19 @@ def test_cpu_metric():
     """Test CPUMetric model."""
     from datetime import datetime, timezone
 
-    metric = CPUMetric(timestamp=1234567890.0, cpu_percent=45, memory_percent=60)
+    metric = CPUMetric(
+        timestamp=1234567890.0,
+        cpu_percent=45,
+        memory_percent=60,
+        temperature_c=61,
+        memory_used_gb=9.6,
+    )
     expected_ts = datetime.fromtimestamp(1234567890.0, tz=timezone.utc)
     assert metric.timestamp == expected_ts
     assert metric.cpu_percent == 45
     assert metric.memory_percent == 60
+    assert metric.temperature_c == 61
+    assert metric.memory_used_gb == 9.6
 
     # Test serialization - model_dump returns datetime object (not auto-converted to float)
     data = metric.model_dump()
@@ -93,9 +101,21 @@ def test_cpu_metric():
 
     # Percentages are bounded integers, matching what the API serves.
     with pytest.raises(ValidationError):
-        CPUMetric(timestamp=1234567890.0, cpu_percent=150, memory_percent=60)
+        CPUMetric(
+            timestamp=1234567890.0,
+            cpu_percent=150,
+            memory_percent=60,
+            temperature_c=60,
+            memory_used_gb=1.0,
+        )
     with pytest.raises(ValidationError):
-        CPUMetric(timestamp=1234567890.0, cpu_percent=-1, memory_percent=60)
+        CPUMetric(
+            timestamp=1234567890.0,
+            cpu_percent=-1,
+            memory_percent=60,
+            temperature_c=60,
+            memory_used_gb=1.0,
+        )
 
 
 def test_job_resources():
@@ -313,7 +333,13 @@ def test_job_metrics():
         temperature_c=70,
     )
 
-    cpu_metric = CPUMetric(timestamp=1234567890.0, cpu_percent=45, memory_percent=50)
+    cpu_metric = CPUMetric(
+        timestamp=1234567890.0,
+        cpu_percent=45,
+        memory_percent=50,
+        temperature_c=61,
+        memory_used_gb=16.0,
+    )
 
     summary = JobMetricsSummary(
         gpu_memory_min_mb=1024,

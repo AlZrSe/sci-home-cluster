@@ -11,7 +11,11 @@ from fastapi import (
     status,
     WebSocket,
 )
-from backend.core.deps import get_current_token_payload, get_ws_token_payload
+from backend.core.deps import (
+    get_current_token_payload,
+    get_ws_token_payload,
+    ws_accepted_subprotocol,
+)
 from backend.core.errors import (
     job_not_cancellable,
     job_not_found,
@@ -32,6 +36,12 @@ router = APIRouter()
 async def list_jobs(
     job_status: Optional[str] = Query(None, alias="status"),
     node: Optional[str] = Query(None),
+    node_id: Optional[str] = Query(
+        None,
+        description="Alias for `node`. The web client sends `node_id`; "
+        "unknown query parameters are ignored by FastAPI, so without this "
+        "alias node filtering silently returned unfiltered results.",
+    ),
     search: Optional[str] = Query(None),
     limit: int = Query(10, ge=1, le=100),
     offset: int = Query(0, ge=0),
@@ -42,7 +52,11 @@ async def list_jobs(
     """
     job_service = JobService()
     jobs, total = await job_service.list_jobs(
-        status=job_status, node_id=node, search=search, limit=limit, offset=offset
+        status=job_status,
+        node_id=node or node_id,
+        search=search,
+        limit=limit,
+        offset=offset,
     )
     return JobListResult(items=jobs, total=total)
 
@@ -133,7 +147,10 @@ async def stream_job_logs(
     """
     Stream job logs via WebSocket.
     """
-    await websocket.accept()
+    # Echo the subprotocol the client offered, if any, so a browser client
+    # that authenticates via Sec-WebSocket-Protocol completes the handshake.
+    accepted_subprotocol = ws_accepted_subprotocol(websocket)
+    await websocket.accept(subprotocol=accepted_subprotocol)
     job_service = JobService()
 
     # Check if job exists

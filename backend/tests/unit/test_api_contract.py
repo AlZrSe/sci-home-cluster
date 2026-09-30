@@ -100,17 +100,47 @@ class TestResponseTypes:
     def test_cpu_metrics_are_integers(self):
         from datetime import datetime
 
-        metric = CPUMetric(timestamp=datetime.now(), cpu_percent=45, memory_percent=60)
+        metric = CPUMetric(
+            timestamp=datetime.now(),
+            cpu_percent=45,
+            memory_percent=60,
+            temperature_c=62,
+            memory_used_gb=12.5,
+        )
         dumped = metric.model_dump()
 
         assert isinstance(dumped["cpu_percent"], int)
         assert isinstance(dumped["memory_percent"], int)
+        assert isinstance(dumped["temperature_c"], int)
+        # memory_used_gb is a float, as documented in openapi.yaml.
+        assert isinstance(dumped["memory_used_gb"], float)
+
+    def test_cpu_metrics_expose_the_fields_the_client_reads(self):
+        # frontend/src/lib/types.ts marks both of these as required on
+        # CPUMetric, and openapi.yaml lists them as required.
+        from datetime import datetime
+
+        assert set(CPUMetric.model_fields) == {
+            "timestamp",
+            "cpu_percent",
+            "memory_percent",
+            "temperature_c",
+            "memory_used_gb",
+        }
+        with pytest.raises(ValidationError):
+            CPUMetric(timestamp=datetime.now(), cpu_percent=45, memory_percent=60)
 
     def test_cpu_metrics_are_bounded(self):
         from datetime import datetime
 
         with pytest.raises(ValidationError):
-            CPUMetric(timestamp=datetime.now(), cpu_percent=150, memory_percent=60)
+            CPUMetric(
+                timestamp=datetime.now(),
+                cpu_percent=150,
+                memory_percent=60,
+                temperature_c=60,
+                memory_used_gb=1.0,
+            )
 
     def test_status_stays_an_enum_not_a_string(self):
         state = JobState(

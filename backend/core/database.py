@@ -8,6 +8,7 @@ from contextlib import asynccontextmanager
 from typing import AsyncGenerator
 
 from sqlalchemy import event
+from sqlalchemy.pool import NullPool, QueuePool
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -58,6 +59,11 @@ def get_engine() -> AsyncEngine:
             db_url,
             echo=settings.LOG_LEVEL == "DEBUG",
             pool_pre_ping=True,
+            # Tests run many short-lived event loops against one SQLite file.
+            # A pooled connection created in one loop and reused in the next
+            # is what produces the intermittent "Event loop is closed"
+            # failures, so the test session asks for NullPool.
+            poolclass=NullPool if settings.DB_POOL == "null" else QueuePool,
         )
         if db_url.startswith("sqlite"):
             event.listen(_engine.sync_engine, "connect", _configure_sqlite)

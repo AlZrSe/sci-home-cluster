@@ -49,6 +49,10 @@ def isolated_database():
     # DATABASE_URL default is asserted by test_config.py, and the engine
     # reads settings.DATABASE_URL anyway.
     settings.DATABASE_URL = url
+    # Each test gets its own event loop, so a pooled connection created in
+    # one loop and reused in another causes intermittent "Event loop is
+    # closed" failures. Unpooled connections remove that class of bug.
+    settings.DB_POOL = "null"
 
     async def _create_schema() -> None:
         # A throwaway engine: creating the schema through the global
@@ -107,28 +111,33 @@ def set_syncthing_root(monkeypatch):
 @pytest.fixture(autouse=True)
 def reset_singleton_store():
     """
-    Reset the in-memory store singleton before each test.
-    This ensures test isolation for store-dependent tests.
+    Reset the application store singleton before and after each test.
+
+    Also stops any log stream the test left running. A WebSocket test opens
+    a stream on the singleton store using the test client's event loop; if
+    that task survives the test, the next test fails with "Event loop is
+    closed" or blocks on the database write lock.
     """
-    # Import here to avoid circular imports
-    store = get_store()
-    # Use the existing reset method on the store instance
     import asyncio
 
-    # Run reset in the current event loop if available, otherwise create new
-    try:
-        loop = asyncio.get_running_loop()
-        # Schedule the reset as a task
-        asyncio.run_coroutine_threadsafe(store.reset(), loop).result(timeout=5)
-    except RuntimeError:
-        # No running loop, use asyncio.run
-        asyncio.run(store.reset())
+    store = get_store()
+
+    async def _reset_and_stop() -> None:
+        await store.stop_all_log_streams()
+        await store.reset()
+
+    def _run() -> None:
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            # No running loop, use asyncio.run
+            asyncio.run(_reset_and_stop())
+            return
+        asyncio.run_coroutine_threadsafe(_reset_and_stop(), loop).result(timeout=5)
+
+    _run()
     yield
-    try:
-        loop = asyncio.get_running_loop()
-        asyncio.run_coroutine_threadsafe(store.reset(), loop).result(timeout=5)
-    except RuntimeError:
-        asyncio.run(store.reset())
+    _run()
 
 
 # ============================================================================

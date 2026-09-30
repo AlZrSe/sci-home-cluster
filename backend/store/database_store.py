@@ -40,6 +40,12 @@ def stable_seed(*parts: str) -> int:
     return 1337 + zlib.crc32(":".join(parts).encode("utf-8"))
 
 
+# Assumed system memory when deriving memory_used_gb from a percentage. The
+# frontend mock server does the same thing against its own node's RAM; on the
+# backend a single constant keeps the generated series deterministic.
+SYSTEM_MEMORY_GB = 32
+
+
 class DatabaseStore:
     """Thread-safe database-backed store for jobs, nodes, metrics, and logs."""
 
@@ -596,6 +602,8 @@ class DatabaseStore:
                         timestamp=m.timestamp,
                         cpu_percent=m.cpu_percent,
                         memory_percent=m.memory_percent,
+                        temperature_c=m.temperature_c,
+                        memory_used_gb=m.memory_used_gb,
                     )
                     for m in cpu_models
                 ]
@@ -632,6 +640,8 @@ class DatabaseStore:
                     timestamp=cpu_metric.timestamp,
                     cpu_percent=cpu_metric.cpu_percent,
                     memory_percent=cpu_metric.memory_percent,
+                    temperature_c=cpu_metric.temperature_c,
+                    memory_used_gb=cpu_metric.memory_used_gb,
                 )
                 session.add(model)
             await session.commit()
@@ -677,6 +687,8 @@ class DatabaseStore:
                         timestamp=m.timestamp,
                         cpu_percent=m.cpu_percent,
                         memory_percent=m.memory_percent,
+                        temperature_c=m.temperature_c,
+                        memory_used_gb=m.memory_used_gb,
                     )
                     for m in cpu_models
                 ]
@@ -713,6 +725,8 @@ class DatabaseStore:
                     timestamp=cpu_metric.timestamp,
                     cpu_percent=cpu_metric.cpu_percent,
                     memory_percent=cpu_metric.memory_percent,
+                    temperature_c=cpu_metric.temperature_c,
+                    memory_used_gb=cpu_metric.memory_used_gb,
                 )
                 session.add(model)
             await session.commit()
@@ -790,6 +804,10 @@ class DatabaseStore:
                     timestamp=timestamp,
                     cpu_percent=round(cpu),
                     memory_percent=round(30 + cpu * 0.4),
+                    temperature_c=round(45 + cpu * 0.35),
+                    memory_used_gb=round(
+                        (SYSTEM_MEMORY_GB * round(30 + cpu * 0.4)) / 100, 2
+                    ),
                 )
             )
 
@@ -844,6 +862,10 @@ class DatabaseStore:
                     timestamp=timestamp,
                     cpu_percent=round(cpu),
                     memory_percent=round(30 + cpu * 0.4),
+                    temperature_c=round(45 + cpu * 0.35),
+                    memory_used_gb=round(
+                        (SYSTEM_MEMORY_GB * round(30 + cpu * 0.4)) / 100, 2
+                    ),
                 )
             )
 

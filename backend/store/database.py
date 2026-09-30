@@ -6,6 +6,7 @@ from sqlalchemy import (
     Column,
     String,
     Integer,
+    Float,
     DateTime,
     Text,
     ForeignKey,
@@ -113,6 +114,8 @@ class CPUMetricModel(Base):
     timestamp = Column(DateTime, nullable=False)
     cpu_percent = Column(Integer, nullable=False)
     memory_percent = Column(Integer, nullable=False)
+    temperature_c = Column(Integer, nullable=False, server_default="0")
+    memory_used_gb = Column(Float, nullable=False, server_default="0.0")
 
     __table_args__ = (Index("ix_cpu_metrics_job_timestamp", "job_id", "timestamp"),)
 
