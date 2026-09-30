@@ -105,7 +105,7 @@ cd backend && alembic upgrade head
 cd frontend
 npm install
 ```
-The frontend is included in this repository at `frontend/`.
+The frontend is a git submodule at `frontend/` (repository: `AlZrSe/rendering-replicate`).
 
 ### 4. Syncthing Setup
 1. Install Syncthing on all machines (including server)
@@ -124,8 +124,8 @@ The frontend is included in this repository at `frontend/`.
 # Backend tests (with coverage) - run from backend directory
 cd backend && pytest --cov=backend --cov-report=term-missing
 
-# Frontend tests (if configured)
-cd frontend && npm test
+# Frontend lint
+cd frontend && npm run lint
 
 # Or use make targets (Linux/macOS/WSL/Git Bash)
 make test
@@ -238,46 +238,17 @@ sci-run logs <job-id> --follow
 
 ---
 
-## Architecture Overview
-
-This platform uses a client-server architecture with:
-
-```
-+----------------+     +----------------+     +----------------+
-|                |     |                |     |                |
-|  API Server    |<---->|  Syncthing     |<---->|  Worker Agents |
-|  (FastAPI)     |     |  (File Sync)   |     |  (Python)      |
-|                |     |                |     |                |
-+----------------+     +----------------+     +----------------+
-        ^                         ^
-        |                         |
-+----------------+     +----------------+
-|                |     |                |
-|    CLI/Web     |     |    Monitoring  |
-|    Interface   |     |    Tools       |
-|                |     |                |
-+----------------+     +----------------+
-```
-
-- **API Server**: FastAPI + SQLite for job management and scheduling
-- **Worker Agents**: Python scripts running on each node to execute jobs
-- **Data Layer**: Syncthing for file sharing between nodes
-- **Interface**: CLI and Web UI for job submission and monitoring
-- **Workflow**: Agent-team skill with PM, SWE, QA, and On-Call Engineer roles
-
----
-
 ## Project Structure
 
 ```
-sci-cluster/
+scientific-home-cluster/
 ├── frontend/              # React Dashboard (Vite + Tailwind) ✅ COMPLETE
 ├── shared/                # Shared code (schemas, utilities)
-├── backend/               # API Server (FastAPI + SQLite)
-├── agent/                 # Worker Node Agent
-├── cli/                   # User CLI (Typer)
-├── tests/                 # Test suite (top-level)
-├── docker/                # Docker configurations
+├── backend/               # API Server (FastAPI + SQLite) — COMPLETE
+├── agent/                 # Worker Node Agent (stub)
+├── cli/                   # User CLI (Typer) (stub)
+├── backend/tests/         # Unit & integration tests
+├── docker/                # Docker configs (planned)
 ├── docs/                  # Architecture specs (API, tests, routers, etc.)
 ├── stubs/                 # Type stubs
 ├── openapi.yaml           # OpenAPI 3.0 specification
@@ -299,7 +270,3 @@ This project uses the [agent-team skill](.opencode/skills/agent-team/SKILL.md) w
 4. **On-Call Engineer**: Monitors CI/CD after code is merged
 
 See [PROCESS.md](PROCESS.md) for detailed workflow instructions.
-
-## License
-
-MIT License - see [LICENSE](LICENSE) for details

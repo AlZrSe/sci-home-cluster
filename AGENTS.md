@@ -12,9 +12,8 @@ Distributed platform for running scientific workloads on a home GPU cluster.
 | Frontend dev | `cd frontend && npm run dev` |
 | Frontend build | `cd frontend && npm run build` |
 | Frontend lint | `cd frontend && npm run lint` |
-| Frontend test | `cd frontend && npm run test` |
 | Backend lint | `ruff check . && ruff format . && mypy .` |
-| Backend test | `pytest --cov=backend --cov=agent --cov=cli` |
+| Backend test | `pytest --cov=backend` |
 | API server | `uvicorn backend.main:app --reload` |
 | Worker agent | `python agent/run_agent.py --node-id node-01` |
 
@@ -68,13 +67,13 @@ feat: set up backend project structure with FastAPI and dependencies
 ```
 scientific-home-cluster/
 ├── frontend/          # React dashboard (Vite + TanStack + Tailwind) — COMPLETE
-├── backend/           # FastAPI + SQLite API server (planned)
-├── shared/            # Shared schemas, types, utilities (planned)
-├── agent/             # Worker node agent (planned)
-├── cli/               # Typer CLI for job submission (planned)
-├── tests/             # Integration/e2e tests (planned)
+├── backend/           # FastAPI + SQLite API server (COMPLETE)
+├── shared/            # Shared schemas, types, utilities (COMPLETE)
+├── agent/             # Worker node agent (stub)
+├── cli/               # Typer CLI for job submission (stub)
+├── backend/tests/     # Unit & integration tests
 ├── docker/            # Docker configs (planned)
-├── docs/spec.md       # Frontend specification
+├── docs/              # Architecture specs
 ├── openapi.yaml       # API contract
 ├── PROCESS.md         # Development workflow
 └── AGENTS.md          # This file
@@ -91,7 +90,7 @@ scientific-home-cluster/
 - **Services**: Use `ServiceFactory` (auto-selects mock on localhost)
 
 ### Python (Backend)
-- **Style**: `ruff` (format + lint), `mypy` strict mode
+- **Style**: `ruff` (format + lint), `mypy` (lenient; not strict mode)
 - **Imports**: Absolute from package root (`from backend.api import routes`)
 - **Naming**: snake_case functions/vars, PascalCase classes, UPPER_CASE constants
 - **Types**: Full type hints, Pydantic models for API schemas
@@ -102,8 +101,8 @@ scientific-home-cluster/
 ## Testing
 | Level | Target | Command |
 |-------|--------|---------|
-| Unit | >80% coverage | `pytest --cov` (backend), `vitest --coverage` (frontend) |
-| Integration | API endpoints, service layer | `pytest tests/integration` |
+| Unit | >80% coverage | `pytest --cov=backend` |
+| Integration | API endpoints, service layer | `pytest backend/tests/integration` |
 | E2E | Critical user flows | Planned: Playwright |
 
 **Definition of Done**: All tests pass + no lint/type errors + PM acceptance. See: `PROCESS.md#definition-of-done`, `docs/spec.md#testing-strategy`
