@@ -267,7 +267,7 @@ class TestJobLifecycle:
         job_id = create_response.json()["job_id"]
 
         # Directly update job status to FAILED via store
-        from backend.store.memory import get_store
+        from backend.store import get_store
 
         store = get_store()
         await store.update_job(
@@ -312,7 +312,7 @@ class TestJobLifecycle:
         create_response = await async_client.post("/api/v1/jobs/", json=job_spec_dict)
         job_id = create_response.json()["job_id"]
 
-        from backend.store.memory import get_store
+        from backend.store import get_store
 
         store = get_store()
         await store.update_job(job_id, status=JobStatus.COMPLETED, exit_code=0)

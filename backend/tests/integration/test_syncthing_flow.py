@@ -14,7 +14,7 @@ from backend.models.job_state import JobState
 from backend.models.job_spec import JobSpec
 from backend.models.job_status import JobStatus
 from backend.models.node_spec import NodeSpec, GPUInfo
-from backend.store.memory import get_store
+from backend.store import get_store
 
 
 @pytest.mark.integration

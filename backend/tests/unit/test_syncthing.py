@@ -12,7 +12,7 @@ from backend.models.job_state import JobState
 from backend.models.job_spec import JobSpec
 from backend.models.job_status import JobStatus
 from backend.models.node_spec import NodeSpec, GPUInfo
-from backend.store.memory import get_store
+from backend.store import get_store
 
 
 @pytest.fixture
@@ -26,30 +26,29 @@ def temp_syncthing_root():
 
 
 @pytest.fixture
-def syncthing_service(temp_syncthing_root):
-    """Create a SyncthingService instance with temp directory."""
+async def syncthing_service(temp_syncthing_root):
+    """
+    Create a SyncthingService instance with a temp directory.
+
+    Deliberately an async fixture: the teardown must await stop() on the
+    SAME event loop the service was started on. A sync fixture calling
+    asyncio.get_event_loop() gets a closed or foreign loop, the RuntimeError
+    is swallowed, and the watchdog thread is left running - which then
+    writes to the database concurrently with later tests and makes them
+    fail with "database is locked".
+    """
     service = SyncthingService(temp_syncthing_root)
     # Don't start here - let tests start it if needed
     yield service
-    # Cleanup - stop if running (ignore cleanup errors in tests)
+    # Cleanup - stop if running
     if service._running:
-        import asyncio
-
-        try:
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                # Schedule cleanup on the running loop
-                loop.create_task(service.stop())
-            else:
-                loop.run_until_complete(service.stop())
-        except RuntimeError:
-            pass  # No event loop, ignore
+        await service.stop()
 
 
 @pytest.fixture(autouse=True)
 async def reset_store_fixture():
     """Reset store before each test."""
-    from backend.store.memory import get_store
+    from backend.store import get_store
 
     store = get_store()
     await store.reset()

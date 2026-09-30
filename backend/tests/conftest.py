@@ -3,8 +3,10 @@ Test configuration and fixtures for the backend test suite.
 """
 
 import os
+import shutil
 import tempfile
 from datetime import datetime
+from pathlib import Path
 from typing import AsyncGenerator, Generator, Optional
 
 import pytest
@@ -14,11 +16,73 @@ from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sess
 from sqlalchemy.orm import DeclarativeBase
 
 from backend.main import app
+from backend.core.config import settings
+from backend.core.database import close_database
 from backend.core.security import create_access_token
 from backend.models.job_spec import JobSpec, Resources, Paths, RetryPolicy
 from backend.models.node_spec import NodeSpec, GPUInfo
 from backend.store import get_store
 from backend.store.memory import InMemoryStore
+
+
+@pytest.fixture(scope="session", autouse=True)
+def isolated_database():
+    """
+    Point the whole test session at a throwaway SQLite database.
+
+    Without this the suite reads and writes the real
+    ./scientific_home_cluster.db in the repo root, which makes tests
+    non-hermetic and causes "database is locked" errors whenever the
+    Syncthing watcher thread writes concurrently with a test.
+    """
+    import asyncio
+
+    from backend.store.database import Base
+
+    tmpdir = tempfile.mkdtemp(prefix="shc-test-db-")
+    db_path = Path(tmpdir) / "test.db"
+    url = "sqlite:///" + db_path.as_posix()
+    # Override the settings singleton only, not os.environ: the
+    # DATABASE_URL default is asserted by test_config.py, and the engine
+    # reads settings.DATABASE_URL anyway.
+    settings.DATABASE_URL = url
+
+    async def _create_schema() -> None:
+        # A throwaway engine: creating the schema through the global
+        # engine would bind its pooled connections to this fixture's
+        # event loop, which differs from the per-test loops.
+        engine = create_async_engine(
+            "sqlite+aiosqlite:///" + db_path.as_posix(), echo=False
+        )
+        try:
+            async with engine.begin() as conn:
+                await conn.run_sync(Base.metadata.create_all)
+        finally:
+            await engine.dispose()
+
+    asyncio.run(_create_schema())
+
+    yield url
+    shutil.rmtree(tmpdir, ignore_errors=True)
+
+
+@pytest.fixture(scope="session", autouse=True)
+def dispose_database_engine():
+    """
+    Dispose the global async engine once the test session ends.
+
+    aiosqlite runs a NON-daemon worker thread per connection, so an
+    undisposed engine keeps the interpreter alive after pytest has
+    finished and the process hangs forever. Disposing the engine closes
+    those connections and lets the process exit.
+
+    Deliberately synchronous: an async session-scoped fixture would need
+    pytest-asyncio's function-scoped event_loop and raise ScopeMismatch.
+    """
+    yield
+    import asyncio
+
+    asyncio.run(close_database())
 
 
 @pytest.fixture(autouse=True)

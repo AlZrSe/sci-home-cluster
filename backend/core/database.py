@@ -7,6 +7,7 @@ import logging
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator
 
+from sqlalchemy import event
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -23,6 +24,27 @@ _engine: AsyncEngine | None = None
 _session_factory: async_sessionmaker[AsyncSession] | None = None
 
 
+def _configure_sqlite(dbapi_connection, _connection_record) -> None:
+    """
+    Put SQLite into WAL mode with a real busy timeout.
+
+    The Syncthing watcher runs on its own thread and writes to the same
+    database as in-flight API requests. In the default rollback-journal
+    mode a reader that later tries to write gets SQLITE_BUSY
+    immediately (the classic deferred-transaction deadlock) and the
+    request fails with "database is locked". WAL lets readers and the
+    writer proceed, and busy_timeout makes competing writers wait
+    instead of failing.
+    """
+    cursor = dbapi_connection.cursor()
+    try:
+        cursor.execute("PRAGMA journal_mode=WAL")
+        cursor.execute("PRAGMA busy_timeout=10000")
+        cursor.execute("PRAGMA synchronous=NORMAL")
+    finally:
+        cursor.close()
+
+
 def get_engine() -> AsyncEngine:
     """Get or create the async database engine."""
     global _engine
@@ -37,6 +59,8 @@ def get_engine() -> AsyncEngine:
             echo=settings.LOG_LEVEL == "DEBUG",
             pool_pre_ping=True,
         )
+        if db_url.startswith("sqlite"):
+            event.listen(_engine.sync_engine, "connect", _configure_sqlite)
         logger.info(f"Created async database engine: {db_url}")
     return _engine
 
