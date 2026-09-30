@@ -6,7 +6,7 @@ from fastapi.testclient import TestClient
 from fastapi import HTTPException
 from backend.main import app
 from backend.core.config import settings
-from backend.models.error_response import ErrorResponse
+from shared.schemas.error_response import ErrorResponse
 
 
 def test_root_endpoint():

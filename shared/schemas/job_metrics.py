@@ -1,23 +1,27 @@
 """
-Job metrics model for the Scientific Home Cluster.
+Aggregated job metrics.
 """
 
-from pydantic import BaseModel
 from typing import List
-from .gpu_metric import GPUMetric
+
+from pydantic import BaseModel, Field
+
 from .cpu_metric import CPUMetric
+from .gpu_metric import GPUMetric
 
 
 class JobMetricsSummary(BaseModel):
-    """Summary of job metrics."""
+    """Summary statistics over a job's metric samples."""
 
-    gpu_memory_min_mb: int
-    gpu_memory_max_mb: int
-    gpu_memory_avg_mb: int
-    gpu_util_min: int
-    gpu_util_max: int
-    gpu_util_avg: int
-    cpu_avg_percent: float
+    gpu_memory_min_mb: int = Field(..., ge=0)
+    gpu_memory_max_mb: int = Field(..., ge=0)
+    gpu_memory_avg_mb: int = Field(..., ge=0)
+    gpu_util_min: int = Field(..., ge=0, le=100)
+    gpu_util_max: int = Field(..., ge=0, le=100)
+    gpu_util_avg: int = Field(..., ge=0, le=100)
+    cpu_avg_percent: int = Field(..., ge=0, le=100)
+
+    model_config = {"from_attributes": True}
 
 
 class JobMetrics(BaseModel):
@@ -28,9 +32,4 @@ class JobMetrics(BaseModel):
     cpu_metrics: List[CPUMetric]
     summary: JobMetricsSummary
 
-    model_config = {
-        "from_attributes": True,
-        "arbitrary_types_allowed": True,
-        "use_enum_values": True,
-        "validate_default": True,
-    }
+    model_config = {"from_attributes": True}

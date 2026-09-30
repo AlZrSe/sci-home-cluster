@@ -17,7 +17,7 @@ from fastapi.responses import JSONResponse
 from backend.core.config import settings
 from backend.core.database import init_database, close_database, run_migrations
 from backend.api.v1 import auth, nodes, syncthing, jobs
-from backend.models.error_response import ErrorResponse
+from shared.schemas.error_response import ErrorResponse
 from backend.store import get_store
 from backend.services.syncthing_service import SyncthingService
 

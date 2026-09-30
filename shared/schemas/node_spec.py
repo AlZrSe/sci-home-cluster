@@ -1,11 +1,15 @@
 """
-Node specification model for the Scientific Home Cluster.
+Node specification.
 """
 
-from pydantic import BaseModel
-from typing import List, Optional
 from datetime import datetime
+from typing import List, Optional
+
+from pydantic import BaseModel, Field
+
 from .gpu_metric import GPUInfo
+
+__all__ = ["GPUInfo", "NodeSpec"]
 
 
 class NodeSpec(BaseModel):
@@ -14,17 +18,11 @@ class NodeSpec(BaseModel):
     node_id: str
     hostname: str
     gpus: List[GPUInfo]
-    cpus: int
-    memory_gb: int
+    cpus: int = Field(..., ge=1)
+    memory_gb: int = Field(..., ge=1)
     os: str
-    status: str  # e.g., ONLINE, OFFLINE, MAINTENANCE
+    status: str = Field(..., pattern="^(ONLINE|OFFLINE)$")
     last_heartbeat: datetime
     current_job_id: Optional[str] = None
 
-    model_config = {
-        "from_attributes": True,
-        # Allow using ORM mode if needed with SQLAlchemy
-        "orm_mode": True,
-        # Allow arbitrary types if needed
-        "arbitrary_types_allowed": True,
-    }
+    model_config = {"from_attributes": True}

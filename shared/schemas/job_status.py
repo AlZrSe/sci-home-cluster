@@ -1,5 +1,5 @@
 """
-Job status enumeration for the Scientific Home Cluster.
+Job status enumeration, shared by the API server, the worker agent and the CLI.
 """
 
 from enum import Enum

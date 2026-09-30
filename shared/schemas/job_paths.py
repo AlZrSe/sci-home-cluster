@@ -1,16 +1,7 @@
 """
-Job paths model for the Scientific Home Cluster.
+Deprecated alias module. Use :mod:`shared.schemas.paths` instead.
 """
 
-from pydantic import BaseModel
+from .paths import JobPaths, Paths
 
-
-class JobPaths(BaseModel):
-    """Input and output paths for a job."""
-
-    input: str
-    output: str
-
-    model_config = {
-        "from_attributes": True,
-    }
+__all__ = ["JobPaths", "Paths"]

@@ -1,30 +1,59 @@
 """
 Shared schemas package for the Scientific Home Cluster.
-Exports all Pydantic models for job definitions, state, metrics, and nodes.
+
+This package is the single source of truth for the API contract. The API
+server, the worker agent and the CLI all import from here; the frontend
+consumes the resulting JSON over HTTP.
 """
 
-from .job_status import JobStatus
-from .gpu_metric import GPUInfo, GPUMetric
 from .cpu_metric import CPUMetric
-from .job_resources import JobResources
-from .job_paths import JobPaths
-from .job_retry import JobRetry
+from .error_response import ErrorResponse
+from .gpu_metric import GPUInfo, GPUMetric
+from .job_list_result import JobListResult
+from .job_metrics import JobMetrics, JobMetricsSummary
+from .job_query import JobQuery
 from .job_spec import JobSpec
 from .job_state import JobState
-from .job_metrics import JobMetrics, JobMetricsSummary
+from .job_status import JobStatus
 from .node_spec import NodeSpec
+from .paths import Paths
+from .paths import Paths as JobPaths
+from .resources import Resources
+from .resources import Resources as JobResources
+from .retry import RetryPolicy
+from .retry import RetryPolicy as JobRetry
+from .token_validation import (
+    TokenCreateRequest,
+    TokenCreateResponse,
+    TokenRefreshRequest,
+    TokenRefreshResponse,
+    TokenValidationRequest,
+    TokenValidationResponse,
+)
 
 __all__ = [
-    "JobStatus",
+    "CPUMetric",
+    "ErrorResponse",
     "GPUInfo",
     "GPUMetric",
-    "CPUMetric",
-    "JobResources",
+    "JobListResult",
+    "JobMetrics",
+    "JobMetricsSummary",
     "JobPaths",
+    "JobQuery",
+    "JobResources",
     "JobRetry",
     "JobSpec",
     "JobState",
-    "JobMetrics",
-    "JobMetricsSummary",
+    "JobStatus",
     "NodeSpec",
+    "Paths",
+    "Resources",
+    "RetryPolicy",
+    "TokenCreateRequest",
+    "TokenCreateResponse",
+    "TokenRefreshRequest",
+    "TokenRefreshResponse",
+    "TokenValidationRequest",
+    "TokenValidationResponse",
 ]

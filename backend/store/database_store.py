@@ -13,13 +13,13 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.core.database import get_session
-from backend.models.job_status import JobStatus
-from backend.models.job_state import JobState
-from backend.models.job_spec import JobSpec
-from backend.models.node_spec import NodeSpec, GPUInfo
-from backend.models.job_metrics import JobMetrics, JobMetricsSummary
-from backend.models.gpu_metric import GPUMetric
-from backend.models.cpu_metric import CPUMetric
+from shared.schemas.job_status import JobStatus
+from shared.schemas.job_state import JobState
+from shared.schemas.job_spec import JobSpec
+from shared.schemas.node_spec import NodeSpec, GPUInfo
+from shared.schemas.job_metrics import JobMetrics, JobMetricsSummary
+from shared.schemas.gpu_metric import GPUMetric
+from shared.schemas.cpu_metric import CPUMetric
 from backend.store.database import (
     JobModel,
     NodeModel,

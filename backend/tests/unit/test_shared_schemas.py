@@ -2,6 +2,9 @@
 Unit tests for shared Pydantic schemas.
 """
 
+import pytest
+from pydantic import ValidationError
+
 from shared.schemas.job_spec import JobSpec
 from shared.schemas.job_state import JobState
 from shared.schemas.job_resources import JobResources
@@ -75,18 +78,24 @@ def test_cpu_metric():
     """Test CPUMetric model."""
     from datetime import datetime, timezone
 
-    metric = CPUMetric(timestamp=1234567890.0, cpu_percent=45.5, memory_percent=60.2)
+    metric = CPUMetric(timestamp=1234567890.0, cpu_percent=45, memory_percent=60)
     expected_ts = datetime.fromtimestamp(1234567890.0, tz=timezone.utc)
     assert metric.timestamp == expected_ts
-    assert metric.cpu_percent == 45.5
-    assert metric.memory_percent == 60.2
+    assert metric.cpu_percent == 45
+    assert metric.memory_percent == 60
 
     # Test serialization - model_dump returns datetime object (not auto-converted to float)
     data = metric.model_dump()
-    assert data["cpu_percent"] == 45.5
-    assert data["memory_percent"] == 60.2
+    assert data["cpu_percent"] == 45
+    assert data["memory_percent"] == 60
     # Note: timestamp remains datetime object in model_dump (Pydantic default behavior)
     assert isinstance(data["timestamp"], datetime)
+
+    # Percentages are bounded integers, matching what the API serves.
+    with pytest.raises(ValidationError):
+        CPUMetric(timestamp=1234567890.0, cpu_percent=150, memory_percent=60)
+    with pytest.raises(ValidationError):
+        CPUMetric(timestamp=1234567890.0, cpu_percent=-1, memory_percent=60)
 
 
 def test_job_resources():
@@ -104,10 +113,11 @@ def test_job_resources():
     assert data["memory_gb"] == 32
     assert data["vram_gb"] == 16
 
-    # Note: No validation for negative values in current schema
-    # (Schema would need Field(ge=0) to enforce positive values)
-    resources_neg = JobResources(gpus=-1, cpus=2, memory_gb=4, vram_gb=2)
-    assert resources_neg.gpus == -1
+    # Bounds are enforced.
+    with pytest.raises(ValidationError):
+        JobResources(gpus=-1, cpus=2, memory_gb=4, vram_gb=2)
+    with pytest.raises(ValidationError):
+        JobResources(gpus=1, cpus=0, memory_gb=4, vram_gb=2)
 
 
 def test_job_paths():
@@ -133,10 +143,16 @@ def test_job_retry():
     assert data["max_retries"] == 5
     assert data["retry_delay_seconds"] == 120
 
-    # Note: No validation for negative values in current schema
-    # (Schema would need Field(ge=0) to enforce positive values)
-    retry_neg = JobRetry(max_retries=-1, retry_delay_seconds=60)
-    assert retry_neg.max_retries == -1
+    # Bounds are enforced.
+    with pytest.raises(ValidationError):
+        JobRetry(max_retries=-1, retry_delay_seconds=60)
+    with pytest.raises(ValidationError):
+        JobRetry(max_retries=3, retry_delay_seconds=99999)
+
+    # Defaults match the API contract.
+    defaults = JobRetry()
+    assert defaults.max_retries == 3
+    assert defaults.retry_delay_seconds == 60
 
 
 def test_job_spec():
@@ -170,18 +186,43 @@ def test_job_spec():
     assert data["working_dir"] == "/workspace"
     assert data["env"] == {"VAR": "value"}
 
-    # Note: No validation for empty name in current schema
-    # (Schema would need Field(min_length=1) to enforce non-empty)
-    job_spec_empty = JobSpec(
-        name="",
-        command="test",
-        working_dir="/tmp",
-        env={},
-        resources=JobResources(gpus=1, cpus=1, memory_gb=1, vram_gb=1),
-        paths=JobPaths(input="/tmp", output="/tmp"),
-        retry=JobRetry(max_retries=1, retry_delay_seconds=1),
+    # working_dir, paths and retry are optional with defaults.
+    minimal = JobSpec(
+        name="minimal-job",
+        command="python train.py",
+        resources=JobResources(gpus=1, cpus=1, memory_gb=1),
     )
-    assert job_spec_empty.name == ""
+    assert minimal.working_dir == "/sync/projects/new-run"
+    assert minimal.paths.input is None
+    assert minimal.paths.output is None
+    assert minimal.retry.max_retries == 3
+    assert minimal.env == {}
+
+    # name and command are validated.
+    with pytest.raises(ValidationError):
+        JobSpec(
+            name="",
+            command="test",
+            resources=JobResources(gpus=1, cpus=1, memory_gb=1),
+        )
+    with pytest.raises(ValidationError):
+        JobSpec(
+            name="ab",
+            command="test",
+            resources=JobResources(gpus=1, cpus=1, memory_gb=1),
+        )
+    with pytest.raises(ValidationError):
+        JobSpec(
+            name="not a valid name",
+            command="test",
+            resources=JobResources(gpus=1, cpus=1, memory_gb=1),
+        )
+    with pytest.raises(ValidationError):
+        JobSpec(
+            name="ok-name",
+            command="ab",
+            resources=JobResources(gpus=1, cpus=1, memory_gb=1),
+        )
 
 
 def test_job_state():
@@ -272,9 +313,7 @@ def test_job_metrics():
         temperature_c=70,
     )
 
-    cpu_metric = CPUMetric(
-        timestamp=1234567890.0, cpu_percent=45.0, memory_percent=50.0
-    )
+    cpu_metric = CPUMetric(timestamp=1234567890.0, cpu_percent=45, memory_percent=50)
 
     summary = JobMetricsSummary(
         gpu_memory_min_mb=1024,
@@ -283,7 +322,7 @@ def test_job_metrics():
         gpu_util_min=30,
         gpu_util_max=90,
         gpu_util_avg=65,
-        cpu_avg_percent=45.2,
+        cpu_avg_percent=45,
     )
 
     metrics = JobMetrics(
@@ -302,9 +341,9 @@ def test_job_metrics():
     data = metrics.model_dump()
     assert data["job_id"] == "job-123"
     assert data["gpu_metrics"][0]["memory_used_mb"] == 4096
-    assert data["cpu_metrics"][0]["cpu_percent"] == 45.0
+    assert data["cpu_metrics"][0]["cpu_percent"] == 45
     assert data["summary"]["gpu_memory_min_mb"] == 1024
-    assert data["summary"]["cpu_avg_percent"] == 45.2
+    assert data["summary"]["cpu_avg_percent"] == 45
 
 
 def test_job_metrics_summary():
@@ -316,7 +355,7 @@ def test_job_metrics_summary():
         gpu_util_min=30,
         gpu_util_max=90,
         gpu_util_avg=65,
-        cpu_avg_percent=45.2,
+        cpu_avg_percent=45,
     )
 
     assert summary.gpu_memory_min_mb == 1024
@@ -325,7 +364,7 @@ def test_job_metrics_summary():
     assert summary.gpu_util_min == 30
     assert summary.gpu_util_max == 90
     assert summary.gpu_util_avg == 65
-    assert summary.cpu_avg_percent == 45.2
+    assert summary.cpu_avg_percent == 45
 
     # Test serialization
     data = summary.model_dump()
@@ -335,7 +374,7 @@ def test_job_metrics_summary():
     assert data["gpu_util_min"] == 30
     assert data["gpu_util_max"] == 90
     assert data["gpu_util_avg"] == 65
-    assert data["cpu_avg_percent"] == 45.2
+    assert data["cpu_avg_percent"] == 45
 
 
 def test_json_yaml_serialization():

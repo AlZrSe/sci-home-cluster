@@ -15,7 +15,7 @@ from sqlalchemy import (
 from sqlalchemy.orm import DeclarativeBase, relationship
 from sqlalchemy.dialects.sqlite import JSON as SQLiteJSON
 
-from backend.models.job_status import JobStatus
+from shared.schemas.job_status import JobStatus
 
 
 class Base(DeclarativeBase):

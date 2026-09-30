@@ -12,8 +12,8 @@ from datetime import datetime
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
 
-from backend.models.job_state import JobState
-from backend.models.node_spec import NodeSpec
+from shared.schemas.job_state import JobState
+from shared.schemas.node_spec import NodeSpec
 from backend.store import get_store
 from shared.file_ops import read_yaml
 

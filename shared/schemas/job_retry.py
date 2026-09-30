@@ -1,16 +1,7 @@
 """
-Job retry model for the Scientific Home Cluster.
+Deprecated alias module. Use :mod:`shared.schemas.retry` instead.
 """
 
-from pydantic import BaseModel
+from .retry import JobRetry, RetryPolicy
 
-
-class JobRetry(BaseModel):
-    """Retry configuration for a job."""
-
-    max_retries: int
-    retry_delay_seconds: int
-
-    model_config = {
-        "from_attributes": True,
-    }
+__all__ = ["JobRetry", "RetryPolicy"]

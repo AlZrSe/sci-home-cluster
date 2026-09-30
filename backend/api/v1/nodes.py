@@ -5,8 +5,8 @@ Node management API endpoints.
 from typing import List
 from fastapi import APIRouter, Depends, HTTPException, status
 from backend.core.deps import get_current_token_payload
-from backend.models.node_spec import NodeSpec
-from backend.models.job_metrics import JobMetrics
+from shared.schemas.node_spec import NodeSpec
+from shared.schemas.job_metrics import JobMetrics
 from backend.services.node_service import NodeService
 
 router = APIRouter()

@@ -13,10 +13,10 @@ from fastapi import (
     WebSocket,
 )
 from backend.core.deps import get_current_token_payload, get_ws_token_payload
-from backend.models.job_state import JobState
-from backend.models.job_list_result import JobListResult
-from backend.models.job_spec import JobSpec
-from backend.models.job_metrics import JobMetrics
+from shared.schemas.job_state import JobState
+from shared.schemas.job_list_result import JobListResult
+from shared.schemas.job_spec import JobSpec
+from shared.schemas.job_metrics import JobMetrics
 from backend.services.job_service import JobService
 
 router = APIRouter()

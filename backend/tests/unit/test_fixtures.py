@@ -5,8 +5,8 @@ Test to verify the new conftest fixtures work correctly.
 import pytest
 from httpx import AsyncClient
 from backend.store import DatabaseStore
-from backend.models.job_spec import JobSpec
-from backend.models.node_spec import NodeSpec
+from shared.schemas.job_spec import JobSpec
+from shared.schemas.node_spec import NodeSpec
 from backend.tests.factories import (
     JobSpecFactory,
     NodeSpecFactory,

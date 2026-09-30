@@ -1,28 +1,25 @@
 """
-Job specification model for the Scientific Home Cluster.
+Job specification, the contract between a submitter and a worker node.
 """
 
-from pydantic import BaseModel
 from typing import Dict
-from .job_resources import JobResources
-from .job_paths import JobPaths
-from .job_retry import JobRetry
+
+from pydantic import BaseModel, Field
+
+from .paths import Paths
+from .resources import Resources
+from .retry import RetryPolicy
 
 
 class JobSpec(BaseModel):
     """Specification for a job to be executed in the cluster."""
 
-    name: str
-    command: str
-    working_dir: str
-    env: Dict[str, str] = {}
-    resources: JobResources
-    paths: JobPaths
-    retry: JobRetry
+    name: str = Field(..., pattern="^[a-zA-Z0-9_-]+$", min_length=3)
+    command: str = Field(..., min_length=3)
+    working_dir: str = Field(default="/sync/projects/new-run")
+    env: Dict[str, str] = Field(default_factory=dict)
+    resources: Resources
+    paths: Paths = Field(default_factory=Paths)
+    retry: RetryPolicy = Field(default_factory=RetryPolicy)
 
-    model_config = {
-        "from_attributes": True,
-        "arbitrary_types_allowed": True,
-        "use_enum_values": True,
-        "validate_default": True,
-    }
+    model_config = {"from_attributes": True}

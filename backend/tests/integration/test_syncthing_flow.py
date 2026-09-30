@@ -10,10 +10,10 @@ from datetime import datetime
 from httpx import AsyncClient, ASGITransport
 from backend.main import app
 from backend.services.syncthing_service import SyncthingService
-from backend.models.job_state import JobState
-from backend.models.job_spec import JobSpec
-from backend.models.job_status import JobStatus
-from backend.models.node_spec import NodeSpec, GPUInfo
+from shared.schemas.job_state import JobState
+from shared.schemas.job_spec import JobSpec
+from shared.schemas.job_status import JobStatus
+from shared.schemas.node_spec import NodeSpec, GPUInfo
 from backend.store import get_store
 
 

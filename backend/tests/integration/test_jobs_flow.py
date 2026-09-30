@@ -6,7 +6,7 @@ import pytest
 from httpx import AsyncClient, ASGITransport
 from backend.main import app
 from backend.tests.factories import JobSpecFactory, create_job_spec
-from backend.models.job_status import JobStatus
+from shared.schemas.job_status import JobStatus
 
 
 @pytest.mark.integration

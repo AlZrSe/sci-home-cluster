@@ -1,10 +1,12 @@
 """
-Job state model for the Scientific Home Cluster.
+Runtime state of a job in the cluster.
 """
 
-from pydantic import BaseModel
-from typing import Optional
 from datetime import datetime
+from typing import Optional
+
+from pydantic import BaseModel, Field
+
 from .job_spec import JobSpec
 from .job_status import JobStatus
 
@@ -12,7 +14,7 @@ from .job_status import JobStatus
 class JobState(BaseModel):
     """Runtime state of a job in the cluster."""
 
-    job_id: str
+    job_id: str = Field(..., pattern="^job-\\d+$")
     spec: JobSpec
     status: JobStatus
     node_id: Optional[str] = None
@@ -21,11 +23,6 @@ class JobState(BaseModel):
     completed_at: Optional[datetime] = None
     exit_code: Optional[int] = None
     error: Optional[str] = None
-    retry_count: int = 0
+    retry_count: int = Field(..., ge=0)
 
-    model_config = {
-        "from_attributes": True,
-        "arbitrary_types_allowed": True,
-        "use_enum_values": True,
-        "validate_default": True,
-    }
+    model_config = {"from_attributes": True}

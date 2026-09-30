@@ -1,32 +1,29 @@
 """
-GPU metric models for the Scientific Home Cluster.
+GPU metric models.
 """
 
-from pydantic import BaseModel
 from datetime import datetime
+
+from pydantic import BaseModel, Field
 
 
 class GPUInfo(BaseModel):
-    """Information about a GPU."""
+    """Information about a single GPU on a node."""
 
     name: str
     memory_gb: int
 
-    model_config = {
-        "from_attributes": True,
-    }
+    model_config = {"from_attributes": True}
 
 
 class GPUMetric(BaseModel):
     """GPU utilization and memory metrics."""
 
     timestamp: datetime
-    gpu_index: int
-    memory_used_mb: int
-    memory_total_mb: int
-    utilization_percent: int
-    temperature_c: int
+    gpu_index: int = Field(..., ge=0)
+    memory_used_mb: int = Field(..., ge=0)
+    memory_total_mb: int = Field(..., ge=0)
+    utilization_percent: int = Field(..., ge=0, le=100)
+    temperature_c: int = Field(..., ge=-50, le=150)
 
-    model_config = {
-        "from_attributes": True,
-    }
+    model_config = {"from_attributes": True}

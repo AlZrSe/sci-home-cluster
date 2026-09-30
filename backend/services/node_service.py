@@ -4,8 +4,8 @@ Node service layer containing business logic for node management.
 
 from typing import List, Optional
 from backend.store import get_store
-from backend.models.node_spec import NodeSpec
-from backend.models.job_metrics import JobMetrics
+from shared.schemas.node_spec import NodeSpec
+from shared.schemas.job_metrics import JobMetrics
 
 
 class NodeService:

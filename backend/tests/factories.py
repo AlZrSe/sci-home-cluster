@@ -8,10 +8,13 @@ import factory
 from datetime import datetime
 from typing import Optional
 
-from backend.models.job_spec import JobSpec, Resources, Paths, RetryPolicy
-from backend.models.node_spec import NodeSpec, GPUInfo
-from backend.models.job_status import JobStatus
-from backend.models.job_state import JobState
+from shared.schemas.job_spec import JobSpec
+from shared.schemas.paths import Paths
+from shared.schemas.resources import Resources
+from shared.schemas.retry import RetryPolicy
+from shared.schemas.node_spec import NodeSpec, GPUInfo
+from shared.schemas.job_status import JobStatus
+from shared.schemas.job_state import JobState
 
 
 class GPUInfoFactory(factory.Factory):

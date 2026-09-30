@@ -4,10 +4,10 @@ Job service layer containing business logic for job management.
 
 from typing import List, Optional, Tuple, Callable
 from datetime import datetime
-from backend.models.job_state import JobState
-from backend.models.job_spec import JobSpec
-from backend.models.job_status import JobStatus
-from backend.models.job_metrics import JobMetrics
+from shared.schemas.job_state import JobState
+from shared.schemas.job_spec import JobSpec
+from shared.schemas.job_status import JobStatus
+from shared.schemas.job_metrics import JobMetrics
 from backend.store import get_store
 
 

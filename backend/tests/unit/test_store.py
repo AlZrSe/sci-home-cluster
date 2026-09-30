@@ -5,7 +5,7 @@ Uses factory-boy for test data generation.
 
 import pytest
 from backend.store import DatabaseStore
-from backend.models.job_status import JobStatus
+from shared.schemas.job_status import JobStatus
 from backend.tests.factories import (
     JobSpecFactory,
     NodeSpecFactory,
@@ -17,24 +17,21 @@ from backend.tests.factories import (
 
 
 @pytest.fixture
-async def store(isolated_database_per_test):
+async def store(clean_database):
     """
-    A DatabaseStore backed by its own database, seeded on first use.
+    A DatabaseStore with no data, seeded lazily on first use.
 
-    Each test gets a private database file, so these tests exercise the
-    store the application actually runs rather than a parallel in-memory
+    Each test starts from empty tables, so these tests exercise the store
+    the application actually runs rather than a parallel in-memory
     implementation.
     """
     return DatabaseStore()
 
 
 @pytest.fixture
-async def empty_store(isolated_database_per_test):
-    """A DatabaseStore with no seed data at all."""
-    from backend.tests.conftest import _clear_store_data
-
+async def empty_store(clean_database):
+    """A DatabaseStore that stays empty: the seeder is suppressed."""
     store = DatabaseStore()
-    await _clear_store_data(store)
     store._seeded = True
     return store
 

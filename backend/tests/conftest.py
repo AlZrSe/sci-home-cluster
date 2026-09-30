@@ -18,10 +18,13 @@ from sqlalchemy.orm import DeclarativeBase
 
 from backend.main import app
 from backend.core.config import settings
-from backend.core.database import close_database, get_engine, get_session
+from backend.core.database import close_database, get_session
 from backend.core.security import create_access_token
-from backend.models.job_spec import JobSpec, Resources, Paths, RetryPolicy
-from backend.models.node_spec import NodeSpec, GPUInfo
+from shared.schemas.job_spec import JobSpec
+from shared.schemas.paths import Paths
+from shared.schemas.resources import Resources
+from shared.schemas.retry import RetryPolicy
+from shared.schemas.node_spec import NodeSpec, GPUInfo
 from backend.store import DatabaseStore, get_store
 
 
@@ -187,37 +190,27 @@ def sample_node() -> NodeSpec:
 
 
 @pytest.fixture
-async def isolated_database_per_test() -> AsyncGenerator[str, None]:
+async def clean_database() -> AsyncGenerator[None, None]:
     """
-    Give a single test its own SQLite database file.
+    Truncate every table around a single test.
 
-    Used by store unit tests that need full isolation from the seeded
-    data the rest of the suite shares. The global engine is torn down and
-    rebuilt because it caches the URL it was created with.
+    Isolation is achieved by clearing rows rather than by pointing the
+    engine at a new file: rebuilding the engine per test leaks aiosqlite
+    worker threads (they are non-daemon) which made the suite both very
+    slow and prone to hanging at exit.
     """
-    from backend.store.database import Base
+    from backend.tests.conftest import _clear_store_data
 
-    tmpdir = tempfile.mkdtemp(prefix="shc-store-")
-    db_path = Path(tmpdir) / "store.db"
-    url = "sqlite:///" + db_path.as_posix()
-    previous_url = settings.DATABASE_URL
-
-    settings.DATABASE_URL = url
-    await close_database()
-    engine = get_engine()
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-
+    store = DatabaseStore()
+    await _clear_store_data(store)
     try:
-        yield url
+        yield
     finally:
-        await close_database()
-        settings.DATABASE_URL = previous_url
-        shutil.rmtree(tmpdir, ignore_errors=True)
+        await _clear_store_data(store)
 
 
 @pytest.fixture
-async def mock_store(isolated_database_per_test) -> DatabaseStore:
+async def mock_store(clean_database) -> DatabaseStore:
     """
     An isolated, EMPTY store for unit tests.
 
@@ -225,7 +218,6 @@ async def mock_store(isolated_database_per_test) -> DatabaseStore:
     seeder does not repopulate it on first use.
     """
     store = DatabaseStore()
-    await _clear_store_data(store)
     store._seeded = True
     return store
 

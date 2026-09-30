@@ -6,7 +6,7 @@ from datetime import timedelta
 from fastapi import APIRouter, Depends, HTTPException, status, Header
 from backend.core.config import settings
 from backend.core.deps import get_current_token_payload
-from backend.models.token_validation import (
+from shared.schemas.token_validation import (
     TokenValidationRequest,
     TokenValidationResponse,
     TokenCreateRequest,

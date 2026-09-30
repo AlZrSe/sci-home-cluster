@@ -1,18 +1,17 @@
 """
-CPU metric model for the Scientific Home Cluster.
+CPU metric model.
 """
 
-from pydantic import BaseModel
 from datetime import datetime
+
+from pydantic import BaseModel, Field
 
 
 class CPUMetric(BaseModel):
     """CPU utilization and memory metrics."""
 
     timestamp: datetime
-    cpu_percent: float
-    memory_percent: float
+    cpu_percent: int = Field(..., ge=0, le=100)
+    memory_percent: int = Field(..., ge=0, le=100)
 
-    model_config = {
-        "from_attributes": True,
-    }
+    model_config = {"from_attributes": True}

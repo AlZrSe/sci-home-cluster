@@ -1,18 +1,7 @@
 """
-Job resources model for the Scientific Home Cluster.
+Deprecated alias module. Use :mod:`shared.schemas.resources` instead.
 """
 
-from pydantic import BaseModel
+from .resources import JobResources, Resources
 
-
-class JobResources(BaseModel):
-    """Computing resources required for a job."""
-
-    gpus: int
-    cpus: int
-    memory_gb: int
-    vram_gb: int
-
-    model_config = {
-        "from_attributes": True,
-    }
+__all__ = ["JobResources", "Resources"]
