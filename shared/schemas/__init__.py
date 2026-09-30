@@ -11,7 +11,6 @@ from .job_paths import JobPaths
 from .job_retry import JobRetry
 from .job_spec import JobSpec
 from .job_state import JobState
-from .job_execution import JobExecution
 from .job_metrics import JobMetrics, JobMetricsSummary
 from .node_spec import NodeSpec
 
@@ -25,7 +24,6 @@ __all__ = [
     "JobRetry",
     "JobSpec",
     "JobState",
-    "JobExecution",
     "JobMetrics",
     "JobMetricsSummary",
     "NodeSpec",
