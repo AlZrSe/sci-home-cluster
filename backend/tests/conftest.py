@@ -12,17 +12,17 @@ from typing import AsyncGenerator, Generator, Optional
 import pytest
 from httpx import AsyncClient, ASGITransport
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase
 
 from backend.main import app
 from backend.core.config import settings
-from backend.core.database import close_database
+from backend.core.database import close_database, get_engine, get_session
 from backend.core.security import create_access_token
 from backend.models.job_spec import JobSpec, Resources, Paths, RetryPolicy
 from backend.models.node_spec import NodeSpec, GPUInfo
-from backend.store import get_store
-from backend.store.memory import InMemoryStore
+from backend.store import DatabaseStore, get_store
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -187,36 +187,72 @@ def sample_node() -> NodeSpec:
 
 
 @pytest.fixture
-def mock_store() -> InMemoryStore:
+async def isolated_database_per_test() -> AsyncGenerator[str, None]:
     """
-    Create an isolated InMemoryStore instance for unit tests.
-    Fresh instance per test (function-scoped) with no seed data.
-    """
-    store = InMemoryStore()
-    # Clear seed data - reset() re-seeds, so we need to clear manually
-    import asyncio
+    Give a single test its own SQLite database file.
 
-    asyncio.run(_clear_store_data(store))
+    Used by store unit tests that need full isolation from the seeded
+    data the rest of the suite shares. The global engine is torn down and
+    rebuilt because it caches the URL it was created with.
+    """
+    from backend.store.database import Base
+
+    tmpdir = tempfile.mkdtemp(prefix="shc-store-")
+    db_path = Path(tmpdir) / "store.db"
+    url = "sqlite:///" + db_path.as_posix()
+    previous_url = settings.DATABASE_URL
+
+    settings.DATABASE_URL = url
+    await close_database()
+    engine = get_engine()
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+
+    try:
+        yield url
+    finally:
+        await close_database()
+        settings.DATABASE_URL = previous_url
+        shutil.rmtree(tmpdir, ignore_errors=True)
+
+
+@pytest.fixture
+async def mock_store(isolated_database_per_test) -> DatabaseStore:
+    """
+    An isolated, EMPTY store for unit tests.
+
+    Empty means empty: the store is marked as already seeded so the lazy
+    seeder does not repopulate it on first use.
+    """
+    store = DatabaseStore()
+    await _clear_store_data(store)
+    store._seeded = True
     return store
 
 
-async def _clear_store_data(store: InMemoryStore):
-    """Clear all data from the store without re-seeding."""
-    async with (
-        store._jobs_lock,
-        store._nodes_lock,
-        store._metrics_lock,
-        store._logs_lock,
-    ):
-        store._jobs.clear()
-        store._nodes.clear()
-        store._metrics_cache.clear()
-        store._log_history.clear()
-        store._job_counter = 0
-        for task in store._log_stream_tasks.values():
-            task.cancel()
-        store._log_stream_tasks.clear()
-        store._log_stream_subscribers.clear()
+async def _clear_store_data(store: DatabaseStore) -> None:
+    """Delete every row without re-seeding."""
+    from backend.store.database import (
+        CPUMetricModel,
+        GPUMetricModel,
+        JobModel,
+        LogEntryModel,
+        NodeModel,
+    )
+
+    async with get_session() as session:
+        await session.execute(delete(LogEntryModel))
+        await session.execute(delete(CPUMetricModel))
+        await session.execute(delete(GPUMetricModel))
+        await session.execute(delete(JobModel))
+        await session.execute(delete(NodeModel))
+        await session.commit()
+
+    store._job_counter = 0
+    for task in store._log_stream_tasks.values():
+        task.cancel()
+    store._log_stream_tasks.clear()
+    store._log_stream_subscribers.clear()
 
 
 @pytest.fixture

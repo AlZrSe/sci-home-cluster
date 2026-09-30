@@ -1,10 +1,10 @@
 """
-Unit tests for the in-memory store.
+Unit tests for the database store.
 Uses factory-boy for test data generation.
 """
 
 import pytest
-from backend.store.memory import InMemoryStore
+from backend.store import DatabaseStore
 from backend.models.job_status import JobStatus
 from backend.tests.factories import (
     JobSpecFactory,
@@ -17,9 +17,26 @@ from backend.tests.factories import (
 
 
 @pytest.fixture
-def store():
-    """Create a fresh store instance for each test."""
-    return InMemoryStore()
+async def store(isolated_database_per_test):
+    """
+    A DatabaseStore backed by its own database, seeded on first use.
+
+    Each test gets a private database file, so these tests exercise the
+    store the application actually runs rather than a parallel in-memory
+    implementation.
+    """
+    return DatabaseStore()
+
+
+@pytest.fixture
+async def empty_store(isolated_database_per_test):
+    """A DatabaseStore with no seed data at all."""
+    from backend.tests.conftest import _clear_store_data
+
+    store = DatabaseStore()
+    await _clear_store_data(store)
+    store._seeded = True
+    return store
 
 
 @pytest.fixture
@@ -151,22 +168,9 @@ class TestNodeCRUD:
         assert result3.gpus[0].memory_gb == 48
 
     @pytest.mark.asyncio
-    async def test_list_nodes_empty_store(self):
+    async def test_list_nodes_empty_store(self, empty_store):
         """Test listing nodes on a fresh empty store."""
-        # Create a truly empty store (no seed data)
-        store = InMemoryStore()
-        await store.reset()  # This re-seeds, so manually clear
-
-        async with (
-            store._jobs_lock,
-            store._nodes_lock,
-            store._metrics_lock,
-            store._logs_lock,
-        ):
-            store._nodes.clear()
-            store._jobs.clear()
-
-        nodes = await store.list_nodes()
+        nodes = await empty_store.list_nodes()
         assert nodes == []
 
 
@@ -366,6 +370,15 @@ class TestJobCRUD:
     @pytest.mark.asyncio
     async def test_delete_job_cleans_up_associated_data(self, store, sample_job_spec):
         """Test that deleting a job also cleans up metrics and logs."""
+        from sqlalchemy import func, select
+
+        from backend.core.database import get_session
+        from backend.store.database import (
+            CPUMetricModel,
+            GPUMetricModel,
+            LogEntryModel,
+        )
+
         created_job = await store.create_job(sample_job_spec)
         job_id = created_job.job_id
 
@@ -373,16 +386,36 @@ class TestJobCRUD:
         await store.get_job_metrics(job_id)
         await store.get_job_logs(job_id)
 
+        async def counts() -> tuple:
+            async with get_session() as session:
+                gpu = await session.execute(
+                    select(func.count())
+                    .select_from(GPUMetricModel)
+                    .where(GPUMetricModel.job_id == job_id)
+                )
+                cpu = await session.execute(
+                    select(func.count())
+                    .select_from(CPUMetricModel)
+                    .where(CPUMetricModel.job_id == job_id)
+                )
+                logs = await session.execute(
+                    select(func.count())
+                    .select_from(LogEntryModel)
+                    .where(LogEntryModel.job_id == job_id)
+                )
+                return gpu.scalar(), cpu.scalar(), logs.scalar()
+
         # Verify they exist
-        assert job_id in store._metrics_cache
-        assert job_id in store._log_history
+        gpu_before, cpu_before, logs_before = await counts()
+        assert gpu_before > 0
+        assert cpu_before > 0
+        assert logs_before > 0
 
         # Delete job
-        await store.delete_job(job_id)
+        assert await store.delete_job(job_id) is True
 
         # Verify cleaned up
-        assert job_id not in store._metrics_cache
-        assert job_id not in store._log_history
+        assert await counts() == (0, 0, 0)
 
     @pytest.mark.asyncio
     async def test_delete_job_not_found(self, store):
@@ -422,9 +455,12 @@ class TestMetrics:
         assert len(metrics1.cpu_metrics) > 0
         assert metrics1.summary.gpu_memory_avg_mb > 0
 
-        # Second call returns cached
+        # Second call must return the same data. The database store
+        # rebuilds the model from stored rows rather than handing back a
+        # cached instance, so compare values, not object identity.
         metrics2 = await store.get_job_metrics(job_id)
-        assert metrics2 is metrics1  # Same object (cached)
+        assert metrics2 is not None
+        assert metrics2 == metrics1
 
     @pytest.mark.asyncio
     async def test_get_job_metrics_not_found(self, store):
@@ -467,9 +503,11 @@ class TestLogs:
         assert isinstance(logs1, list)
         assert len(logs1) > 0
 
-        # Second call returns cached
+        # Second call must return the same lines. The database store
+        # re-reads them from storage rather than handing back a cached
+        # list, so compare values, not object identity.
         logs2 = await store.get_job_logs(job_id)
-        assert logs2 is logs1  # Same object (cached)
+        assert logs2 == logs1
 
     @pytest.mark.asyncio
     async def test_get_job_logs_not_found(self, store):
@@ -532,8 +570,13 @@ class TestLogStreaming:
         assert task is not None
         assert not task.done()
 
-        # Wait a bit for some logs to be generated
-        await asyncio.sleep(2.0)
+        # Wait for some logs to be generated. The stream worker ticks on an
+        # interval and reads the job from the database first, so poll rather
+        # than assuming a fixed delay is enough.
+        for _ in range(50):
+            if received_lines:
+                break
+            await asyncio.sleep(0.1)
 
         # Clean up
         await store._stop_log_stream(job_id)
@@ -711,35 +754,39 @@ class TestSeedData:
         assert job_1050.node_id is not None
 
     @pytest.mark.asyncio
-    async def test_seed_data_deterministic(self):
-        """Test that seed data is deterministic across store instances."""
-        store1 = InMemoryStore()
-        store2 = InMemoryStore()
+    async def test_seed_data_deterministic(self, store):
+        """
+        Test that generated data is deterministic for the same input.
 
-        nodes1 = await store1.list_nodes()
-        nodes2 = await store2.list_nodes()
-        jobs1, _ = await store1.list_jobs()
-        jobs2, _ = await store2.list_jobs()
+        The generators used to be seeded from builtin hash(), which is
+        salted per process, so two store instances could disagree. They
+        are now seeded from a stable CRC32.
+        """
+        metrics1 = await store._generate_job_metrics("job-1050")
+        metrics2 = await store._generate_job_metrics("job-1050")
+        assert metrics1 is not None and metrics2 is not None
 
-        assert len(nodes1) == len(nodes2)
-        for n1, n2 in zip(
-            sorted(nodes1, key=lambda n: n.node_id),
-            sorted(nodes2, key=lambda n: n.node_id),
-        ):
-            assert n1.node_id == n2.node_id
-            assert n1.hostname == n2.hostname
-            assert n1.status == n2.status
-            assert n1.cpus == n2.cpus
-            assert n1.memory_gb == n2.memory_gb
+        assert [m.memory_used_mb for m in metrics1.gpu_metrics] == [
+            m.memory_used_mb for m in metrics2.gpu_metrics
+        ]
+        assert [m.utilization_percent for m in metrics1.gpu_metrics] == [
+            m.utilization_percent for m in metrics2.gpu_metrics
+        ]
+        assert [m.temperature_c for m in metrics1.gpu_metrics] == [
+            m.temperature_c for m in metrics2.gpu_metrics
+        ]
+        assert [m.cpu_percent for m in metrics1.cpu_metrics] == [
+            m.cpu_percent for m in metrics2.cpu_metrics
+        ]
 
-        assert len(jobs1) == len(jobs2)
-        for j1, j2 in zip(
-            sorted(jobs1, key=lambda j: j.job_id),
-            sorted(jobs2, key=lambda j: j.job_id),
-        ):
-            assert j1.job_id == j2.job_id
-            assert j1.spec.name == j2.spec.name
-            assert j1.status == j2.status
+        # Log lines are stamped with the current time, so compare the
+        # generated message bodies rather than the raw lines.
+        def bodies(lines: list) -> list:
+            return [line[19:] for line in lines]
+
+        logs1 = store._generate_job_logs("job-1050")
+        logs2 = store._generate_job_logs("job-1050")
+        assert bodies(logs1) == bodies(logs2)
 
 
 class TestConcurrency:

@@ -5,7 +5,8 @@ Uses SQLAlchemy 2.0 async with SQLite.
 
 import asyncio
 import random
-from typing import Callable, Dict, List, Optional, Set, Tuple, TypeVar
+import zlib
+from typing import Callable, Dict, List, Optional, Set, Tuple
 from datetime import datetime
 
 from sqlalchemy import delete, func, select
@@ -28,7 +29,15 @@ from backend.store.database import (
 )
 
 
-T = TypeVar("T")
+def stable_seed(*parts: str) -> int:
+    """
+    Deterministic seed derived from the given strings.
+
+    builtin hash() is salted per process (PYTHONHASHSEED), so seeding
+    from it made generated metrics and logs differ between runs of the
+    same input. crc32 is stable across processes and platforms.
+    """
+    return 1337 + zlib.crc32(":".join(parts).encode("utf-8"))
 
 
 class DatabaseStore:
@@ -36,6 +45,8 @@ class DatabaseStore:
 
     def __init__(self):
         self._job_counter: int = 0
+        self._seeded: bool = False
+        self._seed_lock = asyncio.Lock()
         self._log_stream_tasks: Dict[str, asyncio.Task] = {}
         self._log_stream_subscribers: Dict[str, Set[Callable[[str], None]]] = {}
 
@@ -223,9 +234,37 @@ class DatabaseStore:
         await session.commit()
 
     async def _ensure_seeded(self) -> None:
-        """Ensure the database is seeded with initial data."""
+        """
+        Ensure the database is seeded, at most once per store instance.
+
+        This used to run a SELECT count(*) plus a session on every single
+        store call (~20 call sites, all of them on request paths).
+        """
+        if self._seeded:
+            return
+        async with self._seed_lock:
+            if self._seeded:
+                return
+            async with get_session() as session:
+                await self._seed_data(session)
+            # The job counter lives in memory, so it has to be re-derived
+            # from the database on startup or ids repeat after a restart.
+            await self._sync_job_counter()
+            self._seeded = True
+
+    async def _sync_job_counter(self) -> None:
+        """Set the in-memory job counter to the highest id already stored."""
         async with get_session() as session:
-            await self._seed_data(session)
+            result = await session.execute(select(JobModel.job_id))
+            for (job_id,) in result.all():
+                if not job_id.startswith("job-"):
+                    continue
+                try:
+                    job_num = int(job_id[4:])
+                except ValueError:
+                    continue
+                if job_num > self._job_counter:
+                    self._job_counter = job_num
 
     def _model_to_job_state(self, job_model: JobModel) -> JobState:
         """Convert a JobModel to a JobState."""
@@ -394,6 +433,18 @@ class DatabaseStore:
             if not job_model:
                 return False
 
+            # The child tables have no ON DELETE CASCADE, and SQLite does not
+            # enforce foreign keys by default, so the dependent rows have to
+            # be removed explicitly or they are orphaned.
+            await session.execute(
+                delete(GPUMetricModel).where(GPUMetricModel.job_id == job_id)
+            )
+            await session.execute(
+                delete(CPUMetricModel).where(CPUMetricModel.job_id == job_id)
+            )
+            await session.execute(
+                delete(LogEntryModel).where(LogEntryModel.job_id == job_id)
+            )
             await session.delete(job_model)
             await session.commit()
             await self._stop_log_stream(job_id)
@@ -499,6 +550,9 @@ class DatabaseStore:
             self._log_stream_subscribers.clear()
 
             await self._seed_data(session)
+            # reset() clears the table, so the cached "already seeded" flag
+            # has to be restored or the store would never re-seed.
+            self._seeded = True
 
     # Metrics operations
     async def get_job_metrics(self, job_id: str) -> Optional[JobMetrics]:
@@ -693,7 +747,7 @@ class DatabaseStore:
         if not node:
             return None
 
-        seed = 1337 + hash(f"node:{node_id}")
+        seed = stable_seed("node", node_id)
         rnd = random.Random(seed)
 
         has_gpus = len(node.gpus) > 0
@@ -754,7 +808,7 @@ class DatabaseStore:
         if not job:
             return None
 
-        seed = 1337 + hash(job_id)
+        seed = stable_seed("job", job_id)
         rnd = random.Random(seed)
 
         total = 24_576
@@ -842,7 +896,7 @@ class DatabaseStore:
 
     def _generate_job_logs(self, job_id: str) -> List[str]:
         """Generate job logs using the same algorithm as the mock server."""
-        seed = 1337 + hash(job_id)
+        seed = stable_seed("job-log", job_id)
         rnd = random.Random(seed)
 
         def stamp() -> str:
@@ -882,8 +936,11 @@ class DatabaseStore:
         """
         await self._ensure_seeded()
 
+        # Register the callback. Without this the worker generates lines and
+        # stores them but never hands any to the caller.
         if job_id not in self._log_stream_subscribers:
             self._log_stream_subscribers[job_id] = set()
+        self._log_stream_subscribers[job_id].add(on_line)
 
         async def _stream_worker():
             step = 5000
@@ -894,7 +951,7 @@ class DatabaseStore:
                         break
 
                     step += 50
-                    seed = 1337 + hash(job_id) + step
+                    seed = stable_seed("job-stream", job_id) + step
                     rnd = random.Random(seed)
                     template = rnd.choice(
                         [

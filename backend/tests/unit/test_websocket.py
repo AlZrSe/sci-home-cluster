@@ -9,7 +9,7 @@ import asyncio
 import io
 from httpx import AsyncClient, ASGITransport
 from backend.main import app
-from backend.store.memory import get_store
+from backend.store import get_store
 from backend.models.job_status import JobStatus
 from backend.tests.factories import create_job_spec
 from backend.core.security import create_access_token

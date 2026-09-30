@@ -4,7 +4,7 @@ Test to verify the new conftest fixtures work correctly.
 
 import pytest
 from httpx import AsyncClient
-from backend.store.memory import InMemoryStore
+from backend.store import DatabaseStore
 from backend.models.job_spec import JobSpec
 from backend.models.node_spec import NodeSpec
 from backend.tests.factories import (
@@ -61,9 +61,9 @@ async def test_sample_node_fixture(sample_node: NodeSpec):
 
 
 @pytest.mark.asyncio
-async def test_mock_store_fixture(mock_store: InMemoryStore):
-    """Test that the mock_store fixture provides an isolated InMemoryStore."""
-    assert isinstance(mock_store, InMemoryStore)
+async def test_mock_store_fixture(mock_store):
+    """Test that the mock_store fixture provides an isolated empty store."""
+    assert isinstance(mock_store, DatabaseStore)
 
     # Store should be empty (no seed data since it's a fresh instance)
     nodes = await mock_store.list_nodes()
