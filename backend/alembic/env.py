@@ -11,7 +11,9 @@ from sqlalchemy import pool
 from alembic import context
 
 # Import models for autogenerate support
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
+# env.py lives in backend/alembic/, so the repository root - not backend/ -
+# is what has to be importable for `from backend.store.database import Base`.
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 
 from backend.store.database import Base
 
@@ -28,6 +30,23 @@ if config.config_file_name is not None:
 target_metadata = Base.metadata
 
 
+def get_database_url() -> str:
+    """
+    Resolve the database URL from the application settings.
+
+    alembic.ini carries a hardcoded fallback URL, but relying on it means
+    `alembic upgrade head` silently migrates a different database than the
+    application uses whenever DATABASE_URL is set. Settings is the single
+    source of truth; the ini value is only a last resort.
+    """
+    from backend.core.config import settings
+
+    url = settings.DATABASE_URL
+    if url.startswith("sqlite://"):
+        url = url.replace("sqlite://", "sqlite+aiosqlite://", 1)
+    return url
+
+
 def run_migrations_offline() -> None:
     """Run migrations in 'offline' mode.
 
@@ -36,7 +55,7 @@ def run_migrations_offline() -> None:
     here as well.  By skipping the Engine creation
     we don't even need a DBAPI to be available.
     """
-    url = config.get_main_option("sqlalchemy.url")
+    url = get_database_url()
     context.configure(
         url=url,
         target_metadata=target_metadata,
@@ -58,12 +77,9 @@ def do_run_migrations(connection):
 
 async def run_migrations_online() -> None:
     """Run migrations in 'online' mode with async engine."""
-    # Get the database URL from config
-    url = config.get_main_option("sqlalchemy.url")
-
     # Create async engine
     connectable = create_async_engine(
-        url,
+        get_database_url(),
         poolclass=pool.NullPool,
     )
 

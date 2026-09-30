@@ -118,11 +118,9 @@ async def run_migrations() -> None:
     try:
         alembic_ini_path = Path(__file__).parent.parent / "alembic.ini"
         alembic_cfg = Config(str(alembic_ini_path))
-        # Override the sqlalchemy.url to use async driver
-        db_url = settings.DATABASE_URL
-        if db_url.startswith("sqlite://"):
-            db_url = db_url.replace("sqlite://", "sqlite+aiosqlite://", 1)
-        alembic_cfg.set_main_option("sqlalchemy.url", db_url)
+        # The URL is resolved from settings inside backend/alembic/env.py,
+        # which is also what the `alembic` CLI uses, so both paths migrate
+        # the same database.
         command.upgrade(alembic_cfg, "head")
         logger.info("Database migrations applied successfully")
     except Exception as e:

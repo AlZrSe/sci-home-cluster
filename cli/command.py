@@ -33,5 +33,10 @@ def logs(
     # TODO: Implement log fetching
 
 
-if __name__ == "__main__":
+def main():
+    """Entry point for the `sci-run` console script."""
     app()
+
+
+if __name__ == "__main__":
+    main()

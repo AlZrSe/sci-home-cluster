@@ -2,7 +2,7 @@
 name = "scientific-home-cluster"
 version = "0.1.0"
 description = "Scientific Home Cluster Platform"
-requires-python = ">=3.9"
+requires-python = ">=3.11"
 license = {text = "MIT"}
 authors = [
     {name = "Scientific Home Cluster Team"}
@@ -13,9 +13,13 @@ dependencies = [
     "fastapi==0.100.0",
     "uvicorn[standard]==0.25.0",
     "sqlalchemy==2.0.0",
+    "alembic==1.13.1",
+    "aiosqlite==0.19.0",
     "pyyaml==5.3.1",
     "pydantic>=2.0.0,<3.0.0",
     "pydantic-settings==2.0.0",
+    "python-jose[cryptography]==3.3.0",
+    "passlib[bcrypt]==1.7.4",
     "psutil==5.9.0",
     "gputil==1.4.0",
     "portalocker==2.0.0",
@@ -36,6 +40,8 @@ dev = [
     "factory-boy==3.3.0",
     "pytest-xdist==3.5.0",
     "pytest-watch==4.2.0",
+    "types-passlib==1.7.7.20240106",
+    "types-python-jose==3.3.0.20240106",
 ]
 
 [build-system]
@@ -44,25 +50,23 @@ build-backend = "setuptools.build_meta"
 
 [tool.ruff]
 line-length = 88
-target-version = "py39"
+target-version = "py311"
 select = ["E", "F", "W", "C90"]
 ignore = []
 
 [tool.mypy]
-python_version = "3.9"
+python_version = "3.11"
 warn_return_any = true
 warn_unused_configs = true
+# Resolved relative to the current working directory, so this only works
+# when mypy is invoked from the repo root (mypy does not walk up to find
+# its config). `mypy .` from the root is the supported invocation.
 mypy_path = "stubs"
 ignore_missing_imports = true
+exclude = ["^(test_venv|test_venv2|venv_test|venv|node_modules|frontend)/"]
 
-[[tool.mypy-overrides]]
-module = "backend.store.*"
-ignore_errors = true
-
-[[tool.mypy-overrides]]
-module = "backend.alembic.*"
-ignore_errors = true
-
+# These modules are not yet typed to the project's standard. Each entry
+# is deliberately narrow - do not widen these patterns, fix the module.
 [[tool.mypy-overrides]]
 module = "backend.services.syncthing_service"
 ignore_errors = true
@@ -91,7 +95,7 @@ markers = [
 
 [tool.coverage.run]
 source = ["backend"]
-omit = ["backend/tests/*", "backend/migrations/*"]
+omit = ["backend/tests/*", "backend/alembic/*"]
 
 [tool.coverage.report]
 fail_under = 80
@@ -107,10 +111,11 @@ exclude_lines = [
 [tool.setuptools]
 package-dir = {"" = "."}
 
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["backend*", "shared*", "agent*", "cli*"]
+exclude = ["test*", "docs*", "docker*", "frontend*", "stubs*", "node_modules*"]
+
 [project.scripts]
-sci-run = "cli.command:app"
+sci-run = "cli.command:main"
 run-agent = "agent.run_agent:main"
-test = "pytest --cov=backend --cov-report=term-missing --cov-fail-under=80"
-test-unit = "pytest backend/tests/unit -v"
-test-integration = "pytest backend/tests/integration -v"
-test-watch = "pytest-watch --runner 'pytest --cov=backend'"
