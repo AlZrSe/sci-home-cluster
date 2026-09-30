@@ -3,8 +3,9 @@ Node management API endpoints.
 """
 
 from typing import List
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, status
 from backend.core.deps import get_current_token_payload
+from backend.core.errors import APIError, node_not_found
 from shared.schemas.node_spec import NodeSpec
 from shared.schemas.job_metrics import JobMetrics
 from backend.services.node_service import NodeService
@@ -30,14 +31,7 @@ async def get_node(node_id: str, payload: dict = Depends(get_current_token_paylo
     node_service = NodeService()
     node = await node_service.get_node(node_id)
     if node is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=(
-                f"Node {node_id} does not exist. "
-                "It may have been removed from the cluster or the ID is incorrect. "
-                "Check the node list and try again."
-            ),
-        )
+        raise node_not_found(node_id)
     return node
 
 
@@ -51,12 +45,13 @@ async def get_node_metrics(
     node_service = NodeService()
     metrics = await node_service.get_node_metrics(node_id)
     if metrics is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=(
+        raise APIError(
+            status.HTTP_404_NOT_FOUND,
+            (
                 f"Metrics for node {node_id} are not available. "
                 "The node may be offline or metrics collection failed. "
                 "Ensure the node is online and try again."
             ),
+            "NODE_METRICS_NOT_FOUND",
         )
     return metrics

@@ -3,9 +3,14 @@ Authentication API endpoints.
 """
 
 from datetime import timedelta
-from fastapi import APIRouter, Depends, HTTPException, status, Header
+from fastapi import APIRouter, Depends, Header
 from backend.core.config import settings
 from backend.core.deps import get_current_token_payload
+from backend.core.errors import (
+    auth_shared_token_invalid,
+    auth_token_expired,
+    shared_token_not_configured,
+)
 from shared.schemas.token_validation import (
     TokenValidationRequest,
     TokenValidationResponse,
@@ -60,23 +65,16 @@ async def create_token(request: TokenCreateRequest):
 
     # Validate the shared token
     if not auth_service.get_shared_token():
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=(
-                "Shared token is not configured on the server. "
-                "Set the SHARED_TOKEN environment variable and restart the API server."
-            ),
+        raise shared_token_not_configured(
+            "Shared token is not configured on the server. "
+            "Set the SHARED_TOKEN environment variable and restart the API server."
         )
 
     is_valid = await auth_service.verify_shared_token(request.shared_token)
     if not is_valid:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=(
-                "The provided shared token is invalid. "
-                "Please check your credentials and try again."
-            ),
-            headers={"WWW-Authenticate": "Bearer"},
+        raise auth_shared_token_invalid(
+            "The provided shared token is invalid. "
+            "Please check your credentials and try again."
         )
 
     # Create new JWT token
@@ -101,13 +99,9 @@ async def refresh_token(request: TokenRefreshRequest):
 
     new_token = await auth_service.refresh_token(request.token)
     if not new_token:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=(
-                "Your session has expired or the token is invalid. "
-                "Please log in again to get a new access token."
-            ),
-            headers={"WWW-Authenticate": "Bearer"},
+        raise auth_token_expired(
+            "Your session has expired or the token is invalid. "
+            "Please log in again to get a new access token."
         )
 
     return TokenRefreshResponse(

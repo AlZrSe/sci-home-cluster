@@ -1,6 +1,7 @@
-from fastapi import Depends, HTTPException, Request, status, WebSocket
+from fastapi import Depends, Request, WebSocket
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from backend.core.config import settings
+from backend.core.errors import auth_token_expired, auth_token_missing
 from backend.core.security import decode_access_token
 from backend.core.utils import is_localhost
 
@@ -29,26 +30,17 @@ async def get_current_token_payload(
 
     # If not bypassing, then we require a token
     if token is None:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=(
-                "Authentication required. "
-                "Please provide a valid bearer token in the Authorization header."
-            ),
-            headers={"WWW-Authenticate": "Bearer"},
+        raise auth_token_missing(
+            "Authentication required. Please provide a valid bearer token in "
+            "the Authorization header."
         )
 
     try:
         payload = decode_access_token(token.credentials)
         return payload
     except Exception:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=(
-                "Invalid or expired token. "
-                "Please log in again to get a new access token."
-            ),
-            headers={"WWW-Authenticate": "Bearer"},
+        raise auth_token_expired(
+            "Invalid or expired token. Please log in again to get a new access token."
         )
 
 
@@ -78,21 +70,14 @@ async def get_ws_token_payload(
             token = auth_header[7:]  # Remove "Bearer " prefix
 
     if not token:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=("Authentication required. " "Please provide a valid bearer token."),
-            headers={"WWW-Authenticate": "Bearer"},
+        raise auth_token_missing(
+            "Authentication required. Please provide a valid bearer token."
         )
 
     try:
         payload = decode_access_token(token)
         return payload
     except Exception:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=(
-                "Invalid or expired token. "
-                "Please log in again to get a new access token."
-            ),
-            headers={"WWW-Authenticate": "Bearer"},
+        raise auth_token_expired(
+            "Invalid or expired token. Please log in again to get a new access token."
         )

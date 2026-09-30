@@ -4,22 +4,8 @@ Security utilities for authentication and authorization.
 
 from datetime import datetime, timedelta, timezone
 from typing import Optional
-from jose import JWTError, jwt
-from passlib.context import CryptContext
+from jose import jwt
 from backend.core.config import settings
-
-# Password hashing context
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-
-
-def verify_password(plain_password: str, hashed_password: str) -> bool:
-    """Verify a password against its hash."""
-    return pwd_context.verify(plain_password, hashed_password)
-
-
-def get_password_hash(password: str) -> str:
-    """Generate password hash."""
-    return pwd_context.hash(password)
 
 
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
@@ -37,9 +23,10 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
 
 
 def decode_access_token(token: str) -> dict:
-    """Decode and validate a JWT access token."""
-    try:
-        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=["HS256"])
-        return payload
-    except JWTError:
-        raise
+    """
+    Decode and validate a JWT access token.
+
+    Raises jose.JWTError if the token is malformed, expired or signed with
+    a different key. Callers map that to the right error code.
+    """
+    return jwt.decode(token, settings.SECRET_KEY, algorithms=["HS256"])

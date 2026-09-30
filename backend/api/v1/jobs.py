@@ -9,10 +9,16 @@ from fastapi import (
     Depends,
     Query,
     status,
-    HTTPException,
     WebSocket,
 )
 from backend.core.deps import get_current_token_payload, get_ws_token_payload
+from backend.core.errors import (
+    job_not_cancellable,
+    job_not_found,
+    job_not_retryable,
+    logs_not_found,
+    metrics_not_found,
+)
 from shared.schemas.job_state import JobState
 from shared.schemas.job_list_result import JobListResult
 from shared.schemas.job_spec import JobSpec
@@ -62,14 +68,7 @@ async def get_job(job_id: str, payload: dict = Depends(get_current_token_payload
     job_service = JobService()
     job = await job_service.get_job(job_id)
     if job is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=(
-                f"Job {job_id} does not exist. "
-                "It may have been deleted or the ID is incorrect. "
-                "Check the job list and try again."
-            ),
-        )
+        raise job_not_found(job_id)
     return job
 
 
@@ -81,14 +80,7 @@ async def delete_job(job_id: str, payload: dict = Depends(get_current_token_payl
     job_service = JobService()
     deleted = await job_service.delete_job(job_id)
     if not deleted:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=(
-                f"Job {job_id} does not exist. "
-                "It may have been deleted or the ID is incorrect. "
-                "Check the job list and try again."
-            ),
-        )
+        raise job_not_found(job_id)
     return None
 
 
@@ -102,14 +94,7 @@ async def get_job_metrics(
     job_service = JobService()
     metrics = await job_service.get_job_metrics(job_id)
     if metrics is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=(
-                f"Metrics for job {job_id} are not available. "
-                "The job may not have run yet or metrics collection failed. "
-                "Ensure the job has started and try again."
-            ),
-        )
+        raise metrics_not_found(job_id)
     return metrics
 
 
@@ -121,14 +106,7 @@ async def get_job_logs(job_id: str, payload: dict = Depends(get_current_token_pa
     job_service = JobService()
     logs = await job_service.get_job_logs(job_id)
     if logs is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=(
-                f"Logs for job {job_id} are not available. "
-                "The job may not have started yet or log collection failed. "
-                "Ensure the job has started and try again."
-            ),
-        )
+        raise logs_not_found(job_id)
     return logs
 
 
@@ -139,7 +117,11 @@ async def get_job_logs_history(
     """
     Get job logs history (alias for /logs).
     """
-    return await get_job_logs(job_id, payload)
+    job_service = JobService()
+    logs = await job_service.get_job_logs(job_id)
+    if logs is None:
+        raise logs_not_found(job_id)
+    return logs
 
 
 @router.websocket("/{job_id}/logs")
@@ -170,14 +152,14 @@ async def stream_job_logs(
             # If sending fails, we assume the client disconnected
             pass
 
-    # Start the log streaming simulation
-    _ = await job_service.start_log_stream(job_id, on_line)
+    # start_log_stream registers on_line as the sole subscriber. Subscribing
+    # again here (as this route used to) delivered every line twice and left
+    # an orphaned subscription, because the lambda that was registered could
+    # never be matched by the unsubscribe call in the finally block.
+    def send_line(line: str) -> None:
+        asyncio.create_task(on_line(line))
 
-    # Also subscribe to get updates (though start_log_stream already sets
-    # up the streaming). We'll use the same callback for simplicity.
-    job_service.subscribe_to_log_stream(
-        job_id, lambda line: asyncio.create_task(on_line(line))
-    )
+    await job_service.start_log_stream(job_id, send_line)
 
     try:
         # Keep the connection open until the client disconnects
@@ -189,9 +171,9 @@ async def stream_job_logs(
         # Client disconnected or error occurred
         pass
     finally:
-        # Clean up: stop the stream task and unsubscribe
-        await job_service._stop_log_stream(job_id)
-        job_service.unsubscribe_from_log_stream(job_id, on_line)
+        # Clean up: stop the stream task and unsubscribe the same callback
+        await job_service.stop_log_stream(job_id)
+        job_service.unsubscribe_from_log_stream(job_id, send_line)
 
 
 @router.post("/{job_id}/retry", response_model=JobState)
@@ -205,23 +187,9 @@ async def retry_job(job_id: str, payload: dict = Depends(get_current_token_paylo
         # Check if job exists to give better error message
         existing_job = await job_service.get_job(job_id)
         if existing_job is None:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=(
-                    f"Job {job_id} does not exist. "
-                    "It may have been deleted or the ID is incorrect. "
-                    "Check the job list and try again."
-                ),
-            )
+            raise job_not_found(job_id)
         # Job exists but not in retryable state
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=(
-                f"Job {job_id} cannot be retried because it is currently "
-                f"{existing_job.status.value}. "
-                "Only FAILED or CANCELLED jobs can be retried."
-            ),
-        )
+        raise job_not_retryable(job_id, existing_job.status.value)
     return job
 
 
@@ -236,21 +204,7 @@ async def cancel_job(job_id: str, payload: dict = Depends(get_current_token_payl
         # Check if job exists to give better error message
         existing_job = await job_service.get_job(job_id)
         if existing_job is None:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=(
-                    f"Job {job_id} does not exist. "
-                    "It may have been deleted or the ID is incorrect. "
-                    "Check the job list and try again."
-                ),
-            )
+            raise job_not_found(job_id)
         # Job exists but not in cancellable state
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=(
-                f"Job {job_id} cannot be cancelled because it is currently "
-                f"{existing_job.status.value}. "
-                "Only RUNNING or PENDING jobs can be cancelled."
-            ),
-        )
+        raise job_not_cancellable(job_id, existing_job.status.value)
     return job

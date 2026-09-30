@@ -3,12 +3,16 @@ Configuration module for the Scientific Home Cluster Backend.
 Uses Pydantic v2 BaseSettings for environment variable management.
 """
 
+import logging
+import os
 import secrets
 import tomllib
 from pathlib import Path
 from pydantic import AnyHttpUrl, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from typing import List, Union, Optional
+
+logger = logging.getLogger(__name__)
 
 
 def get_version_from_pyproject() -> str:
@@ -22,13 +26,59 @@ def get_version_from_pyproject() -> str:
         return "0.1.0"
 
 
+def _resolve_secret_key() -> str:
+    """
+    Resolve the JWT signing key.
+
+    Order of preference:
+      1. the SECRET_KEY environment variable (or .env);
+      2. a key persisted next to the database, so restarting the backend
+         does not log every user out;
+      3. a freshly generated key, persisted for next time.
+
+    This used to be secrets.token_urlsafe(32) inline as the field default,
+    which meant a new key on every process start and therefore every
+    previously issued token became invalid on each restart.
+    """
+    configured = os.environ.get("SECRET_KEY")
+    if configured:
+        return configured
+
+    state_path = Path(_state_dir()) / "secret_key"
+    try:
+        existing = state_path.read_text(encoding="utf-8").strip()
+        if existing:
+            return existing
+    except OSError:
+        pass
+
+    generated = secrets.token_urlsafe(32)
+    try:
+        state_path.parent.mkdir(parents=True, exist_ok=True)
+        state_path.write_text(generated, encoding="utf-8")
+        # Restrict to the owner: this file signs every access token.
+        state_path.chmod(0o600)
+    except OSError:
+        logger.warning(
+            "Could not persist the generated SECRET_KEY to %s; "
+            "tokens will not survive a restart.",
+            state_path,
+        )
+    return generated
+
+
+def _state_dir() -> str:
+    """Directory for locally persisted server state."""
+    return os.environ.get("SHC_STATE_DIR", ".shc")
+
+
 class Settings(BaseSettings):
     API_V1_STR: str = "/api/v1"
     PROJECT_NAME: str = "Scientific Home Cluster API"
     VERSION: str = get_version_from_pyproject()
 
     # Security settings
-    SECRET_KEY: str = secrets.token_urlsafe(32)
+    SECRET_KEY: str = ""
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 1440  # 24 hours
     SHARED_TOKEN: Optional[str] = None  # Shared bearer token for API access
 
@@ -67,6 +117,12 @@ class Settings(BaseSettings):
         env_file=".env",
         env_file_encoding="utf-8",
     )
+
+    def model_post_init(self, _context) -> None:
+        # SECRET_KEY defaults to empty so that pydantic does not shadow the
+        # environment variable; fill it in from the persisted key.
+        if not self.SECRET_KEY:
+            self.SECRET_KEY = _resolve_secret_key()
 
 
 settings = Settings()

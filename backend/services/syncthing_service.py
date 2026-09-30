@@ -4,6 +4,7 @@ Provides read-only access to job and node state files.
 """
 
 import asyncio
+import concurrent.futures
 import logging
 import time
 from pathlib import Path
@@ -28,6 +29,10 @@ class SyncthingEventHandler(FileSystemEventHandler):
         self._pending_events: Dict[str, float] = {}  # file_path -> timestamp
         self._debounce_ms = 500
         self._loop: asyncio.AbstractEventLoop | None = None
+        # Futures for debounced work scheduled onto the event loop. They are
+        # tracked so they can be cancelled on shutdown; without this they are
+        # destroyed while still pending.
+        self._pending_futures: Set["concurrent.futures.Future[None]"] = set()
 
     def set_loop(self, loop: asyncio.AbstractEventLoop):
         """Set the event loop for async operations."""
@@ -61,16 +66,32 @@ class SyncthingEventHandler(FileSystemEventHandler):
         self._pending_events[file_path] = time.time()
         # Schedule debounced processing
         if self._loop and not self._loop.is_closed():
-            asyncio.run_coroutine_threadsafe(
-                self._debounced_process(file_path), self._loop
+            self._track(
+                asyncio.run_coroutine_threadsafe(
+                    self._debounced_process(file_path), self._loop
+                )
             )
 
     def _schedule_delete(self, file_path: str):
         """Schedule a file deletion for processing."""
         if self._loop and not self._loop.is_closed():
-            asyncio.run_coroutine_threadsafe(
-                self._process_delete(file_path), self._loop
+            self._track(
+                asyncio.run_coroutine_threadsafe(
+                    self._process_delete(file_path), self._loop
+                )
             )
+
+    def _track(self, future: "concurrent.futures.Future[None]") -> None:
+        """Remember a scheduled future so it can be cancelled on shutdown."""
+        self._pending_futures.add(future)
+        future.add_done_callback(self._pending_futures.discard)
+
+    def cancel_pending(self) -> None:
+        """Cancel every debounced/deletion task still in flight."""
+        for future in list(self._pending_futures):
+            future.cancel()
+        self._pending_futures.clear()
+        self._pending_events.clear()
 
     async def _debounced_process(self, file_path: str):
         """Process file after debounce period."""
@@ -171,6 +192,12 @@ class SyncthingService:
         logger.info("Stopping Syncthing service")
         self._running = False
 
+        # Cancel debounced file processing still in flight. These futures are
+        # not owned by the observer thread, so they must be cancelled
+        # explicitly or they are destroyed while pending at shutdown.
+        if self.event_handler:
+            self.event_handler.cancel_pending()
+
         # Stop observer
         if self.observer:
             self.observer.stop()
@@ -221,21 +248,28 @@ class SyncthingService:
                 logger.warning(f"Invalid job ID format: {job_id}")
                 return
 
-            # Read and parse YAML
+            # Read and parse YAML. read_yaml raises on any parse or
+            # validation failure, so there is no None case to check.
             job_state = read_yaml(Path(file_path), JobState)
-            if job_state is None:
-                logger.warning(f"Failed to parse job state file: {file_path}")
-                return
 
             # Update store
             store = get_store()
             existing_job = await store.get_job(job_id)
             if existing_job:
                 # Update only fields from YAML
-                await self._update_job_from_yaml(store, job_state)
+                await store.update_job(
+                    job_state.job_id,
+                    status=job_state.status,
+                    node_id=job_state.node_id,
+                    started_at=job_state.started_at,
+                    completed_at=job_state.completed_at,
+                    exit_code=job_state.exit_code,
+                    error=job_state.error,
+                    retry_count=job_state.retry_count,
+                )
             else:
                 # Create new job with the job_id from YAML
-                await store._create_job_with_id(job_state)
+                await store.create_job_with_id(job_state)
 
             self._processed_files.add(file_path)
             logger.debug(f"Processed job file: {job_id}")
@@ -243,27 +277,11 @@ class SyncthingService:
         except Exception as e:
             logger.error(f"Error processing job file {file_path}: {e}")
 
-    async def _update_job_from_yaml(self, store, job_state: JobState):
-        """Update job in store with data from YAML."""
-        await store.update_job(
-            job_state.job_id,
-            status=job_state.status,
-            node_id=job_state.node_id,
-            started_at=job_state.started_at,
-            completed_at=job_state.completed_at,
-            exit_code=job_state.exit_code,
-            error=job_state.error,
-            retry_count=job_state.retry_count,
-        )
-
     async def _process_node_file(self, node_id: str, file_path: str):
         """Process a node state YAML file."""
         try:
-            # Read and parse YAML
+            # Read and parse YAML. read_yaml raises on failure.
             node_spec = read_yaml(Path(file_path), NodeSpec)
-            if node_spec is None:
-                logger.warning(f"Failed to parse node spec file: {file_path}")
-                return
 
             # Update store
             store = get_store()

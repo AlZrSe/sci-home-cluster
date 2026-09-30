@@ -317,7 +317,7 @@ class DatabaseStore:
 
             return self._model_to_job_state(job)
 
-    async def _create_job_with_id(self, job_state: JobState) -> JobState:
+    async def create_job_with_id(self, job_state: JobState) -> JobState:
         """Create a job with a specific job_id (used for sync from Syncthing)."""
         await self._ensure_seeded()
         async with get_session() as session:
@@ -447,7 +447,7 @@ class DatabaseStore:
             )
             await session.delete(job_model)
             await session.commit()
-            await self._stop_log_stream(job_id)
+            await self.stop_log_stream(job_id)
             return True
 
     # Node CRUD operations
@@ -1001,7 +1001,7 @@ class DatabaseStore:
         self._log_stream_tasks[job_id] = task
         return task
 
-    async def _stop_log_stream(self, job_id: str):
+    async def stop_log_stream(self, job_id: str):
         """Stop the log streaming simulation for a job."""
         if job_id in self._log_stream_tasks:
             task = self._log_stream_tasks[job_id]
@@ -1013,6 +1013,13 @@ class DatabaseStore:
             self._log_stream_tasks.pop(job_id, None)
 
         self._log_stream_subscribers.pop(job_id, None)
+
+    async def stop_all_log_streams(self) -> None:
+        """Stop every log stream this store instance is running."""
+        for job_id in list(self._log_stream_tasks):
+            await self.stop_log_stream(job_id)
+        self._log_stream_tasks.clear()
+        self._log_stream_subscribers.clear()
 
     def subscribe_to_log_stream(self, job_id: str, on_line: Callable[[str], None]):
         """Subscribe to log stream updates for a job."""

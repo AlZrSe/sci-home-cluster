@@ -25,15 +25,24 @@ async def store(clean_database):
     the application actually runs rather than a parallel in-memory
     implementation.
     """
-    return DatabaseStore()
+    instance = DatabaseStore()
+    try:
+        yield instance
+    finally:
+        # A streaming worker that outlives its test keeps writing rows every
+        # 1.4s and blocks the next test's truncation on the SQLite write lock.
+        await instance.stop_all_log_streams()
 
 
 @pytest.fixture
 async def empty_store(clean_database):
     """A DatabaseStore that stays empty: the seeder is suppressed."""
-    store = DatabaseStore()
-    store._seeded = True
-    return store
+    instance = DatabaseStore()
+    instance._seeded = True
+    try:
+        yield instance
+    finally:
+        await instance.stop_all_log_streams()
 
 
 @pytest.fixture
@@ -576,14 +585,14 @@ class TestLogStreaming:
             await asyncio.sleep(0.1)
 
         # Clean up
-        await store._stop_log_stream(job_id)
+        await store.stop_log_stream(job_id)
 
         # Should have received some log lines
         assert len(received_lines) > 0
 
     @pytest.mark.asyncio
     async def test_stop_log_stream_cancels_task(self, store, sample_job_spec):
-        """Test that _stop_log_stream cancels the streaming task."""
+        """Test that stop_log_stream cancels the streaming task."""
         created_job = await store.create_job(sample_job_spec)
         job_id = created_job.job_id
 
@@ -595,7 +604,7 @@ class TestLogStreaming:
         await store.start_log_stream(job_id, on_line)
         assert job_id in store._log_stream_tasks
 
-        await store._stop_log_stream(job_id)
+        await store.stop_log_stream(job_id)
 
         assert job_id not in store._log_stream_tasks
 

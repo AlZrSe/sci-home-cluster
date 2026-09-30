@@ -3,9 +3,11 @@ Syncthing API endpoints.
 Provides status and manual scan trigger for Syncthing synchronization.
 """
 
-from fastapi import APIRouter, Request, HTTPException, status
+from fastapi import APIRouter, Depends, Request
 from pathlib import Path
 from backend.core.config import settings
+from backend.core.deps import get_current_token_payload
+from backend.core.errors import syncthing_unavailable
 from backend.services.syncthing_service import SyncthingService
 
 router = APIRouter()
@@ -17,7 +19,9 @@ def get_syncthing_service(request: Request) -> "SyncthingService":
 
 
 @router.get("/status")
-async def get_syncthing_status(request: Request):
+async def get_syncthing_status(
+    request: Request, payload: dict = Depends(get_current_token_payload)
+):
     """
     Get Syncthing sync service status.
     Returns information about the service state and Syncthing folder.
@@ -26,12 +30,9 @@ async def get_syncthing_status(request: Request):
 
     # Check if Syncthing is configured
     if not settings.SYNCTHING_ROOT or not Path(settings.SYNCTHING_ROOT).exists():
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=(
-                "Syncthing is not configured on the server. "
-                "Set SYNCTHING_ROOT env var and restart the API server."
-            ),
+        raise syncthing_unavailable(
+            "Syncthing is not configured on the server. "
+            "Set SYNCTHING_ROOT env var and restart the API server."
         )
 
     status_data = service.get_status()
@@ -66,7 +67,9 @@ async def get_syncthing_status(request: Request):
 
 
 @router.post("/scan")
-async def trigger_syncthing_scan(request: Request):
+async def trigger_syncthing_scan(
+    request: Request, payload: dict = Depends(get_current_token_payload)
+):
     """
     Trigger a manual scan of the Syncthing folder.
     Scans for new or updated job/node state files.
@@ -75,12 +78,9 @@ async def trigger_syncthing_scan(request: Request):
 
     # Check if Syncthing is configured
     if not settings.SYNCTHING_ROOT or not Path(settings.SYNCTHING_ROOT).exists():
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=(
-                "Syncthing is not configured on the server. "
-                "Set SYNCTHING_ROOT env var and restart the API server."
-            ),
+        raise syncthing_unavailable(
+            "Syncthing is not configured on the server. "
+            "Set SYNCTHING_ROOT env var and restart the API server."
         )
 
     result = await service.manual_scan()

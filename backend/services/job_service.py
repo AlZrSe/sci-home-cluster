@@ -90,9 +90,9 @@ class JobService:
         """Start simulating log streaming for a job."""
         return await self._store.start_log_stream(job_id, on_line)
 
-    async def _stop_log_stream(self, job_id: str):
-        """Stop the log streaming simulation for a job."""
-        await self._store._stop_log_stream(job_id)
+    async def stop_log_stream(self, job_id: str):
+        """Stop the log stream for a job."""
+        await self._store.stop_log_stream(job_id)
 
     def subscribe_to_log_stream(self, job_id: str, on_line: Callable[[str], None]):
         """Subscribe to log stream updates for a job."""

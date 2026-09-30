@@ -26,7 +26,9 @@ logging.basicConfig(level=getattr(logging, settings.LOG_LEVEL))
 logger = logging.getLogger(__name__)
 
 
-# Error code mapping for HTTP status codes
+# Fallback error codes, used only for HTTPExceptions raised without an
+# explicit code. Codes are otherwise attached at the raise site - see
+# backend/core/errors.py.
 ERROR_CODE_MAP: Dict[int, str] = {
     400: "VALIDATION_FAILED",
     401: "AUTH_TOKEN_INVALID",
@@ -38,36 +40,26 @@ ERROR_CODE_MAP: Dict[int, str] = {
     503: "SERVICE_UNAVAILABLE",
 }
 
-# Specific error codes for common scenarios
-SPECIFIC_ERROR_CODES: Dict[str, str] = {
-    "not authenticated": "AUTH_TOKEN_MISSING",
-    "could not validate credentials": "AUTH_TOKEN_INVALID",
-    "invalid or expired token": "AUTH_TOKEN_EXPIRED",
-    "invalid shared token": "AUTH_SHARED_TOKEN_INVALID",
-    "shared token not configured": "SHARED_TOKEN_NOT_CONFIGURED",
-    "job": "JOB_NOT_FOUND",
-    "node": "NODE_NOT_FOUND",
-    "metrics for job": "METRICS_NOT_FOUND",
-    "logs for job": "LOGS_NOT_FOUND",
-    "not in retryable state": "JOB_NOT_RETRYABLE",
-    "not cancellable": "JOB_NOT_CANCELLABLE",
-    "syncthing not configured": "SYNCTHING_UNAVAILABLE",
-    "syncthing": "SYNCTHING_UNAVAILABLE",
-    "database": "DATABASE_UNAVAILABLE",
-}
-
 
 def get_error_code(status_code: int, detail: str) -> str:
-    """Determine the appropriate error code based on status code and detail message."""
-    detail_lower = detail.lower()
+    """
+    Fallback error code for an HTTPException that carries none.
 
-    # Check for specific error patterns first
-    for pattern, code in SPECIFIC_ERROR_CODES.items():
-        if pattern in detail_lower:
-            return code
-
-    # Fall back to status code mapping
+    Prefer raising backend.core.errors.APIError, which sets the code
+    explicitly. This used to substring-match the detail text, so a code
+    could change just because a message was reworded.
+    """
     return ERROR_CODE_MAP.get(status_code, "INTERNAL_ERROR")
+
+
+def _database_display_name(database_url: str) -> str:
+    """
+    A safe, human-readable identifier for the configured database.
+
+    Strips any credentials so they can never be echoed by /health.
+    """
+    without_credentials = database_url.rsplit("@", 1)[-1]
+    return without_credentials.rsplit("///", 1)[-1] or "unknown"
 
 
 @asynccontextmanager
@@ -82,9 +74,9 @@ async def lifespan(app: FastAPI):
     # Run database migrations
     await run_migrations()
 
-    # Initialize the in-memory store (singleton)
+    # Initialize the store (singleton)
     get_store()
-    logger.info("In-memory store initialized")
+    logger.info("Database store initialized")
 
     # Start Syncthing watcher
     syncthing_service = SyncthingService(Path(settings.SYNCTHING_ROOT))
@@ -156,7 +148,11 @@ async def request_logging_middleware(request: Request, call_next):
 @app.exception_handler(HTTPException)
 async def http_exception_handler(request: Request, exc: HTTPException):
     """Convert HTTPException to ErrorResponse format."""
-    error_code = get_error_code(exc.status_code, str(exc.detail))
+    # APIError carries its own code; anything else falls back to the
+    # status-code map.
+    error_code = getattr(exc, "error_code", None) or get_error_code(
+        exc.status_code, str(exc.detail)
+    )
 
     # Determine title based on status code
     if exc.status_code == 401:
@@ -308,10 +304,9 @@ async def health_check():
         },
         "database": {
             "status": database_status,
-            "url": (
-                settings.DATABASE_URL.split("///")[-1]
-                if "///" in settings.DATABASE_URL
-                else "memory"
-            ),
+            # Report the database file name only, never credentials or the
+            # full URL. The previous implementation string-split the URL and
+            # fell back to the literal "memory", which was never true.
+            "url": _database_display_name(settings.DATABASE_URL),
         },
     }
