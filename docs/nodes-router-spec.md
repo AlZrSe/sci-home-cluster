@@ -4,6 +4,8 @@
 
 This document specifies the implementation of the Nodes Router for the Scientific Home Cluster backend API. The router provides endpoints for listing and retrieving cluster node information, following the API contract defined in `openapi.yaml`.
 
+> **Note**: The acceptance criteria and test scenarios below assume the 4 demo nodes (`node-alpha`–`node-delta`) are present. Demo seeding is now off by default (issue #27); these run against a store with `SEED_DEMO_DATA=true`.
+
 ## API Contract Reference
 
 **Source**: `openapi.yaml` - paths `/nodes` and `/nodes/{id}`
