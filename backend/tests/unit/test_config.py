@@ -17,6 +17,9 @@ def test_settings_defaults():
     try:
         # Set env var BEFORE creating Settings (fixture checks os.environ first)
         os.environ["SYNCTHING_ROOT"] = "/tmp/test"
+        # Hermeticity: a SEED_DEMO_DATA left in the developer's environment or
+        # in a repo-root .env would otherwise decide this assertion.
+        os.environ.pop("SEED_DEMO_DATA", None)
         settings = Settings(_env_file=env_file)
 
         assert settings.API_V1_STR == "/api/v1"
@@ -27,6 +30,8 @@ def test_settings_defaults():
         assert settings.DATABASE_URL == "sqlite:///./scientific_home_cluster.db"
         assert settings.LOG_LEVEL == "INFO"
         assert settings.LOCALHOST_BYPASS
+        # Demo seeding must be opt-in: a production database starts empty.
+        assert settings.SEED_DEMO_DATA is False
     finally:
         # Clean up
         os.unlink(env_file)
@@ -34,6 +39,8 @@ def test_settings_defaults():
             del os.environ["ENV_FILE"]
         if "SYNCTHING_ROOT" in os.environ:
             del os.environ["SYNCTHING_ROOT"]
+        if "SEED_DEMO_DATA" in os.environ:
+            del os.environ["SEED_DEMO_DATA"]
 
 
 def test_cors_origins_parsing():

@@ -45,8 +45,14 @@ class TestRootAndHealth:
         assert response.json() == {"message": "Welcome to Scientific Home Cluster API"}
 
     @pytest.mark.asyncio
-    async def test_health_endpoint(self, async_client):
-        """Test the health endpoint returns correct structure."""
+    async def test_health_endpoint(self, async_client, seeded_cluster):
+        """
+        Test the health endpoint returns correct structure.
+
+        ``seeded_cluster`` registers a node explicitly: the overall status
+        is "healthy" only when at least one node exists, so the assertion
+        below must not rest on ambient demo seeding.
+        """
         response = await async_client.get("/api/v1/health")
         assert response.status_code == 200
         data = response.json()

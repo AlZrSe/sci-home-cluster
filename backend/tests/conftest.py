@@ -53,6 +53,16 @@ def isolated_database():
     # one loop and reused in another causes intermittent "Event loop is
     # closed" failures. Unpooled connections remove that class of bug.
     settings.DB_POOL = "null"
+    # The demo dataset (10 jobs / 4 nodes) is off by default so a
+    # production database starts empty. A large part of this suite asserts
+    # on it, so the whole test session opts back in.
+    #
+    # Mutate the singleton rather than os.environ, for the same reason as
+    # DATABASE_URL above: Settings is constructed at import time
+    # (backend/core/config.py) and reads env/`.env` only at construction,
+    # so setting the variable in the environment would be both too late
+    # and leaky into tests that deliberately exercise the default.
+    settings.SEED_DEMO_DATA = True
 
     async def _create_schema() -> None:
         # A throwaway engine: creating the schema through the global
@@ -138,6 +148,71 @@ def reset_singleton_store():
     _run()
     yield
     _run()
+
+
+# ============================================================================
+# Demo-data seeding fixtures
+# ============================================================================
+
+
+@pytest.fixture
+def seeding_disabled(monkeypatch) -> Generator[DatabaseStore, None, None]:
+    """
+    Put the application store into production mode for a single test.
+
+    Turns SEED_DEMO_DATA off on the settings singleton (not in os.environ,
+    which Settings already consumed at import time), empties every table
+    and clears the singleton's cached _seeded flag so the lazy seeder runs
+    again - under the flag - on the next request.
+
+    Emptied through store.reset() rather than by deleting rows directly,
+    so the fixture also exercises the reset() gate. Deleting the rows
+    behind its back would let a fix that gates only _ensure_seeded() pass
+    these tests while the application singleton stayed populated.
+
+    The flag is restored on teardown, and reset_singleton_store re-seeds
+    afterwards, so the next test sees the normal seeded state.
+    """
+    monkeypatch.setattr(settings, "SEED_DEMO_DATA", False)
+    store = get_store()
+
+    async def _clear() -> None:
+        await store.reset()
+        # reset() marks the store as seeded so it never re-seeds; undo that
+        # so the very next request runs the gated lazy startup path, exactly
+        # as a freshly started backend process would.
+        store._seeded = False
+
+    import asyncio
+
+    asyncio.run(_clear())
+    yield store
+    asyncio.run(_clear())
+
+
+@pytest.fixture
+async def seeded_cluster(seeding_disabled) -> AsyncGenerator[DatabaseStore, None]:
+    """
+    A store whose demo dataset is explicitly present.
+
+    /api/v1/health reports store "healthy" only when at least one node
+    exists. That assertion used to pass solely because ambient seeding
+    supplied 4 nodes; this fixture creates one explicitly so the health
+    tests do not depend on the seeder being enabled.
+    """
+    store = seeding_disabled
+    node = NodeSpec(
+        node_id="health-node",
+        hostname="health-node.lan",
+        gpus=[GPUInfo(name="NVIDIA RTX 4090", memory_gb=24)],
+        cpus=8,
+        memory_gb=32,
+        os="Ubuntu 24.04",
+        status="ONLINE",
+        last_heartbeat=datetime.now(),
+    )
+    await store.create_node(node)
+    yield store
 
 
 # ============================================================================
