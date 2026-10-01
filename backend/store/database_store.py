@@ -12,6 +12,7 @@ from datetime import datetime
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from backend.core.config import settings
 from backend.core.database import get_session
 from shared.schemas.job_status import JobStatus
 from shared.schemas.job_state import JobState
@@ -251,10 +252,17 @@ class DatabaseStore:
         async with self._seed_lock:
             if self._seeded:
                 return
-            async with get_session() as session:
-                await self._seed_data(session)
+            if settings.SEED_DEMO_DATA:
+                async with get_session() as session:
+                    await self._seed_data(session)
             # The job counter lives in memory, so it has to be re-derived
             # from the database on startup or ids repeat after a restart.
+            #
+            # This must run even when demo seeding is off. _job_counter
+            # starts at 0 and create_job does `+= 1`, so skipping the sync
+            # makes the first job after a restart `job-1` - which collides
+            # with low-numbered ids arriving via the Syncthing folder scan
+            # and raises IntegrityError on the job_id primary key (HTTP 500).
             await self._sync_job_counter()
             self._seeded = True
 
@@ -540,7 +548,23 @@ class DatabaseStore:
             return True
 
     async def reset(self) -> None:
-        """Reset the store to its initial seeded state for testing."""
+        """
+        Empty every table and mark the store as already seeded.
+
+        Deliberately gated on the same SEED_DEMO_DATA flag as
+        _ensure_seeded(), even though the flag has no production caller
+        here. reset() invokes _seed_data() directly and so bypasses
+        _ensure_seeded() entirely - gating only _ensure_seeded would
+        leave this call seeding unconditionally, and the autouse
+        reset_singleton_store fixture calls reset() around every test, so
+        the application singleton would be repopulated while every test
+        still passed. Gating both keeps the two entry points consistent
+        and makes "seeding is off" observable end to end.
+
+        _job_counter stays at 0 and _seeded stays True regardless of the
+        flag: the tables really were just emptied, so there is nothing
+        left to seed and nothing to derive a counter from.
+        """
         async with get_session() as session:
             await session.execute(delete(LogEntryModel))
             await session.execute(delete(CPUMetricModel))
@@ -555,7 +579,8 @@ class DatabaseStore:
             self._log_stream_tasks.clear()
             self._log_stream_subscribers.clear()
 
-            await self._seed_data(session)
+            if settings.SEED_DEMO_DATA:
+                await self._seed_data(session)
             # reset() clears the table, so the cached "already seeded" flag
             # has to be restored or the store would never re-seed.
             self._seeded = True

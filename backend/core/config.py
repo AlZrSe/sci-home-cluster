@@ -91,6 +91,17 @@ class Settings(BaseSettings):
     # "null" opens a fresh connection per session, which the test suite uses
     # so that connections are never shared between event loops.
     DB_POOL: str = "pooled"
+    # Seed the 10 demo jobs / 4 demo nodes (a port of the frontend mock
+    # server) into an empty database on first use.
+    #
+    # Off by default: a production database must start empty, which is what
+    # docs/api-server-core-spec.md already requires ("NO seed data in
+    # migrations"). Opt in for local development and for the test suite,
+    # which asserts on the demo dataset.
+    #
+    # Startup-only. Flipping this at runtime would re-seed a database that
+    # is meant to stay empty, which is the bug this flag exists to close.
+    SEED_DEMO_DATA: bool = False
 
     # CORS origins
     BACKEND_CORS_ORIGINS: List[Union[str, AnyHttpUrl]] = [

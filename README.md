@@ -231,10 +231,59 @@ sci-run logs <job-id> --follow
 |----------|-------------|---------|
 | `SYNCTHING_ROOT` | Path to Syncthing shared folder | `/tmp/syncthing` |
 | `DATABASE_URL` | SQLite database path | `sqlite:///./scientific_home_cluster.db` |
+| `DB_POOL` | Connection pool strategy: `pooled` or `null` | `pooled` |
+| `SEED_DEMO_DATA` | Seed the 10 demo jobs / 4 demo nodes on first use | `false` |
 | `SHARED_TOKEN` | Shared bearer token for API | auto-generated |
 | `SECRET_KEY` | JWT signing key | auto-generated |
 | `LOCALHOST_BYPASS` | Skip auth on localhost | `true` |
 | `BACKEND_CORS_ORIGINS` | Allowed CORS origins | `["http://localhost:3000", "http://localhost:5173"]` |
+
+### Demo Data
+
+The backend seeds a demo dataset (10 jobs `job-1041`–`job-1050` and 4 nodes
+`node-alpha`–`node-delta`, ported from the frontend mock server) into any
+empty database on first use. **This is off by default.** A production
+database starts empty and stays empty, which is what
+[docs/api-server-core-spec.md](docs/api-server-core-spec.md) requires.
+
+To get a populated dashboard locally:
+
+```bash
+SEED_DEMO_DATA=true uvicorn backend.main:app --reload
+```
+
+The flag is read at startup only. Flipping it at runtime would re-seed a
+database that is meant to stay empty, which is the bug it exists to close.
+The test suite sets it on for the whole session, since a large part of it
+asserts on the demo dataset.
+
+> **Known behaviour:** with the seeder off, an empty cluster reports
+> `GET /api/v1/health` as `status: "degraded"`, because store health is
+> derived from the node count and no agent has registered yet. The endpoint
+> still returns HTTP 200, so the frontend's reachability probe keeps
+> working. Fixing the health contract is tracked in issue #32.
+
+#### Cleaning a database that was seeded already
+
+There is deliberately **no automatic cleanup**. Seed rows live in the same
+tables as real rows and are indistinguishable from them, so any heuristic
+purge risks deleting a real cluster's data. To start clean, stop the
+backend and delete the development database:
+
+```bash
+# Stop the backend first, then remove the database and its WAL sidecars.
+rm -f backend/scientific_home_cluster.db \
+      backend/scientific_home_cluster.db-shm \
+      backend/scientific_home_cluster.db-wal
+```
+
+For a database that also holds real jobs, delete only the known demo rows:
+
+```bash
+sqlite3 backend/scientific_home_cluster.db \
+  "DELETE FROM jobs WHERE job_id BETWEEN 'job-1041' AND 'job-1050';
+   DELETE FROM nodes WHERE node_id IN ('node-alpha','node-beta','node-gamma','node-delta');"
+```
 
 ---
 

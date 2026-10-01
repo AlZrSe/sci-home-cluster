@@ -79,6 +79,10 @@ mysql/
 
 # SQLite
 *.sqlite3
+# WAL sidecars: `*.db` does not match these, so they showed up as
+# untracked noise next to the development database.
+*.db-shm
+*.db-wal
 
 # Uploaded files
 uploads/

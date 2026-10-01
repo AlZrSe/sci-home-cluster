@@ -17,8 +17,14 @@ def test_root_endpoint():
     assert response.json() == {"message": "Welcome to Scientific Home Cluster API"}
 
 
-def test_health_endpoint():
-    """Test the health endpoint returns correct status."""
+def test_health_endpoint(seeded_cluster):
+    """
+    Test the health endpoint returns correct status.
+
+    ``seeded_cluster`` registers a node explicitly. The overall status is
+    "healthy" only when at least one node is registered, so this test
+    depends on its own fixture rather than on ambient demo seeding.
+    """
     client = TestClient(app)
     response = client.get("/api/v1/health")
     assert response.status_code == 200
