@@ -587,7 +587,16 @@ class DatabaseStore:
 
     # Metrics operations
     async def get_job_metrics(self, job_id: str) -> Optional[JobMetrics]:
-        """Get job metrics, generating and caching if not present."""
+        """
+        Get the stored metrics for a job.
+
+        Returns None when the job does not exist, which is how the route
+        decides on METRICS_NOT_FOUND. That existence check is NOT gated on
+        SEED_DEMO_DATA: a lookup miss is not demo data.
+
+        When the job exists but nothing has been collected, the answer
+        depends on SEED_DEMO_DATA - see the gate at the bottom.
+        """
         await self._ensure_seeded()
         async with get_session() as session:
             result = await session.execute(
@@ -640,10 +649,19 @@ class DatabaseStore:
                     summary=summary,
                 )
 
-        metrics = await self._generate_job_metrics(job_id)
-        if metrics:
-            await self._store_job_metrics(job_id, metrics)
-        return metrics
+        # The job exists, but nothing has been collected for it yet.
+        #
+        # SEED_DEMO_DATA gates *fabrication*, not existence (issue #35).
+        # With it off, a read is only a read: no row is written and the
+        # caller gets an empty series.
+        if settings.SEED_DEMO_DATA:
+            # Demo data only - persists to the tables, as it always has.
+            metrics = await self._generate_job_metrics(job_id)
+            if metrics:
+                await self._store_job_metrics(job_id, metrics)
+            return metrics
+
+        return self._empty_metrics(job_id)
 
     async def _store_job_metrics(self, job_id: str, metrics: JobMetrics) -> None:
         """Store job metrics in the database."""
@@ -672,7 +690,15 @@ class DatabaseStore:
             await session.commit()
 
     async def get_node_metrics(self, node_id: str) -> Optional[JobMetrics]:
-        """Get node metrics, generating and caching if not present."""
+        """
+        Get the stored metrics for a node.
+
+        None when the node does not exist (the route turns that into
+        NODE_METRICS_NOT_FOUND); an empty series when it exists but has
+        reported nothing. Same contract as get_job_metrics, and for the
+        same reason (issue #35): a freshly registered node must not be
+        painted as a broken one.
+        """
         await self._ensure_seeded()
         async with get_session() as session:
             result = await session.execute(
@@ -725,10 +751,16 @@ class DatabaseStore:
                     summary=summary,
                 )
 
-        metrics = await self._generate_node_metrics(node_id)
-        if metrics:
-            await self._store_node_metrics(node_id, metrics)
-        return metrics
+        # The node exists, but no agent has reported for it yet. See the
+        # matching gate in get_job_metrics (issue #35).
+        if settings.SEED_DEMO_DATA:
+            # Demo data only - persists to the tables, as it always has.
+            metrics = await self._generate_node_metrics(node_id)
+            if metrics:
+                await self._store_node_metrics(node_id, metrics)
+            return metrics
+
+        return self._empty_metrics(f"node:{node_id}")
 
     async def _store_node_metrics(self, node_id: str, metrics: JobMetrics) -> None:
         """Store node metrics in the database."""
@@ -756,10 +788,46 @@ class DatabaseStore:
                 session.add(model)
             await session.commit()
 
+    def _empty_metrics(self, job_id: str) -> JobMetrics:
+        """
+        The "it exists, nothing has been collected" answer.
+
+        An empty series rather than a 404: the job (or node) is real, it
+        just has no samples. This is deliberately NOT a 404 - a freshly
+        created job would otherwise be indistinguishable from a typo.
+
+        The summary is all zeros, which is the correct value for a series
+        with no samples. Callers must detect emptiness from the arrays
+        (`gpu_metrics == [] and cpu_metrics == []`), never from the
+        summary: an all-zero summary is indistinguishable from a GPU that
+        really did measure nothing (issue #35, AC-4/AC-12).
+        """
+        return JobMetrics(
+            job_id=job_id,
+            gpu_metrics=[],
+            cpu_metrics=[],
+            summary=self._calculate_summary([], []),
+        )
+
     def _calculate_summary(
         self, gpu_metrics: List[GPUMetric], cpu_metrics: List[CPUMetric]
     ) -> JobMetricsSummary:
-        """Calculate summary statistics from metrics."""
+        """
+        Calculate summary statistics from metrics.
+
+        Total by construction, including for two empty series - which is
+        what _empty_metrics relies on. Two things keep the empty case from
+        raising, and both are load-bearing:
+
+          * the `if gpu_metrics` ternaries below. They guard on the LIST,
+            not on its values, so the `mems = [0]` placeholder set for the
+            empty case is never handed to min()/max()/_avg().
+          * `_avg`'s `if values else 0`, which short-circuits before
+            `sum(values) / len(values)` can divide by zero.
+
+        Removing either turns every empty metrics response into a 500.
+        Do not "simplify" them away (issue #35, AC-12).
+        """
         if gpu_metrics:
             mems = [m.memory_used_mb for m in gpu_metrics]
             utils = [m.utilization_percent for m in gpu_metrics]
@@ -781,7 +849,13 @@ class DatabaseStore:
         )
 
     async def _generate_node_metrics(self, node_id: str) -> Optional[JobMetrics]:
-        """Generate node metrics using deterministic algorithm."""
+        """
+        DEMO DATA ONLY - gated by SEED_DEMO_DATA at its call site.
+
+        Deterministic from stable_seed(), so it is also the oracle that
+        pins the shape of the demo dataset. It is not, and must not become,
+        a fallback for real data: no agent reports node samples yet.
+        """
         node = await self.get_node(node_id)
         if not node:
             return None
@@ -846,7 +920,14 @@ class DatabaseStore:
         )
 
     async def _generate_job_metrics(self, job_id: str) -> Optional[JobMetrics]:
-        """Generate job metrics using the same algorithm as the mock server."""
+        """
+        DEMO DATA ONLY - gated by SEED_DEMO_DATA at its call site.
+
+        Uses the same algorithm as the frontend mock server, and is seeded
+        from stable_seed() so two calls agree. It is the determinism
+        oracle for the demo dataset; it is NOT a source of metrics for a
+        real job (issue #35).
+        """
         job = await self.get_job(job_id)
         if not job:
             return None
@@ -904,15 +985,26 @@ class DatabaseStore:
         )
 
     # Log operations
-    async def get_job_logs(self, job_id: str) -> List[str]:
-        """Get job logs, generating and caching if not present."""
+    async def get_job_logs(self, job_id: str) -> Optional[List[str]]:
+        """
+        Get the stored log lines for a job.
+
+        Returns None when the job does not exist, which is what makes
+        logs_not_found reachable in the routes. That check is NOT gated on
+        SEED_DEMO_DATA: whether or not demo data is enabled, an unknown id
+        is an unknown id and gets a 404 rather than a convincing 64-line
+        log file (issue #35, D3).
+
+        When the job exists but has no stored lines, the answer depends on
+        SEED_DEMO_DATA - see the gate at the bottom.
+        """
         await self._ensure_seeded()
         async with get_session() as session:
             result = await session.execute(
                 select(JobModel).where(JobModel.job_id == job_id)
             )
             if not result.scalar_one_or_none():
-                return self._generate_job_logs(job_id)
+                return None
 
             result = await session.execute(
                 select(LogEntryModel)
@@ -924,9 +1016,15 @@ class DatabaseStore:
             if log_models:
                 return [log.line for log in log_models]
 
-        logs = self._generate_job_logs(job_id)
-        await self._store_job_logs(job_id, logs)
-        return logs
+        # The job exists, but nothing has been logged for it yet. See the
+        # matching gate in get_job_metrics (issue #35).
+        if settings.SEED_DEMO_DATA:
+            # Demo data only - persists to the tables, as it always has.
+            logs = self._generate_job_logs(job_id)
+            await self._store_job_logs(job_id, logs)
+            return logs
+
+        return []
 
     async def _store_job_logs(self, job_id: str, logs: List[str]) -> None:
         """Store job logs in the database."""
@@ -942,7 +1040,13 @@ class DatabaseStore:
             await session.commit()
 
     def _generate_job_logs(self, job_id: str) -> List[str]:
-        """Generate job logs using the same algorithm as the mock server."""
+        """
+        DEMO DATA ONLY - gated by SEED_DEMO_DATA at its call site.
+
+        Deterministic from stable_seed(), so it is also the oracle pinning
+        the shape of the demo log batch. Not a source of logs for a real
+        job: no agent writes them yet (issue #35).
+        """
         seed = stable_seed("job-log", job_id)
         rnd = random.Random(seed)
 
@@ -974,20 +1078,55 @@ class DatabaseStore:
         return lines
 
     # WebSocket log streaming simulation
-    async def start_log_stream(
-        self, job_id: str, on_line: Callable[[str], None]
-    ) -> asyncio.Task:
+    def log_stream_available(self) -> bool:
         """
-        Start simulating log streaming for a job.
-        Returns a task that can be cancelled to stop the stream.
-        """
-        await self._ensure_seeded()
+        Whether the log stream has anything to send at all.
 
-        # Register the callback. Without this the worker generates lines and
-        # stores them but never hands any to the caller.
+        Every line the stream emits is generated from the same templates
+        as _generate_job_logs, so with SEED_DEMO_DATA off the stream can
+        only ever produce invented output. The WebSocket route uses this
+        to close with an explicit reason rather than hold a client open on
+        a socket that will never say anything (issue #35, AC-8).
+        """
+        return settings.SEED_DEMO_DATA
+
+    def _register_log_stream_subscriber(
+        self, job_id: str, on_line: Callable[[str], None]
+    ) -> None:
+        """
+        Record on_line as a subscriber for this job's stream.
+
+        Without this the worker generates lines and stores them but never
+        hands any to the caller. Extracted from start_log_stream to keep
+        that function's complexity inside the project's ruff limit.
+        """
         if job_id not in self._log_stream_subscribers:
             self._log_stream_subscribers[job_id] = set()
         self._log_stream_subscribers[job_id].add(on_line)
+
+    async def start_log_stream(
+        self, job_id: str, on_line: Callable[[str], None]
+    ) -> Optional[asyncio.Task]:
+        """
+        Start simulating log streaming for a job.
+
+        Returns the task that can be cancelled to stop the stream, or None
+        when the stream is unavailable because SEED_DEMO_DATA is off - in
+        which case no task is created, no line is generated and nothing is
+        written to log_entries (issue #35, AC-8).
+        """
+        await self._ensure_seeded()
+
+        if not self.log_stream_available():
+            # Demo data only. Refusing here is what keeps the route from
+            # registering a subscriber for a stream that will never tick;
+            # the guard inside _stream_worker below is what keeps the
+            # worker honest if it is started by any other caller.
+            return None
+
+        # Register the callback. Without this the worker generates lines and
+        # stores them but never hands any to the caller.
+        self._register_log_stream_subscriber(job_id, on_line)
 
         async def _stream_worker():
             step = 5000
@@ -995,6 +1134,15 @@ class DatabaseStore:
                 while True:
                     job = await self.get_job(job_id)
                     if not job or job.status != JobStatus.RUNNING:
+                        break
+
+                    # DEMO DATA ONLY. Checked per tick, not just at
+                    # start_log_stream: this worker invents a line AND
+                    # commits it to log_entries, so leaving it running
+                    # after the flag is flipped would keep writing an
+                    # invented row every 1.4s for as long as the job is
+                    # RUNNING, with no read involved (issue #35, AC-9).
+                    if not self.log_stream_available():
                         break
 
                     step += 50

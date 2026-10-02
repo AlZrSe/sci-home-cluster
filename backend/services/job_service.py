@@ -3,6 +3,7 @@ Job service layer containing business logic for job management.
 """
 
 from typing import List, Optional, Tuple, Callable
+import asyncio
 from datetime import datetime
 from shared.schemas.job_state import JobState
 from shared.schemas.job_spec import JobSpec
@@ -86,9 +87,24 @@ class JobService:
         )
         return updated_job
 
-    async def start_log_stream(self, job_id: str, on_line: Callable[[str], None]):
-        """Start simulating log streaming for a job."""
-        return await self._store.start_log_stream(job_id, on_line)
+    async def start_log_stream(
+        self, job_id: str, on_line: Callable[[str], None]
+    ) -> Optional[asyncio.Task]:
+        """
+        Start simulating log streaming for a job.
+
+        Returns the stream task, or None when the stream is unavailable
+        because demo data is disabled (issue #35).
+        """
+        task: Optional[asyncio.Task] = await self._store.start_log_stream(
+            job_id, on_line
+        )
+        return task
+
+    def log_stream_available(self) -> bool:
+        """Whether the store can produce any streamed log lines."""
+        available: bool = self._store.log_stream_available()
+        return available
 
     async def stop_log_stream(self, job_id: str):
         """Stop the log stream for a job."""
