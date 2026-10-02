@@ -15,7 +15,7 @@ from typing import Tuple
 import pytest
 from sqlalchemy import func, select
 
-from backend.core.config import Settings, settings
+from backend.core.config import Settings
 from backend.core.database import get_session
 from backend.store import DatabaseStore
 from backend.store.database import JobModel, NodeModel
@@ -70,28 +70,9 @@ async def wipe_tables() -> None:
     await _clear_store_data(DatabaseStore())
 
 
-@pytest.fixture
-def flag_off(monkeypatch):
-    """Force SEED_DEMO_DATA off for one test."""
-    monkeypatch.setattr(settings, "SEED_DEMO_DATA", False)
-
-
-@pytest.fixture
-def flag_on(monkeypatch):
-    """Force SEED_DEMO_DATA on for one test (the test-session default)."""
-    monkeypatch.setattr(settings, "SEED_DEMO_DATA", True)
-
-
-@pytest.fixture
-async def store_off(clean_database, flag_off) -> DatabaseStore:
-    """A fresh DatabaseStore against empty tables, with seeding disabled."""
-    return DatabaseStore()
-
-
-@pytest.fixture
-async def store_on(clean_database, flag_on) -> DatabaseStore:
-    """A fresh DatabaseStore against empty tables, with seeding enabled."""
-    return DatabaseStore()
+# flag_off / flag_on / store_off / store_on now live in conftest.py so
+# other modules can use them without importing a fixture across modules.
+# They are unchanged.
 
 
 # ---------------------------------------------------------------------------
@@ -171,9 +152,11 @@ async def test_store_stays_empty_when_flag_off(store_off):
     assert await store.update_node("node-alpha", status="ONLINE") is None
     assert await store.delete_node("node-alpha") is False
 
-    # get_job_logs synthesises lines for unknown ids by design (a separate
-    # issue), so it is excluded here - but it must not create a job row.
-    await store.get_job_logs("job-1050")
+    # An unknown job id is a 404 whatever the flag says, so this creates
+    # nothing: it used to synthesise 64 lines for any id, which is issue
+    # #35 and is now fixed. Kept here because it is one more read path
+    # that must leave the tables empty in production mode.
+    assert await store.get_job_logs("job-1050") is None
 
     assert await row_counts() == (0, 0)
 

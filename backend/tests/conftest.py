@@ -215,6 +215,40 @@ async def seeded_cluster(seeding_disabled) -> AsyncGenerator[DatabaseStore, None
     yield store
 
 
+# ---------------------------------------------------------------------------
+# Per-test SEED_DEMO_DATA overrides
+# ---------------------------------------------------------------------------
+#
+# These four started life in unit/test_seed_flag.py and were moved here so
+# that every test which needs a specific flag state can ask for one
+# instead of importing a fixture from another module (which ruff flags as
+# a redefinition as soon as a test uses the name as a parameter).
+
+
+@pytest.fixture
+def flag_off(monkeypatch):
+    """Force SEED_DEMO_DATA off for one test."""
+    monkeypatch.setattr(settings, "SEED_DEMO_DATA", False)
+
+
+@pytest.fixture
+def flag_on(monkeypatch):
+    """Force SEED_DEMO_DATA on for one test (the test-session default)."""
+    monkeypatch.setattr(settings, "SEED_DEMO_DATA", True)
+
+
+@pytest.fixture
+async def store_off(clean_database, flag_off) -> DatabaseStore:
+    """A fresh DatabaseStore against empty tables, with seeding disabled."""
+    return DatabaseStore()
+
+
+@pytest.fixture
+async def store_on(clean_database, flag_on) -> DatabaseStore:
+    """A fresh DatabaseStore against empty tables, with seeding enabled."""
+    return DatabaseStore()
+
+
 # ============================================================================
 # Core Test Fixtures
 # ============================================================================
