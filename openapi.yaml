@@ -43,6 +43,42 @@
         "title": "CPUMetric",
         "type": "object"
       },
+      "ErrorResponse": {
+        "description": "RFC7807-style error body with a stable machine-readable code.",
+        "properties": {
+          "detail": {
+            "title": "Detail",
+            "type": "string"
+          },
+          "error_code": {
+            "title": "Error Code",
+            "type": "string"
+          },
+          "instance": {
+            "title": "Instance",
+            "type": "string"
+          },
+          "status": {
+            "maximum": 599.0,
+            "minimum": 400.0,
+            "title": "Status",
+            "type": "integer"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "title",
+          "detail",
+          "instance",
+          "error_code"
+        ],
+        "title": "ErrorResponse",
+        "type": "object"
+      },
       "GPUInfo": {
         "description": "Information about a single GPU on a node.",
         "properties": {
@@ -1237,6 +1273,16 @@
             },
             "description": "Successful Response"
           },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Job not found"
+          },
           "422": {
             "content": {
               "application/json": {
@@ -1282,6 +1328,16 @@
               }
             },
             "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Job not found"
           },
           "422": {
             "content": {
@@ -1330,6 +1386,16 @@
               }
             },
             "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Job not found"
           },
           "422": {
             "content": {
@@ -1505,6 +1571,16 @@
               }
             },
             "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Node not found"
           },
           "422": {
             "content": {

@@ -72,11 +72,20 @@
 - [ ] WebSocket implementation should mirror mock-server behavior
 - [ ] WebSocket endpoint should support subprotocol for structured messages (log/status)
 
+> **Note (issue #35):** metrics and logs are read from the database and are
+> never invented. With `SEED_DEMO_DATA=false` (the default) an existing job
+> with no stored samples returns `200` with empty arrays and an all-zero
+> `summary`, an unknown job returns `404` `METRICS_NOT_FOUND` /
+> `LOGS_NOT_FOUND`, and the log WebSocket closes with code `1008` rather than
+> emitting generated lines. The items below that mention *generated* or
+> *mock-server* behaviour only apply with `SEED_DEMO_DATA=true`, and are the
+> spec as originally written rather than the intended production behaviour.
+
 ### WebSocket Log Streaming
 - [ ] Immediately send connecting status upon connection
 - [ ] After short delay, send open status and begin log streaming
 - [ ] On disconnect or job completion/failure/cancellation, send closed status
-- [ ] Log streaming should mimic mock-server behavior:
+- [ ] Log streaming should mimic mock-server behavior (**`SEED_DEMO_DATA=true` only**):
   - Start with initial log lines (job accepted, syncing, environment ready, starting command)
   - Then stream generated log lines using same templates
   - Use same timing mechanisms as mock server
