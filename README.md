@@ -277,12 +277,46 @@ rm -f backend/scientific_home_cluster.db \
       backend/scientific_home_cluster.db-wal
 ```
 
-For a database that also holds real jobs, delete only the known demo rows:
+For a database that also holds real jobs, delete only the known demo rows.
+
+The demo metrics and logs are synthesised on read, so they have no rows in a
+fresh database, but an older one may have persisted them. The foreign keys are
+**circular** - `jobs.node_id` references `nodes.node_id` *and*
+`nodes.current_job_id` references `jobs.job_id` - so no delete order alone
+satisfies them. The cycle has to be broken first by clearing
+`nodes.current_job_id`. The backend itself leaves `PRAGMA foreign_keys` off
+(`backend/core/database.py:28`), so this only bites under tools that enforce
+it - but the statement is written to be correct either way.
+
+```bash
+sqlite3 backend/scientific_home_cluster.db <<'SQL'
+PRAGMA foreign_keys=ON;
+BEGIN;
+-- Break the circular FK first: nodes.current_job_id -> jobs.job_id
+UPDATE nodes SET current_job_id = NULL;
+-- Children of jobs.job_id
+DELETE FROM gpu_metrics WHERE job_id BETWEEN 'job-1041' AND 'job-1050';
+DELETE FROM cpu_metrics WHERE job_id BETWEEN 'job-1041' AND 'job-1050';
+DELETE FROM log_entries WHERE job_id BETWEEN 'job-1041' AND 'job-1050';
+-- jobs.node_id -> nodes.node_id, so jobs go before nodes
+DELETE FROM jobs WHERE job_id BETWEEN 'job-1041' AND 'job-1050';
+DELETE FROM nodes WHERE node_id IN ('node-alpha','node-beta','node-gamma','node-delta');
+COMMIT;
+-- Must print nothing.
+PRAGMA foreign_key_check;
+SQL
+```
+
+Verify afterwards - all five should be `0` unless the database also held real
+jobs:
 
 ```bash
 sqlite3 backend/scientific_home_cluster.db \
-  "DELETE FROM jobs WHERE job_id BETWEEN 'job-1041' AND 'job-1050';
-   DELETE FROM nodes WHERE node_id IN ('node-alpha','node-beta','node-gamma','node-delta');"
+  "SELECT 'jobs',COUNT(*) FROM jobs
+   UNION ALL SELECT 'nodes',COUNT(*) FROM nodes
+   UNION ALL SELECT 'gpu_metrics',COUNT(*) FROM gpu_metrics
+   UNION ALL SELECT 'cpu_metrics',COUNT(*) FROM cpu_metrics
+   UNION ALL SELECT 'log_entries',COUNT(*) FROM log_entries;"
 ```
 
 ---
