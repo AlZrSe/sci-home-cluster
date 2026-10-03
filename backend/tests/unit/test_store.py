@@ -388,9 +388,13 @@ class TestJobCRUD:
         created_job = await store.create_job(sample_job_spec)
         job_id = created_job.job_id
 
-        # Generate some metrics and logs
-        await store.get_job_metrics(job_id)
-        await store.get_job_logs(job_id)
+        # Seed explicitly rather than by reading: this test is about
+        # cascade delete, so it must not depend on read-time fabrication
+        # (which no longer happens with SEED_DEMO_DATA off - issue #35).
+        generated = await store._generate_job_metrics(job_id)
+        assert generated is not None
+        await store._store_job_metrics(job_id, generated)
+        await store._store_job_logs(job_id, store._generate_job_logs(job_id))
 
         async def counts() -> tuple:
             async with get_session() as session:
@@ -517,11 +521,14 @@ class TestLogs:
 
     @pytest.mark.asyncio
     async def test_get_job_logs_not_found(self, store):
-        """Test getting logs for non-existent job returns generated logs (current behavior)."""
-        # The store generates logs on-the-fly for any job ID
-        logs = await store.get_job_logs("job-999999")
-        assert isinstance(logs, list)
-        assert len(logs) > 0
+        """An unknown job id returns None, so the route can raise a 404.
+
+        It used to return 64 generated lines for any id whatsoever, which
+        meant a typo in a job id produced a convincing log file instead of
+        an error. Existence is deliberately not gated on SEED_DEMO_DATA
+        (issue #35, D3).
+        """
+        assert await store.get_job_logs("job-999999") is None
 
     @pytest.mark.asyncio
     async def test_log_format(self, store, sample_job_spec):

@@ -2,15 +2,21 @@
 Node management API endpoints.
 """
 
-from typing import List
+from typing import Any, Dict, List, Union
 from fastapi import APIRouter, Depends, status
 from backend.core.deps import get_current_token_payload
 from backend.core.errors import APIError, node_not_found
 from shared.schemas.node_spec import NodeSpec
 from shared.schemas.job_metrics import JobMetrics
+from shared.schemas.error_response import ErrorResponse
 from backend.services.node_service import NodeService
 
 router = APIRouter()
+
+# Declared on the decorator so the generated OpenAPI documents it.
+NODE_METRICS_404: Dict[Union[int, str], Dict[str, Any]] = {
+    404: {"model": ErrorResponse, "description": "Node not found"}
+}
 
 
 @router.get("/", response_model=List[NodeSpec])
@@ -35,7 +41,7 @@ async def get_node(node_id: str, payload: dict = Depends(get_current_token_paylo
     return node
 
 
-@router.get("/{node_id}/metrics", response_model=JobMetrics)
+@router.get("/{node_id}/metrics", response_model=JobMetrics, responses=NODE_METRICS_404)
 async def get_node_metrics(
     node_id: str, payload: dict = Depends(get_current_token_payload)
 ):

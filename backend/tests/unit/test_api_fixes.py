@@ -200,8 +200,11 @@ class TestNoRouteCallsAnotherRoute:
     @pytest.mark.asyncio
     async def test_history_endpoint_404s_like_logs(self, async_client):
         response = await async_client.get("/api/v1/jobs/job-999999/logs/history")
-        # Either it returns generated logs or a 404; it must not 500.
-        assert response.status_code in (200, 404)
+        # Was `in (200, 404)`: the permissive form was written to
+        # accommodate the fabrication bug, so it asserted nothing. An
+        # unknown job is a 404 on both paths now (issue #35).
+        assert response.status_code == 404
+        assert response.json()["error_code"] == "LOGS_NOT_FOUND"
 
 
 class TestLogStreamDeliversEachLineOnce:

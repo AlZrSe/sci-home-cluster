@@ -78,6 +78,20 @@ async def lifespan(app: FastAPI):
     get_store()
     logger.info("Database store initialized")
 
+    # Name the mode the process is in, on one line, at startup. This flag
+    # no longer only controls demo seeding: with it off the backend also
+    # refuses to invent metrics and log lines at read time (issue #35), so
+    # an empty dashboard means two very different things depending on it
+    # and the operator cannot tell them apart from the outside.
+    logger.info(
+        "SEED_DEMO_DATA=%s - demo dataset %s; metrics and logs %s",
+        settings.SEED_DEMO_DATA,
+        "seeded" if settings.SEED_DEMO_DATA else "not seeded",
+        "are generated on read when missing"
+        if settings.SEED_DEMO_DATA
+        else "are never invented (empty series / 404)",
+    )
+
     # Start Syncthing watcher
     syncthing_service = SyncthingService(Path(settings.SYNCTHING_ROOT))
     await syncthing_service.start()

@@ -36,14 +36,13 @@ class TestJobLogsHistory:
 
     @pytest.mark.asyncio
     async def test_logs_history_not_found(self, auth_client):
-        """Test GET /jobs/{id}/logs/history returns generated logs for non-existent job."""
-        # Current behavior: store generates logs on-the-fly for any job ID
+        """Test GET /jobs/{id}/logs/history returns 404 for a non-existent job."""
+        # Used to return 200 with 64 generated lines: the store generated
+        # logs on-the-fly for any job id at all (issue #35).
         response = await auth_client.get("/api/v1/jobs/job-999999/logs/history")
 
-        assert response.status_code == 200
-        data = response.json()
-        assert isinstance(data, list)
-        assert len(data) > 0
+        assert response.status_code == 404
+        assert response.json()["error_code"] == "LOGS_NOT_FOUND"
 
     @pytest.mark.asyncio
     async def test_logs_history_equals_logs_endpoint(self, auth_client):
@@ -102,12 +101,15 @@ class TestJobLogsHTTP:
         assert "job-" in first_line
 
     @pytest.mark.asyncio
-    async def test_get_job_logs_generated_for_any_id(self, auth_client):
-        """Test logs are generated on-the-fly for any job ID."""
-        # Non-existent job still returns generated logs
+    async def test_get_job_logs_is_not_generated_for_an_unknown_id(self, auth_client):
+        """No log lines are invented for an id that has no job behind it.
+
+        This test existed only to pin the bug: it asserted 200 with a
+        non-empty body for `job-does-not-exist`. It is inverted now
+        (issue #35) rather than deleted, so the 404 stays pinned at the
+        HTTP layer on both the /logs and the /logs/history path.
+        """
         response = await auth_client.get("/api/v1/jobs/job-does-not-exist/logs")
 
-        assert response.status_code == 200
-        data = response.json()
-        assert isinstance(data, list)
-        assert len(data) > 0
+        assert response.status_code == 404
+        assert response.json()["error_code"] == "LOGS_NOT_FOUND"

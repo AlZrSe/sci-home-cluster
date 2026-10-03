@@ -231,15 +231,15 @@ class TestJobLifecycle:
 
     @pytest.mark.asyncio
     async def test_get_job_logs_not_found(self, async_client):
-        """Test getting logs for non-existent job returns generated logs (current behavior)."""
-        # Act - the store generates logs on-the-fly for any job ID
+        """Test getting logs for a non-existent job returns 404."""
+        # Act
         response = await async_client.get("/api/v1/jobs/job-999999/logs")
 
-        # Assert - current behavior returns 200 with generated logs
-        assert response.status_code == 200
+        # Assert - the store returns None for an unknown job, so the route
+        # raises LOGS_NOT_FOUND instead of inventing 64 lines (issue #35).
+        assert response.status_code == 404
         data = response.json()
-        assert isinstance(data, list)
-        assert len(data) > 0
+        assert data["error_code"] == "LOGS_NOT_FOUND"
 
     @pytest.mark.asyncio
     async def test_retry_job_not_retryable(self, async_client, job_spec_dict):

@@ -2,7 +2,7 @@
 Job management API endpoints.
 """
 
-from typing import Optional
+from typing import Any, Dict, Optional, Union
 import asyncio
 from fastapi import (
     APIRouter,
@@ -27,9 +27,31 @@ from shared.schemas.job_state import JobState
 from shared.schemas.job_list_result import JobListResult
 from shared.schemas.job_spec import JobSpec
 from shared.schemas.job_metrics import JobMetrics
+from shared.schemas.error_response import ErrorResponse
 from backend.services.job_service import JobService
 
 router = APIRouter()
+
+# Sent as the WebSocket close reason when log streaming is unavailable
+# because SEED_DEMO_DATA is off. Without it the client is left holding an
+# open socket that will never emit anything and never close, which reads
+# as a hung job (issue #35, AC-8).
+LOG_STREAM_UNAVAILABLE_REASON = (
+    "Log streaming is disabled: SEED_DEMO_DATA is off, so there are no "
+    "log lines to stream. No agent writes job logs yet."
+)
+
+# Declared on the decorators so the generated OpenAPI documents them.
+# These 404s are real and reachable: get_job_metrics returns None for an
+# unknown job, and get_job_logs returns None for one too. That second one
+# is what issue #35 fixed - LOGS_NOT_FOUND used to be dead code, because
+# the store invented logs for any id at all.
+METRICS_404: Dict[Union[int, str], Dict[str, Any]] = {
+    404: {"model": ErrorResponse, "description": "Job not found"}
+}
+LOGS_404: Dict[Union[int, str], Dict[str, Any]] = {
+    404: {"model": ErrorResponse, "description": "Job not found"}
+}
 
 
 @router.get("/", response_model=JobListResult)
@@ -98,7 +120,7 @@ async def delete_job(job_id: str, payload: dict = Depends(get_current_token_payl
     return None
 
 
-@router.get("/{job_id}/metrics", response_model=JobMetrics)
+@router.get("/{job_id}/metrics", response_model=JobMetrics, responses=METRICS_404)
 async def get_job_metrics(
     job_id: str, payload: dict = Depends(get_current_token_payload)
 ):
@@ -112,7 +134,7 @@ async def get_job_metrics(
     return metrics
 
 
-@router.get("/{job_id}/logs")
+@router.get("/{job_id}/logs", responses=LOGS_404)
 async def get_job_logs(job_id: str, payload: dict = Depends(get_current_token_payload)):
     """
     Get job logs (HTTP fallback).
@@ -124,7 +146,7 @@ async def get_job_logs(job_id: str, payload: dict = Depends(get_current_token_pa
     return logs
 
 
-@router.get("/{job_id}/logs/history")
+@router.get("/{job_id}/logs/history", responses=LOGS_404)
 async def get_job_logs_history(
     job_id: str, payload: dict = Depends(get_current_token_payload)
 ):
@@ -161,6 +183,16 @@ async def stream_job_logs(
         )
         return
 
+    # Every streamed line is generated. With demo data off there is nothing
+    # to send, so say so and close rather than hold the connection open and
+    # silent (issue #35, AC-8).
+    if not job_service.log_stream_available():
+        await websocket.close(
+            code=status.WS_1008_POLICY_VIOLATION,
+            reason=LOG_STREAM_UNAVAILABLE_REASON,
+        )
+        return
+
     # Define a callback to send log lines to the WebSocket
     async def on_line(line: str):
         try:
@@ -176,7 +208,17 @@ async def stream_job_logs(
     def send_line(line: str) -> None:
         asyncio.create_task(on_line(line))
 
-    await job_service.start_log_stream(job_id, send_line)
+    stream_task = await job_service.start_log_stream(job_id, send_line)
+    if stream_task is None:
+        # Belt and braces: the route checked above, but the store is the
+        # authority on whether it will stream, and it can be flipped
+        # between the two checks.
+        await websocket.close(
+            code=status.WS_1008_POLICY_VIOLATION,
+            reason=LOG_STREAM_UNAVAILABLE_REASON,
+        )
+        job_service.unsubscribe_from_log_stream(job_id, send_line)
+        return
 
     try:
         # Keep the connection open until the client disconnects

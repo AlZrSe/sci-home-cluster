@@ -353,14 +353,17 @@ class TestJobsEndpoints:
 
     @pytest.mark.asyncio
     async def test_get_job_logs_not_found(self, auth_client):
-        """Test GET /jobs/{job_id}/logs returns generated logs for any job ID (current behavior)."""
-        # The store generates logs on-the-fly for any job ID, so even non-existent
-        # jobs return 200 with generated logs. This is the current behavior.
+        """Test GET /jobs/{job_id}/logs returns 404 for a non-existent job."""
+        # Used to return 200 with 64 generated lines for any job id (issue
+        # #35). The store now returns None for an unknown job, so the
+        # route's LOGS_NOT_FOUND branch is reachable.
         response = await auth_client.get("/api/v1/jobs/job-999999/logs")
-        assert response.status_code == 200
+
+        assert response.status_code == 404
         data = response.json()
-        assert isinstance(data, list)
-        assert len(data) > 0
+        assert data["status"] == 404
+        assert data["title"] == "Not Found"
+        assert data["error_code"] == "LOGS_NOT_FOUND"
 
     @pytest.mark.asyncio
     async def test_retry_job_not_retryable(self, auth_client, job_spec_dict):
