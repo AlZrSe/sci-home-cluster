@@ -31,17 +31,17 @@ src/
 │   ├── settings.tsx     # Connection, polling, theme settings
 │   └── login.tsx        # Token entry + validation
 ├── lib/
-│   ├── api.ts           # DEPRECATED - direct mock calls (to be replaced by services)
-│   ├── services/        # NEW: Service layer (mock + real implementations)
-│   │   ├── types.ts     # Service interfaces (IJobService, INodeService, IAuthService)
-│   │   ├── factory.ts   # ServiceFactory (auto-selects mock on localhost)
-│   │   ├── mock/        # Thin wrappers around mock-server.ts
-│   │   └── real/        # Fetch-based stubs for future backend
+│   ├── api.ts           # DEPRECATED - 5-line shim, `export * from "@/services"`
 │   ├── mock-server.ts   # In-memory mock backend (jobs, nodes, metrics, logs)
-│   ├── types.ts         # Shared TypeScript types (JobState, NodeSpec, etc.)
 │   ├── settings.ts      # localStorage settings + React hook
 │   ├── profiles.ts      # localStorage profiles + React hook
 │   └── format.ts        # Date/duration/YAML formatting utilities
+├── services/            # The only door to the backend
+│   ├── index.ts         # Resolver + wrappers (listJobs, createJob, ...)
+│   ├── types.ts         # ClusterService contract + ServiceError
+│   ├── mock.ts          # In-memory implementation, backed by mock-server.ts
+│   ├── http.ts          # fetch/WebSocket implementation against /api/v1
+│   └── testing.ts       # Test-only re-export of mockService / httpService
 ├── components/
 │   ├── layout/Shell.tsx # Page shell (title, subtitle, actions)
 │   ├── ui/              # Radix-based UI primitives (40+ components)
@@ -243,19 +243,35 @@ type CreateJobResponse = paths['/jobs']['post']['responses']['201']['content']['
 
 - **Build**: `npm run build` → static assets in `dist/`
 - **Preview**: `npm run preview`
-- **Environment**: `VITE_API_BASE_URL` (optional, defaults to `http://localhost:8000/api/v1`)
+- **Dev server**: `npm run dev` → `http://localhost:5173` (port set by `@lovable.dev/vite-tanstack-config`, not by this repo; it is what `playwright.config.ts` targets and what the backend CORS allow-list accepts)
+- **Environment**:
+  - `VITE_CLUSTER_BACKEND` — `mock` selects the in-memory implementation; every other value,
+    including unset, selects `httpService`. There is no reachability probe and no fallback.
+  - `VITE_API_URL` — the build-time default for `apiBaseUrl` in `src/lib/settings.ts` (falls
+    back to `http://localhost:8000/api/v1` when unset). `localStorage["shc.settings"]` still
+    overrides it, so a deployed build can be retargeted without a rebuild. All three committed
+    env files leave it at localhost, which is what `npm run preview` expects.
+  - Committed in `.env.development` (`http`), `.env.production` (`http`) and `.env.test` (`mock`);
+    `.env.development.local` is gitignored and is the documented developer escape hatch for
+    running the mock in dev.
 - **Static hosting**: Any static host (Netlify, Vercel, Cloudflare Pages, nginx)
 - **SPA fallback**: Required for client-side routing
 
 ---
 
-## Future Backend Integration
+## Backend Integration
 
-1. Implement `src/lib/services/real/*.ts` with `fetch` + proper error handling
-2. Set `VITE_CLUSTER_BACKEND=http` or deploy to non-localhost domain
-3. ServiceFactory auto-selects `httpService` when `VITE_CLUSTER_BACKEND=http`
-4. WebSocket implementation for `/jobs/{id}/logs`
-5. Node registration endpoint (`POST /nodes/register`) — not yet in frontend
+Done — the service layer is wired to the FastAPI backend:
+
+1. `src/services/http.ts` implements `ClusterService` over `fetch` + a WebSocket for
+   `/jobs/{id}/logs`, against `{apiBaseUrl}` from settings.
+2. It is the default implementation: `.env.development` and `.env.production` both set
+   `VITE_CLUSTER_BACKEND=http`.
+3. `VITE_CLUSTER_BACKEND=mock` is the only way to reach `src/services/mock.ts`.
+4. Network failures are normalised to `ServiceError` with `status === 0` and
+   `error_code === "BACKEND_UNREACHABLE"`, so a stopped backend shows a connection error rather
+   than "An unexpected error occurred".
+5. Not yet wired: node registration endpoint (`POST /nodes/register`) — the frontend only reads nodes.
 
 ---
 
@@ -273,12 +289,12 @@ type CreateJobResponse = paths['/jobs']['post']['responses']['201']['content']['
 
 1. `openapi.yaml` (project root)
 2. `docs/spec.md` (project root)
-3. `package.json` — add `vitest` (openapi-typescript planned for future)
-4. `vitest.config.ts` (playwright.config.ts planned for future E2E)
-5. `src/lib/services/` — full service layer
-6. Update route imports to use `services`
+3. `package.json` — vitest for unit/integration, `@playwright/test` for e2e
+4. `vitest.config.ts` (`vitest.config.ts` collects `src/**/*.test.{ts,tsx}` + `tests/integration/**/*.test.{ts,tsx}`; `playwright.config.ts` owns `tests/e2e/`)
+5. `src/services/` — the service layer
+6. Route imports use `@/services`
 7. Test files
 
 ---
 
-**Ready to implement?** I'll create both files plus the service layer and test infrastructure in sequence.
+*Status: implemented. This document is maintained against the working tree.*

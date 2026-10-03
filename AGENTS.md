@@ -67,7 +67,7 @@ feat: set up backend project structure with FastAPI and dependencies
 ## Project Structure
 ```
 scientific-home-cluster/
-├── frontend/          # React dashboard (Vite + TanStack + Tailwind) — COMPLETE
+├── frontend/          # git SUBMODULE — see "Frontend lives in another repo" below
 ├── backend/           # FastAPI + SQLite API server (COMPLETE)
 ├── shared/            # Shared schemas, types, utilities (COMPLETE)
 ├── agent/             # Worker node agent (stub)
@@ -82,13 +82,32 @@ scientific-home-cluster/
 
 ---
 
+## Frontend lives in another repo
+
+`frontend/` is a **git submodule** pointing at `https://github.com/AlZrSe/rendering-replicate.git`.
+It is not vendored into this repository and must not be.
+
+**A pull request here carries a gitlink bump only** — a one-line change to the SHA recorded for
+`frontend/`. It contains no frontend code. Frontend work has two steps:
+
+1. Commit the code in the submodule (`git -C frontend ...`), per decision 4 straight to `main` of
+   `rendering-replicate` unless a branch is called for.
+2. Commit the resulting gitlink bump here, or the change is invisible to anyone cloning this
+   repository.
+
+Verify delivery with a clean recursive clone — `git clone --recurse-submodules` must yield the
+new frontend code. `frontend/AGENTS.md` also carries a Lovable sync notice: commits pushed to
+`main` of the submodule appear in the Lovable editor, so keep each one in a working state.
+
+---
+
 ## Code Conventions
 
 ### TypeScript (Frontend)
 - **Imports**: `@/` alias for `src/`, relative for siblings
 - **Naming**: PascalCase components, camelCase hooks/utils, kebab-case files
 - **Types**: Zod schemas for validation, infer types from schemas
-- **Services**: Use `ServiceFactory` (auto-selects mock on localhost)
+- **Services**: Import the wrappers from `@/services` (`src/services/index.ts`), never an implementation. `VITE_CLUSTER_BACKEND=mock` — exactly that string — is the only way to reach `mockService`; unset or anything else resolves to `httpService`. There is no reachability probe. `mockService` / `httpService` are only importable from `src/services/testing.ts`, which ESLint restricts to tests.
 
 ### Python (Backend)
 - **Style**: `ruff` (format + lint), `mypy` (lenient; not strict mode)
