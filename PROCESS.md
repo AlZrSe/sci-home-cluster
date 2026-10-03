@@ -59,6 +59,28 @@ We use GitHub Issues as our backtrack with the following labels:
 - Fixes any pipeline failures that occur
 - Only active after code is merged to main
 
+## Where the code lives
+
+Backend, `shared/`, `agent/`, `cli/` and `docs/` live in **this** repository.
+
+**`frontend/` is a git submodule** pointing at `https://github.com/AlZrSe/rendering-replicate.git`.
+It is not vendored here and must not be.
+
+Consequences for the workflow below:
+
+- A pull request on a frontend issue **carries a gitlink bump only** — a one-line change to the SHA
+  recorded for `frontend/`. It contains no frontend code, so reviewing it does not review the change.
+- Frontend work is therefore two commits in two repositories:
+  1. the code, in the submodule (`git -C frontend ...`), and
+  2. the gitlink bump here, without which the change is invisible to anyone cloning this repository.
+- Per the recorded team decision for issue #28, frontend commits go **straight to `main`** of
+  `rendering-replicate` — no branch/PR dance in that repository. Branches and PRs still apply to
+  everything in this one.
+- `frontend/AGENTS.md` carries a Lovable sync notice: commits pushed to `main` of the submodule
+  appear in the Lovable editor, so keep every one of them in a working state.
+- Verify delivery with a clean recursive clone: `git clone --recurse-submodules
+  https://github.com/AlZrSe/sci-home-cluster.git` must yield the new frontend code.
+
 ## Definition of Done
 
 A task is considered done when:
@@ -94,9 +116,9 @@ We use GitHub's built-in issue templates located in `.github/ISSUE_TEMPLATE/`:
 
 ## Getting Started
 
-1. Clone the repository: `git clone https://github.com/AlZrSe/sci-home-cluster.git`
+1. Clone the repository (with the frontend submodule): `git clone --recurse-submodules https://github.com/AlZrSe/sci-home-cluster.git`
 2. Create a feature branch: `git checkout -b task/123-feature-name`
-3. Develop and test your changes
+3. Develop and test your changes — frontend code goes in the `frontend/` submodule, see "Where the code lives"
 4. Push and open a Pull Request
 5. Follow the workflow: PM grooms → SWE implements → QA verifies → PM accepts → merge
 
