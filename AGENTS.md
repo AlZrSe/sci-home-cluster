@@ -12,6 +12,7 @@ Distributed platform for running scientific workloads on a home GPU cluster.
 | Frontend dev | `cd frontend && npm run dev` |
 | Frontend build | `cd frontend && npm run build` |
 | Frontend lint | `cd frontend && npm run lint` |
+| Frontend test | `cd frontend && npm test` (vitest unit + integration; e2e is `npm run test:e2e`) |
 | Backend lint | `ruff check . && ruff format . && mypy .` |
 | Backend test | `pytest --cov=backend` |
 | API server | `uvicorn backend.main:app --reload` |
