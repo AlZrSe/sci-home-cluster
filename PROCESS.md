@@ -87,7 +87,8 @@ A task is considered done when:
 - [ ] Code implements all acceptance criteria
 - [ ] Unit tests pass (>80% coverage)
 - [ ] Integration tests pass (where applicable)
-- [ ] No lint/type errors (ruff, mypy)
+- [ ] No backend lint/type errors (`ruff check . && ruff format . && mypy .`)
+- [ ] No frontend lint/type errors (`cd frontend && npm run lint && npm run typecheck`) — and read `frontend/README.md#type-checking` first: `npm run typecheck` covers `src/` and the vitest suite but **not** `tests/e2e/**`, and `npm run build` does not check types at all
 - [ ] Documentation updated (README, API docs)
 - [ ] PM has performed final acceptance review
 - [ ] Code is merged to main branch via Pull Request

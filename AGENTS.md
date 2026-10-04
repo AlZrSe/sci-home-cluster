@@ -10,7 +10,9 @@ Distributed platform for running scientific workloads on a home GPU cluster.
 | Area | Command |
 |------|---------|
 | Frontend dev | `cd frontend && npm run dev` |
-| Frontend build | `cd frontend && npm run build` |
+| Frontend build | `cd frontend && npm run build` (type-blind; `vite build` does not check types) |
+| Frontend typecheck | `cd frontend && npm run typecheck` (the gate) |
+| Frontend e2e types | `cd frontend && npm run typecheck:e2e` (advisory report; prints 8 known errors, exits 0) |
 | Frontend lint | `cd frontend && npm run lint` |
 | Frontend test | `cd frontend && npm test` (vitest unit + integration; e2e is `npm run test:e2e`) |
 | Backend lint | `ruff check . && ruff format . && mypy .` |
@@ -121,11 +123,38 @@ new frontend code. `frontend/AGENTS.md` also carries a Lovable sync notice: comm
 ## Testing
 | Level | Target | Command |
 |-------|--------|---------|
-| Unit | >80% coverage | `pytest --cov=backend` |
-| Integration | API endpoints, service layer | `pytest backend/tests/integration` |
-| E2E | Critical user flows | Planned: Playwright |
+| Backend unit | >80% coverage | `pytest --cov=backend` |
+| Backend integration | API endpoints, service layer | `pytest backend/tests/integration` |
+| Backend type | Pydantic + hints | `mypy .` (part of `ruff check . && ruff format . && mypy .`) |
+| Frontend unit + integration | vitest in jsdom | `cd frontend && npm test` |
+| Frontend type | `src/` + the vitest suite | `cd frontend && npm run typecheck` |
+| Frontend lint | — | `cd frontend && npm run lint` |
+| E2E | Critical user flows | `cd frontend && npm run test:e2e` (Playwright; needs a live backend + dev server) |
 
-**Definition of Done**: All tests pass + no lint/type errors + PM acceptance. See: `PROCESS.md#definition-of-done`, `docs/spec.md#testing-strategy`
+**Frontend types are checked — with one recorded gap.** `npm run typecheck` runs
+`tsc --noEmit` over `frontend/tsconfig.json` and covers `src/**` *and the whole vitest suite*
+(`src/**/*.test.ts` plus `tests/integration/**`) plus `vitest.config.ts` / `vite.config.ts`. It is
+ratcheted: **1** known production error in `src/` is recorded in
+`frontend/scripts/typecheck-baseline.json` and tolerated, and the gate goes red if that inventory
+stops matching — so a new error in `src/` fails, and so does fixing one without shrinking the
+baseline. That one entry is a real bug, not type debt: the `async` `streamJobLogs` wrapper in
+`src/services/index.ts` makes `jobs.$jobId.tsx` invoke a Promise as its unmount cleanup and leak
+the log WebSocket. It is deliberately unfixed — see the `$comment` in that baseline file. Test files
+carry no baseline at all.
+
+**`tests/e2e/**` is NOT type-checked.** It is a separate program (`frontend/tsconfig.e2e.json`,
+`npm run typecheck:e2e`) with 8 known errors, deliberately excluded from the main program because
+Playwright runs in Node against a live backend rather than in jsdom. `npm run typecheck:e2e` prints
+all 8 with their `file:line` and **exits 0** — it is an advisory report, not a gate, because a
+permanently red npm target gets routed around rather than fixed; `npm run typecheck` is the gate.
+The 8 are unfixed, so the gap is recorded in `tsconfig.e2e.json` and nowhere else. So *"`npm run
+typecheck` passes" does not mean "everything is checked"* — and `typecheck:e2e` exiting 0 does not
+change that. It also does not mean the build is checked: `npm run build` is `vite build`, which
+strips types without checking them.
+
+**Definition of Done**: All tests pass + no lint/type errors (backend `ruff`/`mypy`, frontend
+`npm run lint` + `npm run typecheck`) + PM acceptance. See:
+`PROCESS.md#definition-of-done`, `docs/spec.md#testing-strategy`
 
 ---
 
