@@ -104,7 +104,7 @@ Key configuration settings:
 - `SECRET_KEY`: (auto-generated on first run if not set via environment)
 - `ACCESS_TOKEN_EXPIRE_MINUTES`: 60 * 24 * 8 (8 days)
 - `SYNCTHING_ROOT`: (path to Syncthing synchronization directory)
-- `DATABASE_URL`: "sqlite:///./scientific_home_cluster.db" (for initial SQLite implementation)
+- `DATABASE_URL`: `"sqlite:///<repo-root>/data/scientific_home_cluster.db"` (for the initial SQLite implementation). The default is an **absolute** path anchored on the package location, not the current working directory, so the server, the test suite and `alembic upgrade head` all resolve the same file from any directory (issue #34). An explicit value still wins; a relative one is warned about at startup, not rejected. `SHC_STATE_DIR` (default `<repo-root>/.shc`) holds the generated signing key. Precedence is: environment variable, then `<CWD>/.env`, then the default.
 - `BACKEND_CORS_ORIGINS`: list of allowed CORS origins (default: ["http://localhost:3000", "http://localhost:5173"] for frontend development)
 - `LOG_LEVEL`: "INFO"
 

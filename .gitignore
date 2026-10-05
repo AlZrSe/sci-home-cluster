@@ -106,6 +106,12 @@ frontend/build/
 .env.production
 .env.test
 
+# Canonical database location (backend/core/config.py DEFAULT_DATABASE_URL).
+# The *.db / *.db-shm / *.db-wal rules below already ignore the files
+# themselves; this keeps the whole directory out of `git status` even if the
+# database is ever moved or renamed (issue #34).
+data/
+
 # Misc
 *.pyc
 *.pyo

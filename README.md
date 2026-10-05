@@ -230,13 +230,83 @@ sci-run logs <job-id> --follow
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `SYNCTHING_ROOT` | Path to Syncthing shared folder | `/tmp/syncthing` |
-| `DATABASE_URL` | SQLite database path | `sqlite:///./scientific_home_cluster.db` |
+| `DATABASE_URL` | SQLite database path. **Absolute** - see [Which database am I using?](#which-database-am-i-using) | `<repo-root>/data/scientific_home_cluster.db` |
+| `SHC_STATE_DIR` | Where the generated JWT signing key is persisted | `<repo-root>/.shc` |
 | `DB_POOL` | Connection pool strategy: `pooled` or `null` | `pooled` |
 | `SEED_DEMO_DATA` | Demo mode: seed the 10 demo jobs / 4 demo nodes on first use, **and** allow metrics and logs to be generated on read when nothing is stored | `false` |
 | `SHARED_TOKEN` | Shared bearer token for API | auto-generated |
 | `SECRET_KEY` | JWT signing key | auto-generated |
 | `LOCALHOST_BYPASS` | Skip auth on localhost | `true` |
 | `BACKEND_CORS_ORIGINS` | Allowed CORS origins | `["http://localhost:3000", "http://localhost:5173"]` |
+
+#### Which database am I using?
+
+There is exactly **one** canonical database file:
+
+```
+<repo-root>/data/scientific_home_cluster.db
+```
+
+The default is an **absolute** path derived from the *package location*, not
+from your working directory, so it is the same file whether you run
+`uvicorn backend.main:app` from the repo root, `uvicorn main:app` from
+`backend/`, or `pytest`. The `data/` directory is created lazily on first
+connect; importing the package creates nothing.
+
+Previously the default was the relative literal
+`sqlite:///./scientific_home_cluster.db`, which SQLite resolved against the
+current working directory - so the server and the test suite used *different*
+files and nothing in the logs or the API could say which ([issue #34]).
+
+Three ways to find out, in order of convenience:
+
+- **The startup log** names the absolute file:
+  ```
+  INFO:backend.core.database:Created async database engine: sqlite+aiosqlite:///.../data/scientific_home_cluster.db (database file: ...\data\scientific_home_cluster.db)
+  ```
+- **`GET /api/v1/health`** reports the absolute path as `database.url`.
+- **The migrations** use the same resolver (`backend/alembic/env.py` calls
+  `backend/core/database.py:resolve_database_url()`), so `alembic upgrade head`
+  and the server can never migrate different files.
+
+**Overriding it.** Set `DATABASE_URL` in the environment to point the cluster at
+a database elsewhere, e.g. on your Syncthing volume. An **absolute** path is
+strongly preferred - a relative one is resolved against your working directory,
+so two launch directories mean two databases again. A relative value still
+works (it is warned about at startup, never rejected), so nobody's working
+configuration breaks.
+
+**Precedence**, highest first:
+
+1. the process environment (`DATABASE_URL=... uvicorn backend.main:app`)
+2. `<CWD>/.env`
+3. the default above
+
+Note that step 2 is **CWD-relative**: pydantic-settings resolves `env_file=".env"`
+against the current working directory, so launching from `backend/` ignores a
+repo-root `.env`. That is deliberate for now - changing `.env` *discovery* would
+break anyone relying on a CWD-local `.env`, so it is tracked separately from
+this fix. Copy [`.env.example`](.env.example) to `.env` to get started.
+
+> **Requires an editable install** (`pip install -e .`, as documented above). The
+> default is anchored on the package location, which equals the checkout only for
+> an editable install; from a wheel it would resolve inside the venv.
+
+#### Stale database files from before #34
+
+Four orphaned `*.db` files may be left over in older checkouts. All are
+untracked, all are safe to delete, and none is read by the current code:
+
+| Path | What it was |
+|------|-------------|
+| `./scientific_home_cluster.db` | the CWD-relative default, launched from the repo root |
+| `backend/scientific_home_cluster.db` | the same default, launched from `backend/` (demo data) |
+| `backend/tests/unit/scientific_home_cluster.db` | a 0-byte pre-#18 artifact of the old test setup |
+| `e2e_test.db` | referenced by no source, test, target or document |
+
+They were **not** migrated: the demo rows in `backend/scientific_home_cluster.db`
+include a dangling `job-1039` foreign key, and the canonical database starts
+empty and seeds on demand via `SEED_DEMO_DATA=true` (see [Demo Data](#demo-data)).
 
 ### Demo Data
 
@@ -310,9 +380,12 @@ backend and delete the development database:
 
 ```bash
 # Stop the backend first, then remove the database and its WAL sidecars.
-rm -f backend/scientific_home_cluster.db \
-      backend/scientific_home_cluster.db-shm \
-      backend/scientific_home_cluster.db-wal
+# The path is the canonical <repo-root>/data/ one - the older
+# backend/scientific_home_cluster.db* locations are stale demo data and are
+# safe to delete too, but nothing reads them any more (issue #34).
+rm -f data/scientific_home_cluster.db \
+      data/scientific_home_cluster.db-shm \
+      data/scientific_home_cluster.db-wal
 ```
 
 For a database that also holds real jobs, delete only the known demo rows.
@@ -331,7 +404,7 @@ does **not** reach rows fabricated at read time for a real job id - see the
 next section.
 
 ```bash
-sqlite3 backend/scientific_home_cluster.db <<'SQL'
+sqlite3 data/scientific_home_cluster.db <<'SQL'
 PRAGMA foreign_keys=ON;
 BEGIN;
 -- Break the circular FK first: nodes.current_job_id -> jobs.job_id
@@ -353,7 +426,7 @@ Verify afterwards - all five should be `0` unless the database also held real
 jobs:
 
 ```bash
-sqlite3 backend/scientific_home_cluster.db \
+sqlite3 data/scientific_home_cluster.db \
   "SELECT 'jobs',COUNT(*) FROM jobs
    UNION ALL SELECT 'nodes',COUNT(*) FROM nodes
    UNION ALL SELECT 'gpu_metrics',COUNT(*) FROM gpu_metrics
@@ -411,7 +484,7 @@ ORDER BY job_id;
 *Step 2 - delete by explicit, reviewed id.*
 
 ```bash
-sqlite3 backend/scientific_home_cluster.db <<'SQL'
+sqlite3 data/scientific_home_cluster.db <<'SQL'
 PRAGMA foreign_keys=ON;
 BEGIN;
 -- Replace <confirmed-id> with an id you have reviewed from step 1.

@@ -5,7 +5,8 @@ Uses SQLAlchemy 2.0 async engine.
 
 import logging
 from contextlib import asynccontextmanager
-from typing import AsyncGenerator
+from pathlib import Path
+from typing import AsyncGenerator, Optional
 
 from sqlalchemy import event
 from sqlalchemy.pool import NullPool, QueuePool
@@ -16,13 +17,53 @@ from sqlalchemy.ext.asyncio import (
     create_async_engine,
 )
 
-from backend.core.config import settings
+from backend.core.config import absolute_sqlite_path, settings
 
 logger = logging.getLogger(__name__)
 
 # Global engine and session factory
 _engine: AsyncEngine | None = None
 _session_factory: async_sessionmaker[AsyncSession] | None = None
+
+
+def resolve_database_url(database_url: Optional[str] = None) -> str:
+    """
+    The async SQLAlchemy URL for the database - the single source of truth.
+
+    Both the application and Alembic resolve through this one function, so
+    `alembic upgrade head` cannot migrate a different file than the server
+    reads. It lives here, not in backend/alembic/env.py, because that module
+    runs its migrations at import and so cannot be imported by a test (issue
+    #34, implementation note I-1).
+
+    Kept string-shaped on purpose: callers match the literal "sqlite://"
+    prefix, and so does alembic.ini.
+    """
+    url = settings.DATABASE_URL if database_url is None else database_url
+    if url.startswith("sqlite://"):
+        return url.replace("sqlite://", "sqlite+aiosqlite://", 1)
+    return url
+
+
+def ensure_sqlite_parent_directory(
+    database_url: Optional[str] = None,
+) -> Optional[Path]:
+    """
+    Create the directory holding the SQLite file, immediately before connecting.
+
+    Deliberately lazy and called from exactly two places - get_engine() and
+    backend/alembic/env.py - because the canonical default lives in a directory
+    that does not exist until something connects. Doing it here rather than
+    while Settings is constructed is what keeps `import backend.core.config`
+    free of filesystem side effects (issue #34, AC-4).
+
+    Returns the absolute file path for non-file URLs too, so callers can log it.
+    """
+    url = settings.DATABASE_URL if database_url is None else database_url
+    resolved = absolute_sqlite_path(url)
+    if resolved is not None:
+        resolved.parent.mkdir(parents=True, exist_ok=True)
+    return resolved
 
 
 def _configure_sqlite(dbapi_connection, _connection_record) -> None:
@@ -51,9 +92,10 @@ def get_engine() -> AsyncEngine:
     global _engine
     if _engine is None:
         # Convert sqlite:// to sqlite+aiosqlite:// for async
-        db_url = settings.DATABASE_URL
-        if db_url.startswith("sqlite://"):
-            db_url = db_url.replace("sqlite://", "sqlite+aiosqlite://", 1)
+        db_url = resolve_database_url()
+        # The canonical default points into <repo-root>/data/, which does not
+        # exist until something connects (issue #34, AC-6).
+        db_file = ensure_sqlite_parent_directory()
 
         _engine = create_async_engine(
             db_url,
@@ -67,7 +109,14 @@ def get_engine() -> AsyncEngine:
         )
         if db_url.startswith("sqlite"):
             event.listen(_engine.sync_engine, "connect", _configure_sqlite)
-        logger.info(f"Created async database engine: {db_url}")
+        # Log the absolute location, not just the URL: the URL string alone
+        # named a file without saying where it was, which is what made "which
+        # database am I on?" unanswerable from the logs (issue #34, AC-8).
+        logger.info(
+            "Created async database engine: %s (database file: %s)",
+            db_url,
+            db_file if db_file is not None else "not a file URL",
+        )
     return _engine
 
 

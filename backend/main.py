@@ -14,7 +14,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from backend.core.config import settings
+from backend.core.config import absolute_sqlite_path, settings
 from backend.core.database import init_database, close_database, run_migrations
 from backend.api.v1 import auth, nodes, syncthing, jobs
 from shared.schemas.error_response import ErrorResponse
@@ -56,9 +56,20 @@ def _database_display_name(database_url: str) -> str:
     """
     A safe, human-readable identifier for the configured database.
 
-    Strips any credentials so they can never be echoed by /health.
+    Strips any credentials so they can never be echoed by /health, and reports
+    the ABSOLUTE location. This used to split the URL on "///" and return the
+    bare file name, which was identical for every candidate database on disk and
+    so could not tell a developer which file the process had actually opened -
+    the file name is the same whether it sits in the repo root, in backend/, or
+    in data/ (issue #34).
+
+    A relative URL is resolved against the working directory, which is what
+    SQLite does with it, so it never degrades into an ambiguous bare name.
     """
     without_credentials = database_url.rsplit("@", 1)[-1]
+    path = absolute_sqlite_path(without_credentials)
+    if path is not None:
+        return str(path)
     return without_credentials.rsplit("///", 1)[-1] or "unknown"
 
 
@@ -318,9 +329,9 @@ async def health_check():
         },
         "database": {
             "status": database_status,
-            # Report the database file name only, never credentials or the
-            # full URL. The previous implementation string-split the URL and
-            # fell back to the literal "memory", which was never true.
+            # The absolute database path, never credentials. A bare file name
+            # is the same for every candidate file on disk, so reporting one
+            # left "which database am I on?" unanswerable (issue #34).
             "url": _database_display_name(settings.DATABASE_URL),
         },
     }

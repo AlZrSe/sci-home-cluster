@@ -2,11 +2,11 @@
 Integration tests for the main application.
 """
 
+from pathlib import Path
+
 from fastapi.testclient import TestClient
-from fastapi import HTTPException
-from backend.main import app
-from backend.core.config import settings
-from shared.schemas.error_response import ErrorResponse
+from backend.main import _database_display_name, app
+from backend.core.config import absolute_sqlite_path, settings
 
 
 def test_root_endpoint():
@@ -36,6 +36,52 @@ def test_health_endpoint(seeded_cluster):
     assert "config" in data
     assert "syncthing" in data
     assert "database" in data
+
+
+def test_health_reports_absolute_database_path(seeded_cluster):
+    """
+    T10 / AC-8: /health names the absolute database path.
+
+    It used to report the bare file name, which is identical for every
+    candidate database on disk - so a developer could not tell from the API
+    which file the process had opened (issue #34).
+    """
+    client = TestClient(app)
+    response = client.get("/api/v1/health")
+    assert response.status_code == 200
+
+    reported = response.json()["database"]["url"]
+
+    assert Path(reported).is_absolute(), f"database.url must be absolute: {reported}"
+    # It agrees with what the settings singleton actually points at, so the
+    # report cannot drift from the file the engine opens.
+    assert reported == str(absolute_sqlite_path(settings.DATABASE_URL))
+
+
+def test_relative_database_url_health_display(monkeypatch, tmp_path):
+    """
+    T11 / AC-8: a relative URL does not render as an ambiguous bare file name.
+
+    Still legal - it is warned about, not rejected - but /health has to resolve
+    it the way SQLite will, or it reports "./x.db" and stays just as
+    unanswerable as before.
+    """
+    monkeypatch.setattr(settings, "DATABASE_URL", "sqlite:///./x.db")
+    monkeypatch.chdir(tmp_path)
+
+    reported = _database_display_name(settings.DATABASE_URL)
+
+    assert reported == str(tmp_path / "x.db")
+    assert Path(reported).is_absolute()
+
+
+def test_database_display_name_strips_credentials():
+    """/health must never echo credentials, whatever it reports."""
+    reported = _database_display_name("postgresql://user:hunter2@db.internal/shc")
+    assert "hunter2" not in reported
+    assert reported == "db.internal/shc"
+    # A non-file SQLite URL has no path to report, but must still not be blank.
+    assert _database_display_name("sqlite:///:memory:") == ":memory:"
 
 
 def test_http_exception_handler():
