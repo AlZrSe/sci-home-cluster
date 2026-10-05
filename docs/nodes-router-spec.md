@@ -20,7 +20,7 @@ This document specifies the implementation of the Nodes Router for the Scientifi
 ### Authentication
 
 - **Scheme**: Bearer token (`Authorization: Bearer <token>`)
-- **Localhost bypass**: On `localhost`, `127.0.0.1`, `.local`, `.lovable.app` → token optional, auto-set to `"localhost-no-auth"`
+- **Localhost bypass**: On `localhost`, `127.0.0.1`, `::1`, `.local`, `.lovable.app` → token optional, auto-set to `"localhost-no-auth"` (case-insensitive; IPv6 brackets stripped. The backend also accepts `0.0.0.0` and `testserver`)
 - **Token validation**: Returns 401 Unauthorized for missing/invalid token
 
 ### Response Codes

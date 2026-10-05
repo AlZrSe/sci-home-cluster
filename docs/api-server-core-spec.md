@@ -200,7 +200,7 @@ It does not cover:
 - Use HS256 algorithm for symmetric key encryption
 - Token expiration: 24 hours (configurable via ACCESS_TOKEN_EXPIRE_MINUTES)
 - Auto-token generation on first startup using secrets module
-- Localhost bypass: Accept "localhost-no-auth" for localhost, 127.0.0.1, .local, .lovable.app
+- Localhost bypass: Accept "localhost-no-auth" for localhost, 127.0.0.1, ::1, .local, .lovable.app (case-insensitive; one surrounding `[` `]` pair is stripped from IPv6 literals, so `Host: [::1]:8000` matches). The backend also accepts 0.0.0.0 (wildcard bind) and testserver (test-client default). See `shared/auth/localhost_hosts.json` for the entries shared with the frontend.
 - Shared token stored in `SHARED_TOKEN` env var or config file
 
 ### File System Integration

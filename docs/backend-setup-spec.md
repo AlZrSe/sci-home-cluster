@@ -108,7 +108,7 @@ Key configuration settings:
 - `BACKEND_CORS_ORIGINS`: list of allowed CORS origins (default: ["http://localhost:3000", "http://localhost:5173"] for frontend development)
 - `LOG_LEVEL`: "INFO"
 
-Localhost bypass logic: When running on localhost, 127.0.0.1, .local, or .lovable.app domains, the authentication requirement may be bypassed for development convenience (token auto-set to `"localhost-no-auth"`).
+Localhost bypass logic: When running on localhost, 127.0.0.1, ::1, .local, or .lovable.app domains, the authentication requirement may be bypassed for development convenience (token auto-set to `"localhost-no-auth"`). Matching is case-insensitive and one surrounding `[` `]` pair is stripped from IPv6 literals, so `Host: [::1]:8000` matches. The backend also accepts 0.0.0.0 and testserver. The entries shared with the frontend are listed in `shared/auth/localhost_hosts.json`. This list is a developer convenience keyed on the client-supplied `Host` header, not a security boundary.
 
 ## Setup Instructions
 
