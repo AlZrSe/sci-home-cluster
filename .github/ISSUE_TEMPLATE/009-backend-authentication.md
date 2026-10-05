@@ -21,7 +21,7 @@ Implement secure authentication with bearer tokens, password hashing, and localh
 - [ ] Create auth dependencies for FastAPI:
   - get_current_token() dependency
   - require_auth() dependency
-- [ ] Implement localhost bypass: auto-accept "localhost-no-auth" for localhost, 127.0.0.1, .local, .lovable.app
+- [ ] Implement localhost bypass: auto-accept "localhost-no-auth" for localhost, 127.0.0.1, ::1, .local, .lovable.app (case-insensitive; strip one surrounding `[` `]` from IPv6 literals. The backend also accepts 0.0.0.0 and testserver)
 - [ ] Implement POST /auth/validate endpoint that returns { valid: boolean }
 - [ ] Token should be loaded from environment variable or auto-generated on first run
 - [ ] Secret key should be configurable via environment

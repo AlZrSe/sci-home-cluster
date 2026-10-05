@@ -7,11 +7,14 @@ These tests require a running app with proper lifespan initialization.
 import pytest
 import asyncio
 import io
+from typing import Any
+from fastapi import HTTPException, WebSocket
 from httpx import AsyncClient, ASGITransport
 from backend.main import app
 from backend.store import get_store
 from shared.schemas.job_status import JobStatus
 from backend.tests.factories import create_job_spec
+from backend.core.deps import get_ws_token_payload
 from backend.core.security import create_access_token
 from backend.core.config import settings
 from unittest.mock import patch
@@ -522,3 +525,142 @@ class TestWebSocketWithJWTAuth:
                         assert isinstance(message, str)
                     except asyncio.TimeoutError:
                         pass
+
+
+# ============================================================================
+# Issue #31 - the WebSocket half of the localhost bypass
+# ============================================================================
+#
+# AC-10: `get_ws_token_payload` (backend/core/deps.py) must agree with
+# `get_current_token_payload`, so log streaming is not left behind REST. It is a
+# separate function reading a separate header path, so a fix applied only to the
+# REST dependency would leave the log stream un-authenticated while every REST
+# test passed.
+#
+# These tests drive the DEPENDENCY rather than a full `TestClient` handshake,
+# and that is a deliberate choice forced by a pre-existing defect: `main.py`
+# registers a global `HTTPException` handler that returns a `JSONResponse`, and
+# Starlette's `ExceptionMiddleware` DISCARDS a handler's return value on a
+# websocket scope (`await handler(websocket, exc)` - the response is never
+# sent). So a log client with no token on a non-bypass host gets neither an
+# `accept` nor a `close`: the handshake hangs forever. That is true on `main`
+# today for every non-local host and is independent of the hostname list, so it
+# is reported rather than fixed here - fixing it means changing what the
+# dependency raises, which is outside this issue.
+#
+# Asserting the bypass decision at the dependency boundary is also the more
+# precise test: it is exactly the decision AC-10 is about, it needs no job to
+# exist, and it is unaffected by the demo-data flag (issue #35).
+
+# Log streaming lives at `/{job_id}/logs` (backend/api/v1/jobs.py).
+LOGS_PATH = "/api/v1/jobs/job-1050/logs"
+
+
+def _ws_scope(host_header: str) -> dict:
+    """A minimal ASGI websocket scope carrying one `Host` header."""
+    return {
+        "type": "websocket",
+        "path": LOGS_PATH,
+        "root_path": "",
+        "scheme": "ws",
+        "query_string": b"",
+        "headers": [(b"host", host_header.encode("latin-1"))],
+        "client": ("testclient", 50000),
+        "server": None,
+        "subprotocols": [],
+        "state": {},
+    }
+
+
+async def _no_receive() -> Any:
+    """The bypass must decide from the Host header alone, never read the socket."""
+    raise AssertionError("get_ws_token_payload must not read from the socket")
+
+
+async def _no_send(message: Any) -> None:
+    """...nor write to it: the bypass returns before the socket is touched."""
+    raise AssertionError(
+        f"get_ws_token_payload must not write to the socket: {message}"
+    )
+
+
+def _ws(host_header: str) -> WebSocket:
+    """A `WebSocket` whose URL carries `host_header`."""
+    return WebSocket(_ws_scope(host_header), receive=_no_receive, send=_no_send)
+
+
+@pytest.mark.unit
+class TestWebSocketLocalhostBypass:
+    """T30 and its neighbours: the WS bypass matrix, with no token anywhere."""
+
+    @pytest.mark.parametrize(
+        "host_header",
+        [
+            "localhost:8000",
+            "127.0.0.1:8000",
+            "[::1]:8000",  # T30 - the spelling a browser sends; was refused
+            "0.0.0.0:8000",
+            "testserver",
+            "myhost.local",
+            "preview.lovable.app",
+        ],
+    )
+    def test_ws_localhost_hosts_are_bypassed(self, host_header):
+        """
+        A bypass host yields the same identity REST yields. Asserted through
+        the real dependency, so the two header paths cannot drift apart again.
+        """
+        with patch.object(settings, "LOCALHOST_BYPASS", True):
+            payload = asyncio.run(get_ws_token_payload(websocket=_ws(host_header)))
+        assert payload == {"sub": "localhost_user"}
+
+    @pytest.mark.parametrize(
+        "host_header",
+        [
+            "preview.lovableproject.com",
+            "localhost.evil.com",
+            "evil-localhost.com",
+            "notlocal",
+        ],
+    )
+    def test_ws_non_localhost_hosts_are_refused(self, host_header):
+        with patch.object(settings, "LOCALHOST_BYPASS", True):
+            with pytest.raises(HTTPException) as excinfo:
+                asyncio.run(get_ws_token_payload(websocket=_ws(host_header)))
+        assert excinfo.value.status_code == 401
+
+    @pytest.mark.parametrize("host_header", ["[::1]:8000", "localhost:8000"])
+    def test_ws_bypass_does_not_fire_when_disabled(self, host_header):
+        """With LOCALHOST_BYPASS off, a local host is no longer special."""
+        with patch.object(settings, "LOCALHOST_BYPASS", False):
+            with pytest.raises(HTTPException) as excinfo:
+                asyncio.run(get_ws_token_payload(websocket=_ws(host_header)))
+        assert excinfo.value.status_code == 401
+
+    @pytest.mark.asyncio
+    async def test_ws_ipv6_loopback_bypass_is_identical_to_ipv4(self):
+        """
+        T30 is not merely "allowed": the bracketed loopback form must produce
+        byte-identical output to `127.0.0.1`, so a bypass that fired for the
+        wrong reason cannot pass.
+        """
+        with patch.object(settings, "LOCALHOST_BYPASS", True):
+            v4 = await get_ws_token_payload(websocket=_ws("127.0.0.1:8000"))
+            v6 = await get_ws_token_payload(websocket=_ws("[::1]:8000"))
+        assert v4 == v6 == {"sub": "localhost_user"}
+
+    @pytest.mark.asyncio
+    async def test_ws_unbracketed_ipv6_host_header_cannot_be_anything_else(self):
+        """
+        T21 CORRECTION, restated on the WS path - see the long note on the
+        equivalent test in `test_auth.py`.
+
+        `Host: ::1` yields `websocket.url.hostname is None`, so the empty guard
+        rejects it before any list entry is consulted. RFC 3986 s3.2.2 requires
+        an IPv6 literal in an authority to be bracketed, so no conforming client
+        sends this form; the bracketed spelling is the reachable one.
+        """
+        with patch.object(settings, "LOCALHOST_BYPASS", True):
+            with pytest.raises(HTTPException) as excinfo:
+                await get_ws_token_payload(websocket=_ws("::1"))
+        assert excinfo.value.status_code == 401

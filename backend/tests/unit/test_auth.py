@@ -200,3 +200,153 @@ class TestAuthAPI:
                 "/api/v1/auth/refresh", json={"token": expired_token}
             )
             assert response.status_code == 401
+
+
+class TestLocalhostBypassHostHeader:
+    """
+    T18-T29: the bypass, exercised through the real dependency with a real
+    `Host` header (issue #31, AC-9).
+
+    `get_current_token_payload` reads `request.url.hostname`, which Starlette
+    derives from the client-supplied `Host` header - so this is the only place
+    the two spellings of IPv6 loopback can be told apart. A unit test on
+    `is_localhost` is not enough (T3/T4): it can be satisfied by a list holding
+    `"[::1]"`, which `deps.py` never passes, leaving the real request path
+    broken while the whole suite is green.
+
+    No `Authorization` header is sent anywhere in this class. A 200 therefore
+    means the bypass fired and a 401 means it did not - there is no third
+    outcome that could be mistaken for success.
+    """
+
+    # A protected endpoint with no side effects and no fixtures to arrange.
+    ENDPOINT = "/api/v1/nodes/"
+
+    @pytest.fixture
+    def client(self):
+        from fastapi.testclient import TestClient
+        from backend.main import app
+
+        return TestClient(app)
+
+    @staticmethod
+    def _get(client, host_header):
+        """GET a protected endpoint with `Host` set explicitly and no token."""
+        return client.get(
+            TestLocalhostBypassHostHeader.ENDPOINT,
+            headers={"Host": host_header},
+        )
+
+    @pytest.mark.parametrize(
+        ("host_header", "expected"),
+        [
+            ("localhost:8000", 200),  # T18
+            ("127.0.0.1:8000", 200),  # T19
+            ("[::1]:8000", 200),  # T20 - the bug; was 401. The fix.
+            ("::1", 401),  # T21 - see the note below; SPEC CORRECTION
+            ("0.0.0.0:8000", 200),  # T22
+            ("testserver", 200),  # T23
+            ("myhost.local", 200),  # T24
+            ("preview.lovable.app", 200),  # T25
+            ("preview.lovableproject.com", 401),  # T26
+            ("localhost.evil.com", 401),  # T27
+            ("evil-localhost.com", 401),  # T28
+            ("notlocal", 401),  # T29
+        ],
+    )
+    def test_host_header_decides_the_bypass(self, client, host_header, expected):
+        with patch.object(settings, "LOCALHOST_BYPASS", True):
+            response = self._get(client, host_header)
+        assert (
+            response.status_code == expected
+        ), f"Host: {host_header} -> {response.status_code}"
+
+    def test_ipv6_loopback_reaches_the_same_payload_as_ipv4(self, client):
+        """
+        T20 together: proving `200` is not enough on its own. A bypass that
+        fired for the wrong reason would still be a 200, so assert the
+        bracketed loopback form resolves to the same payload `localhost` does.
+        """
+        with patch.object(settings, "LOCALHOST_BYPASS", True):
+            localhost = self._get(client, "localhost:8000")
+            bracketed = self._get(client, "[::1]:8000")
+
+        assert localhost.status_code == bracketed.status_code == 200
+        assert bracketed.json() == localhost.json()
+
+    def test_unbracketed_ipv6_host_header_is_401_and_cannot_be_anything_else(
+        self, client
+    ):
+        """
+        T21 CORRECTION - issue #31 specified `Host: ::1` -> 200. It cannot be.
+
+        Starlette builds the URL from the raw `Host` header and reads it back
+        through `urlsplit`, which partitions an unbracketed netloc on the FIRST
+        colon:
+
+            urlsplit("http://::1/") -> netloc "::1", hostname None
+
+        So `request.url.hostname` is `None` and `is_localhost(None)` trips its
+        empty guard. The hostname is destroyed by URL parsing, upstream of the
+        list, so no entry in the list - `::1`, `[::1]` or anything else - can
+        change the outcome.
+
+        It is also unreachable in practice: RFC 3986 s3.2.2 requires an IPv6
+        literal in a URI authority to be bracketed, so a conforming client
+        sends `Host: [::1]:8000` (T20), never `Host: ::1`. Asserted here so the
+        401 is a recorded decision rather than a mystery, and so the note stays
+        true if the URL layer ever changes.
+
+        Note the shape this leaves, which is the whole point of the fix: the
+        HEADER is bracketed, the HOSTNAME is not. `Host: [::1]:8000` ->
+        `request.url.hostname == "::1"` -> the canonical entry added in
+        `backend/core/utils.py`. A list holding the literal `"[::1]"` would
+        therefore fail T20 while passing T4 - which is why T3 asserts the
+        canonical bracket-free form and T20 asserts the end-to-end 200.
+
+        The `Request` below is built from a hand-written scope rather than
+        through the client so the CAUSE is asserted, not just the symptom. If
+        a future Starlette stops partitioning on the first colon, this test
+        fails and says why, instead of the 401 becoming a mystery.
+        """
+        from starlette.requests import Request
+
+        scope = {
+            "type": "http",
+            "method": "GET",
+            "scheme": "http",
+            "path": self.ENDPOINT,
+            "root_path": "",
+            "query_string": b"",
+            "headers": [(b"host", b"::1")],
+            "client": ("127.0.0.1", 50000),
+            "server": ("127.0.0.1", 8000),
+        }
+        assert Request(scope).url.hostname is None
+
+        with patch.object(settings, "LOCALHOST_BYPASS", True):
+            response = self._get(client, "::1")
+        assert response.status_code == 401
+
+    def test_bypass_does_not_fire_when_disabled(self, client):
+        """
+        The bypass is opt-out, not implicit: with LOCALHOST_BYPASS off a local
+        host is no longer special and must fall back to requiring a token.
+        """
+        with patch.object(settings, "LOCALHOST_BYPASS", False):
+            response = self._get(client, "[::1]:8000")
+        assert response.status_code == 401
+
+    def test_bypass_off_accepts_a_valid_token_on_ipv6_loopback(self, client):
+        """
+        The assertion above is only meaningful if the endpoint really can
+        succeed: with the bypass off, a real token over `Host: [::1]:8000` must
+        still authenticate.
+        """
+        token = create_access_token({"sub": "test-user"})
+        with patch.object(settings, "LOCALHOST_BYPASS", False):
+            response = client.get(
+                self.ENDPOINT,
+                headers={"Host": "[::1]:8000", "Authorization": f"Bearer {token}"},
+            )
+        assert response.status_code == 200

@@ -114,9 +114,25 @@ All defined in `src/lib/types.ts` — mirrored in OpenAPI `components/schemas`:
 
 - **Scheme**: Bearer token in `Authorization: Bearer <token>`
 - **Storage**: localStorage (`shc.settings.token`)
-- **Localhost bypass**: On `localhost`, `127.0.0.1`, `.local`, `.lovable.app`, `.lovableproject.com` → token optional, auto-set to `"localhost-no-auth"`
+- **Localhost bypass**: On `localhost`, `127.0.0.1`, `::1`, `.local`, `.lovable.app` → token optional, auto-set to `"localhost-no-auth"`. Matching is case-insensitive and strips one surrounding `[` `]` pair, so IPv6 loopback matches in both the browser's `[::1]` form and the backend's `::1` form. The backend additionally accepts `0.0.0.0` (wildcard bind) and `testserver` (test-client default); a browser reports neither.
 - **Validation**: `GET /auth/verify` with Bearer header → `{ valid: boolean }`
 - **Token min length**: 8 characters
+
+The bypass reads the client-supplied `Host` header, so **it is a developer-convenience list, not a
+security boundary**: any client that can reach the backend and set an arbitrary `Host` can already
+claim `localhost` and get the bypass. Adding a loopback-shaped entry therefore grants no capability
+`localhost` does not already grant. Behind a real deployment, pin the allowed hosts at the proxy.
+
+The list is duplicated by necessity — `backend/core/utils.py` and
+`frontend/src/lib/settings.ts` each keep a literal copy, because the frontend bundler cannot import
+from outside its own repository. The entries they share live in
+`shared/auth/localhost_hosts.json`, and `backend/tests/unit/test_frontend_alignment.py` fails if the
+two lists drift. Change both together.
+
+`.lovableproject.com` was on the frontend's list here and is on neither side's now. It is the one
+entry in the whole list that a third party could plausibly present in a `Host` header, so it was
+removed from the frontend rather than mirrored into the backend (issue #31). Do not re-add it: the
+Lovable preview flow is blocked by CORS, which is a separate issue, not by this list.
 
 ### Real-time: WebSocket Log Streaming
 

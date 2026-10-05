@@ -170,7 +170,7 @@ See: `PROCESS.md#branch-naming-convention`, `PROCESS.md#pull-request-requirement
 ## Environment & Auth
 - **Syncthing**: Required on all nodes. Set `SYNCTHING_ROOT` env var.
 - **Python**: `python -m venv venv && pip install -e .`
-- **Auth**: Single shared Bearer token. **Localhost bypass**: On `localhost`, `127.0.0.1`, `.local`, `.lovable.app` → token auto-set to `"localhost-no-auth"` (see `docs/spec.md#authentication`)
+- **Auth**: Single shared Bearer token. **Localhost bypass**: On `localhost`, `127.0.0.1`, `::1`, `.local`, `.lovable.app` → token auto-set to `"localhost-no-auth"` (case-insensitive, IPv6 brackets stripped; see `docs/spec.md#authentication`). The backend also accepts `0.0.0.0` and `testserver`; the frontend does not. The list is duplicated in `backend/core/utils.py` and `frontend/src/lib/settings.ts` — the shared entries live in `shared/auth/localhost_hosts.json` and a test fails if they drift, so **change both lists together**. It is a developer-convenience list keyed on the client-supplied `Host` header, not a security boundary.
 - **Settings**: Frontend uses `localStorage` (`shc.settings`, `shc.profiles`)
 
 ---
