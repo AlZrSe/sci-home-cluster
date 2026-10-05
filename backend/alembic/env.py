@@ -34,17 +34,19 @@ def get_database_url() -> str:
     """
     Resolve the database URL from the application settings.
 
-    alembic.ini carries a hardcoded fallback URL, but relying on it means
+    alembic.ini carries a fallback URL, but relying on it means
     `alembic upgrade head` silently migrates a different database than the
     application uses whenever DATABASE_URL is set. Settings is the single
     source of truth; the ini value is only a last resort.
-    """
-    from backend.core.config import settings
 
-    url = settings.DATABASE_URL
-    if url.startswith("sqlite://"):
-        url = url.replace("sqlite://", "sqlite+aiosqlite://", 1)
-    return url
+    The rewrite itself lives in backend.core.database.resolve_database_url so
+    that this path and get_engine() cannot drift apart - this module runs
+    migrations at import, so it is not importable from a test and the shared
+    resolver has to sit somewhere that is (issue #34, note I-1).
+    """
+    from backend.core.database import resolve_database_url
+
+    return resolve_database_url()
 
 
 def run_migrations_offline() -> None:
@@ -77,6 +79,14 @@ def do_run_migrations(connection):
 
 async def run_migrations_online() -> None:
     """Run migrations in 'online' mode with async engine."""
+    # Same lazy mkdir the application uses, so `alembic upgrade head` against a
+    # fresh checkout creates <repo-root>/data/ exactly as the server does
+    # (issue #34, AC-6). Offline mode below does not connect, so it must not
+    # create directories.
+    from backend.core.database import ensure_sqlite_parent_directory
+
+    ensure_sqlite_parent_directory()
+
     # Create async engine
     connectable = create_async_engine(
         get_database_url(),

@@ -83,6 +83,97 @@ def isolated_database():
     shutil.rmtree(tmpdir, ignore_errors=True)
 
 
+# Directories that cannot contain a database this suite is responsible for,
+# and which are expensive to walk. `frontend/node_modules` and the virtualenvs
+# in the repo root hold tens of thousands of files; an unpruned rglob over them
+# made this fixture - which runs twice per session - the slowest thing in the
+# suite by two orders of magnitude.
+_WALK_PRUNED_DIRS = frozenset(
+    {
+        ".git",
+        ".mypy_cache",
+        ".pytest_cache",
+        ".ruff_cache",
+        "__pycache__",
+        "build",
+        "dist",
+        "node_modules",
+        "site-packages",
+        "venv",
+    }
+)
+
+
+def _is_pruned_dir(name: str) -> bool:
+    """True for directories that must not be walked (see _WALK_PRUNED_DIRS)."""
+    return name in _WALK_PRUNED_DIRS or name.startswith("venv")
+
+
+@pytest.fixture(scope="session", autouse=True)
+def assert_no_db_in_source_tree():
+    """
+        T12 / AC-10: the suite leaves no *.db behind anywhere under the repo.
+
+        Isolated_database already points the session at a tempfile path; this makes
+        the property permanent rather than accidental. It was a live defect once:
+        a CWD-relative DATABASE_URL default made tests drop a database next to the
+        test that constructed Settings (issue #34).
+    The canonical <repo-root>/data/ directory is where a real server run
+        legitimately writes, and a developer may well have one already. So it is
+        not asserted empty - it is asserted *not to appear*. If data/ did not exist
+        when the session started and exists when it ends, some test reached the real
+        default DATABASE_URL instead of the temporary one, and that is a leak worth
+        failing on.
+
+        That exclusion used to be unconditional, which hid exactly this: the
+        repository-wide intermittency in issue #57 sometimes leaves the engine
+        pointed at the real default, and the resulting data/scientific_home_cluster.db
+        was created and then waved through.
+
+        Uses os.walk with in-place pruning rather than Path.rglob, because rglob
+        cannot skip a subtree and would walk node_modules and every virtualenv.
+    """
+    repo_root = Path(__file__).resolve().parents[2]
+    data_dir = (repo_root / "data").resolve()
+    excluded = {
+        (repo_root / "backend" / "tests" / "unit").resolve()
+        / "scientific_home_cluster.db",
+    }
+
+    def _snapshot():
+        found = set()
+        for dirpath, dirnames, filenames in os.walk(repo_root):
+            # Prune in place, so os.walk never descends into these.
+            dirnames[:] = [d for d in dirnames if not _is_pruned_dir(d)]
+            for filename in filenames:
+                if not filename.endswith(".db"):
+                    continue
+                resolved = Path(dirpath, filename).resolve()
+                if any(
+                    resolved == skip or skip in resolved.parents for skip in excluded
+                ):
+                    continue
+                found.add(resolved)
+        return found
+
+    before = _snapshot()
+    data_existed = data_dir.exists()
+    yield
+    created = _snapshot() - before
+    assert not created, (
+        "The test suite created SQLite files in the source tree: "
+        f"{sorted(str(p) for p in created)}. A test must be pointing the "
+        "database at a temporary path - see the isolated_database fixture."
+    )
+    if not data_existed:
+        assert not data_dir.exists(), (
+            f"{data_dir} was created by this test run. A test reached the real "
+            "default DATABASE_URL instead of the session temporary path, so it "
+            "migrated and opened the canonical development database. See "
+            "issue #57 for the intermittency that lets this happen."
+        )
+
+
 @pytest.fixture(scope="session", autouse=True)
 def dispose_database_engine():
     """
@@ -461,7 +552,13 @@ class TestSettings(BaseSettings):
     PROJECT_NAME: str = "Test API"
     VERSION: str = "1.0.0"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 1440
-    DATABASE_URL: str = "sqlite:///./test.db"
+    # Absolute, so this class can never drop a test.db into whichever directory
+    # the suite happens to be run from (issue #34, AC-11). It used to be the
+    # relative literal "sqlite:///./test.db".
+    DATABASE_URL: str = (
+        "sqlite:///"
+        + (Path(tempfile.gettempdir()) / "shc-test-settings" / "test.db").as_posix()
+    )
     LOG_LEVEL: str = "DEBUG"
     BACKEND_CORS_ORIGINS: list = ["http://localhost:3000", "http://localhost:5173"]
 

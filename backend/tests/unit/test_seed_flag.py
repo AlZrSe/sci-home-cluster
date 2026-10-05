@@ -410,11 +410,29 @@ async def test_existing_rows_are_left_alone_when_flag_off(store_off, clean_datab
     assert (await store.get_job("job-42")) is not None
 
 
-def test_repo_has_no_dotenv_example():
+def test_dotenv_example_documents_the_environment():
     """
-    C5/OQ-5: documentation lives in the README, not a new dotfile.
+    Issue #34: `.env.example` exists and documents the three variables.
 
-    The issue asked for the flag to be documented in .env.example, but no
-    such file exists in this repo and adding one is out of scope.
+    This assertion used to be `assert not Path(".env.example").exists()`,
+    recording an earlier scope decision that documenting the flag in a dotfile
+    was out of scope *for that issue*. Issue #34's grooming reverses that call
+    explicitly: DATABASE_URL was documented only in two prose spots (README.md
+    and docs/backend-setup-spec.md), which is how a CWD-relative default
+    survived in the first place. The precondition - the file must not exist - is
+    no longer true, so the test now pins what the file must contain, which is a
+    stronger claim than the one it replaces.
+
+    Anchored on this file rather than the CWD: the old `Path(".env.example")`
+    resolved against the working directory, so it passed vacuously whenever
+    pytest was run from anywhere but the repository root.
     """
-    assert not Path(".env.example").exists()
+    dotenv_example = Path(__file__).resolve().parents[3] / ".env.example"
+
+    assert dotenv_example.is_file(), f"{dotenv_example} is missing"
+
+    contents = dotenv_example.read_text(encoding="utf-8")
+    for variable in ("DATABASE_URL", "SHC_STATE_DIR", "SEED_DEMO_DATA"):
+        assert variable in contents, f".env.example does not document {variable}"
+    # The point of the file is to document the CWD-independent default.
+    assert "data/scientific_home_cluster.db" in contents
