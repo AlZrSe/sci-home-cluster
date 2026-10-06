@@ -222,11 +222,26 @@ warning on every developer's first start is noise that trains people to ignore w
 one. `LOG_LEVEL` defaults to `INFO`, so the line is visible.
 
 **Why the rotation warning is guaranteed to be seen:** resolution happens at **import** of
-`backend.core.config`, which is *before* `backend/main.py:25` calls `logging.basicConfig`. Under `uvicorn`,
-logging is configured by `Config.__init__` before the app is imported, so the `INFO` line appears; under a bare
-`python -c "import backend.core.config"` it does not. `WARNING` survives that case anyway, because
-`logging.lastResort` emits unhandled `WARNING` and above. So the one line that must not be missed is the one
-that is robust to the launcher.
+`backend.core.config`, which is *before* anything in `backend/main.py` can configure logging. `WARNING` survives
+that, because `logging.lastResort` emits unhandled `WARNING` and above no matter how the process was started. So
+the one line that must not be missed is the one that is robust to the launcher.
+
+> **Correction (PM acceptance review, issue #56 / PR #63, defect D-1).** This paragraph originally continued:
+> *"Under `uvicorn`, logging is configured by `Config.__init__` before the app is imported, so the `INFO` line
+> appears."* **That is false on this stack**, and the original AC-3 evidence clause ("observe one `INFO` line
+> naming the absolute path") was therefore unobtainable. Verified: `'root' in uvicorn.config.LOGGING_CONFIG` →
+> `False` on uvicorn 0.25.0, which configures `uvicorn`, `uvicorn.error` and `uvicorn.access` and no root. The
+> only root handler arrived from `backend/main.py`'s `logging.basicConfig`, which runs *after* the
+> `backend.core.config` import has already emitted — and the record was dropped by the root logger's default
+> `WARNING` level before handler dispatch, so it was never created at all. Under `python -m uvicorn
+> backend.main:app` the generation line appeared in neither stream while `INFO:backend.main:Starting …` did.
+>
+> **Resolution: the code was fixed, not this paragraph.** `logging.basicConfig` now runs *above* the
+> `backend.core.config` import in `backend/main.py`, with `settings.LOG_LEVEL` applied afterwards via
+> `logging.getLogger().setLevel(...)` — a second `basicConfig` is a no-op once root has a handler, which is why the
+> ordering is the fix and not an extra call. A docs-only fix was rejected: it would leave the feature reachable
+> only from `pytest`, the shape this repository has already declined in #46 and #60. The table above is unchanged;
+> D5's *conclusion* survives and the `WARNING` half is the only load-bearing part of it.
 
 **Explicitly rejected:**
 
@@ -475,8 +490,14 @@ measuring the rule once untracking regresses.
 **U2 — the key files are not tracked** (AC-1)
 Assert `git ls-files -- .shc backend/.shc` is empty, for each of the two paths individually.
 *Mutation that makes it red:* `git add .shc/secret_key`.
-*Why a separate test from U1:* U1 must stay green when the files are tracked-but-ignored, so that a
-re-tracking regression is attributable to U2 alone and not masked by U1.
+*Why a separate test from U1:* U1 must stay **green** when the files are tracked-but-ignored, which is what
+proves the ignore rule itself is still correct and a re-tracking regression is about tracking, not about ignoring.
+
+> **Correction (PM acceptance review, defect D-3).** This originally read: *"so that a re-tracking regression is
+> attributable to U2 alone and not masked by U1."* **The attribution half is false.** Under U2's mutation
+> (`git add -f .shc/secret_key`) **U4 also goes red**, because `git check-ignore --no-index` reports a
+> tracked-but-ignored path as ignored, so U4's "the rule ignores nothing tracked" assertion fails on the
+> re-tracked path. U1 stays green, and that is the property that actually matters and that is preserved.
 
 **U3 — no tracked file contains a published key** (AC-6)
 List tracked paths with `git ls-files -z`, skip non-regular files (the `frontend` gitlink is a directory, not a
