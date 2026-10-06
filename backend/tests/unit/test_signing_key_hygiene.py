@@ -9,7 +9,9 @@ single mutation that turns it red, so a guard cannot quietly stop guarding:
   * the keys are untracked and ignored, at any depth (U1, U2, U4);
   * no tracked file contains a published key (U3, U5);
   * a published key found on disk is replaced loudly, an unknown key is never
-    replaced, and a generated key is reported once (U6, U7, U8, U9).
+    replaced, and a generated key is reported once (U6, U7, U8, U9);
+  * the deny-list's *data* is right, not just its shape (U5, U11) - U11
+    re-derives both digests from the committed blobs in git history.
 
 **No published key, and no prefix of one of length >= 8, appears anywhere in
 this file.** The real values stay in git history where they already are; every
@@ -152,9 +154,13 @@ def test_published_key_file_is_not_tracked(path):
 
     Mutation that makes it red: ``git add .shc/secret_key`` (or the backend/ one).
 
-    Separate from U1 on purpose: U1 must stay green when the files are tracked
-    but ignored, so that a re-tracking regression is attributable to this test
-    alone instead of being masked by (or blamed on) the ignore-rule test.
+    Separate from U1 on purpose, and the reason is U1 staying *green*: under this
+    mutation (``git add -f .shc/secret_key``) both this test and U4 go red -
+    ``check-ignore --no-index`` reports a tracked-but-ignored path as ignored, so
+    U4's "the rule ignores nothing tracked" assertion fails too. That is
+    collateral, not a second signal: what matters is that U1 passes, which
+    proves the ``.shc/`` rule itself is still correct and the regression is
+    about tracking rather than about ignoring.
     """
     result = _git("ls-files", "--", path)
 
@@ -277,6 +283,71 @@ def test_deny_list_is_well_formed():
     for digest in PUBLISHED_KEY_SHA256:
         assert isinstance(digest, str), f"{digest!r} is not a str"
         assert _HEX64.match(digest), f"{digest!r} is not 64 lowercase hex chars"
+
+
+# ---------------------------------------------------------------------------
+# U11 - the deny-list's digests are the digests of the committed keys
+# ---------------------------------------------------------------------------
+
+
+# Where each published key entered history. Both blobs are still resolvable
+# because issue #56 chose untracking over rewriting history (spec D1), so the
+# deny-list's data is checkable rather than merely checkable-once-by-a-human.
+PUBLISHED_KEY_SOURCES = (
+    ("2d1a8cb", ".shc/secret_key", "issue #24"),
+    ("08f1f27", "backend/.shc/secret_key", "issue #20"),
+)
+
+
+@pytest.mark.parametrize("rev, path, provenance", PUBLISHED_KEY_SOURCES)
+def test_deny_list_digest_matches_the_committed_key(rev, path, provenance):
+    """
+    U11 / AC-5: each digest is the SHA-256 of the key actually committed at
+    ``<rev>:<path>`` - re-derived from the blob, not trusted from the constant.
+
+    U5 above pins the *shape* of ``PUBLISHED_KEY_SHA256``, and every other test
+    in this file exercises the rotation with a synthetic digest. Typing one
+    character into the constant (``...ed1c`` -> ``...ed1d``) therefore leaves the
+    whole suite green while disabling rotation for that key permanently and
+    silently. #56's spec answered that with "QA re-derives both digests once",
+    which is a human check, not a control: it worked and it expires the first
+    time it is forgotten (issue #66).
+
+    **No key material enters the repository.** The blob is read into memory,
+    hashed and discarded; only a digest is asserted, and a digest cannot sign.
+
+    ``git cat-file blob``, not ``git show``: with ``core.autocrlf=true`` ``git
+    show`` writes 45 bytes for a 43-byte blob, and a digest taken over that
+    matches nothing - the "Windows landmine" from spec D8. The text is stripped
+    before hashing because that is what ``_resolve_secret_key`` hashes at
+    runtime; a normalisation mismatch is exactly the bug being caught.
+
+    Mutation that makes it red: change one hex character of either entry in
+    ``PUBLISHED_KEY_SHA256``.
+    """
+    exists = _git("cat-file", "-e", f"{rev}:{path}")
+    if exists.returncode != 0:
+        # A --depth 1 clone has no such object, and any future history rewrite
+        # would remove it. Skipping keeps CI from failing for a reason that has
+        # nothing to do with the code under test; the check runs wherever the
+        # history is there to run it.
+        shallow = _git("rev-parse", "--is-shallow-repository")
+        cause = "shallow clone" if shallow.stdout.strip() == "true" else "absent"
+        pytest.skip(
+            f"{rev}:{path} is unavailable in this clone ({cause}); "
+            "cannot re-derive the digest"
+        )
+
+    blob = _git("cat-file", "blob", f"{rev}:{path}").stdout
+    assert blob, f"{rev}:{path} read as empty"
+    digest = _digest_of_stripped_text(blob)
+
+    assert digest in PUBLISHED_KEY_SHA256, (
+        f"the key committed at {rev}:{path} ({provenance}) hashes to a digest "
+        f"that is not in PUBLISHED_KEY_SHA256, so _resolve_secret_key() would "
+        f"never rotate it. Its digest starts {digest[:16]}. The blob is "
+        f"{len(blob.encode('utf-8'))} characters long."
+    )
 
 
 # ---------------------------------------------------------------------------
