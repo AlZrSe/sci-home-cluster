@@ -234,8 +234,8 @@ sci-run logs <job-id> --follow
 | `SHC_STATE_DIR` | Where the generated JWT signing key is persisted | `<repo-root>/.shc` |
 | `DB_POOL` | Connection pool strategy: `pooled` or `null` | `pooled` |
 | `SEED_DEMO_DATA` | Demo mode: seed the 10 demo jobs / 4 demo nodes on first use, **and** allow metrics and logs to be generated on read when nothing is stored | `false` |
-| `SHARED_TOKEN` | Shared bearer token for API | auto-generated |
-| `SECRET_KEY` | JWT signing key | auto-generated |
+| `SHARED_TOKEN` | Shared bearer token for API. **Not generated** - unset by default, so `POST /api/v1/auth/token` answers `SHARED_TOKEN_NOT_CONFIGURED` until you set it | none (unset) |
+| `SECRET_KEY` | JWT signing key. See [Where is the signing key?](#where-is-the-signing-key) | generated into `$SHC_STATE_DIR` |
 | `LOCALHOST_BYPASS` | Skip auth on localhost | `true` |
 | `BACKEND_CORS_ORIGINS` | Allowed CORS origins | `["http://localhost:3000", "http://localhost:5173"]` |
 
@@ -307,6 +307,72 @@ untracked, all are safe to delete, and none is read by the current code:
 They were **not** migrated: the demo rows in `backend/scientific_home_cluster.db`
 include a dangling `job-1039` foreign key, and the canonical database starts
 empty and seeds on demand via `SEED_DEMO_DATA=true` (see [Demo Data](#demo-data)).
+
+#### Where is the signing key?
+
+```
+<repo-root>/.shc/secret_key
+```
+
+It is **generated on first use**, never shipped. `SHC_STATE_DIR` overrides the
+directory (used verbatim, relative or absolute); the default is absolute and
+anchored on the package location, like the database path ([issue #34]).
+
+The key signs every JWT. It is written `0600` on POSIX, and `.shc/` is in
+`.gitignore` - at any depth - because a signing key has no business in a
+repository, and two of them were in this one.
+
+**Precedence**, highest first:
+
+1. the process environment (`SECRET_KEY=... uvicorn backend.main:app`)
+2. `<CWD>/.env`
+3. the key already persisted in `$SHC_STATE_DIR`
+4. a new key, generated and persisted
+
+An explicit `SECRET_KEY` is **never** persisted and **never** rotated: it is not
+written to `.shc/`, so it cannot be a leaked one, and an operator who set it
+owns it. `GET /api/v1/health` deliberately does **not** report the key or its
+path - `/health` has no auth dependency, and a credential's location is closer
+to a credential than a database path is (issue #56).
+
+Logging (mirrors the database path line from #34): one `INFO` naming the
+absolute key path the first time a key is generated, one `WARNING` if a
+published key was replaced, and **nothing at all** on an ordinary restart.
+
+##### Upgrading from before #56
+
+> **Two JWT signing keys were committed to this public repository**, at
+> `.shc/secret_key` and `backend/.shc/secret_key`. The first is the one a
+> default checkout was actually signing with, so **anyone who has cloned this
+> repository could mint a token that the cluster accepts**, with an expiry of
+> their choosing, for as long as that key stayed on disk.
+>
+> The files are no longer tracked ([issue #56]), but untracking does not
+> unpublish: the blobs are still in git history, in every fork and every mirror.
+> What closes the hole is **rotation**. `backend/core/config.py` carries a
+> deny-list of the two keys' SHA-256 digests (digests, never key values - a
+> digest cannot sign anything), and the first start after the upgrade replaces
+> any key on the deny-list and logs a `WARNING`.
+>
+> **So the first start after upgrading mints a new key.** Every JWT issued
+> before it stops verifying: `GET /api/v1/auth/verify` returns `{"valid": false}`
+> and the frontend shows `AUTH_TOKEN_INVALID` / "Invalid or expired token".
+> WebSocket log streams (issue #53) reject the old token too. This is intended -
+> keeping the published key would keep the forge capability open.
+>
+> To get access back, in order of preference:
+>
+> 1. **Set `SHARED_TOKEN` in `.env` first**, restart, then
+>    `POST /api/v1/auth/token {"shared_token": "..."}` mints a fresh JWT. This is
+>    currently the only way to get a token over the API, because `SHARED_TOKEN`
+>    is unset by default and is **not** auto-generated.
+> 2. Delete `<repo-root>/.shc/secret_key` and start the backend, if you use the
+>    localhost bypass and are happy to lose existing sessions.
+> 3. Point `SHC_STATE_DIR` at an empty directory.
+
+History is **not** rewritten ([issue #56], decision D1). Erasing the object does
+not erase the copy, and a rotated key signs nothing - so rotation is the
+control, not erasure.
 
 ### Demo Data
 

@@ -112,6 +112,15 @@ frontend/build/
 # database is ever moved or renamed (issue #34).
 data/
 
+# Locally persisted server state (SHC_STATE_DIR), which holds the generated
+# JWT signing key. Directory form and unanchored so it matches at any depth,
+# which also covers the pre-#34 backend/.shc/. Two signing keys were
+# committed here before this rule existed and are in public git history, so the
+# deny-list in backend/core/config.py rotates them on next start - but the rule
+# is the actual fix: nothing generated at import time belongs in the index
+# (issue #56).
+.shc/
+
 # Misc
 *.pyc
 *.pyo
