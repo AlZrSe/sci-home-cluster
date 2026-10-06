@@ -368,7 +368,11 @@ published key was replaced, and **nothing at all** on an ordinary restart.
 >    is unset by default and is **not** auto-generated.
 > 2. Delete `<repo-root>/.shc/secret_key` and start the backend, if you use the
 >    localhost bypass and are happy to lose existing sessions.
-> 3. Point `SHC_STATE_DIR` at an empty directory.
+> 3. Point `SHC_STATE_DIR` at an empty directory. `SHC_STATE_DIR` is an
+>    **environment** variable, so set it in the process environment
+>    (`SHC_STATE_DIR=/tmp/empty uvicorn backend.main:app`). Putting it in `.env`
+>    is rejected: it is not a `Settings` field and the extra-field check fails
+>    every process at import ([issue #65]).
 
 History is **not** rewritten ([issue #56], decision D1). Erasing the object does
 not erase the copy, and a rotated key signs nothing - so rotation is the
