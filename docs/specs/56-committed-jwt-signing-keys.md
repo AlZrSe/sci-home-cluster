@@ -309,10 +309,19 @@ drift against.
 794185eb6dfdc1fa7362a89f1b51b83265777c2c6ef2bae1298a13a7c256c00b   backend/.shc/secret_key
 ```
 
-**⚠ Windows landmine, read before computing them.** The blobs are exactly 43 bytes with **no trailing newline**
-(`git cat-file -s` → 43), but this checkout has `core.autocrlf=true`, so `git show <rev>:<path>` writes **45**
+**⚠ Windows CRLF landmine, read before computing them.** The blobs are exactly 43 bytes with **no trailing newline**
+(`git cat-file -s` → 43). On **some** git versions `git show <rev>:<path>` under `core.autocrlf=true` writes **45**
 bytes (`…KGPw\r\n`) into a pipe. Hash that and you get a digest that never matches anything, and the rotation
-silently never fires while every test still passes. Derive the digests from the **checked-out file**, stripped:
+silently never fires while every test still passes.
+
+> **Correction (PM acceptance review, issue #56 / PR #63).** This originally asserted the 45-byte behaviour as a
+> certainty for this checkout. **It does not reproduce on this stack.** Measured on git 2.54.0.windows.1 with
+> `core.autocrlf=true` set: `git show 2d1a8cb:.shc/secret_key` emits **43** bytes, byte-identical to
+> `git cat-file blob`, no CR present. The hazard is **git-version-dependent** — real on some versions, absent on
+> this one. Design around it rather than expect it. Nothing about the verdict changes: `git cat-file blob` is
+> correct under **both** behaviours and is what U11 uses.
+
+Derive the digests from the **checked-out file**, stripped:
 
 ```powershell
 python -c "import hashlib,pathlib; [print(p, hashlib.sha256(pathlib.Path(p).read_text(encoding='utf-8').strip().encode('utf-8')).hexdigest()) for p in ('.shc/secret_key','backend/.shc/secret_key')]"
@@ -489,7 +498,9 @@ measuring the rule once untracking regresses.
 
 **U2 — the key files are not tracked** (AC-1)
 Assert `git ls-files -- .shc backend/.shc` is empty, for each of the two paths individually.
-*Mutation that makes it red:* `git add .shc/secret_key`.
+*Mutation that makes it red:* `git add -f .shc/secret_key`. The `-f` is required — `.shc/` is ignored, so a
+plain `git add` is refused with exit 1 and stages nothing, and the test would stay green while proving
+nothing.
 *Why a separate test from U1:* U1 must stay **green** when the files are tracked-but-ignored, which is what
 proves the ignore rule itself is still correct and a re-tracking regression is about tracking, not about ignoring.
 
@@ -500,8 +511,13 @@ proves the ignore rule itself is still correct and a re-tracking regression is a
 > re-tracked path. U1 stays green, and that is the property that actually matters and that is preserved.
 
 **U3 — no tracked file contains a published key** (AC-6)
-List tracked paths with `git ls-files -z`, skip non-regular files (the `frontend` gitlink is a directory, not a
-blob), hash the rest, assert no digest is in `PUBLISHED_KEY_SHA256`.
+List index entries with `git ls-files -s -z`, skip gitlinks (mode `160000` — the `frontend` entry is a commit id,
+not a blob, so there is nothing to hash), read the remaining object ids' content in **one** `git cat-file --batch`,
+hash each, and assert no digest is in `PUBLISHED_KEY_SHA256`.
+Read the **index blobs**, not the working-tree files, because AC-6's normative text names the index and the two are
+not the same object: stage a secret and then edit the file, and a working-tree scan reads the edit and passes while
+`git commit` publishes the staged blob. This is the defect PM acceptance review raised as D-6, and the original
+implementation here scanned `REPO_ROOT / path`.
 *Mutation that makes it red:* `git add -f .shc/secret_key`; **or** committing the same key under any other name
 or in any other file — which is why this is a content scan and not a path check.
 
@@ -708,8 +724,11 @@ mechanism with a synthetic digest so the code path is proven regardless.
 **Risk — `git check-ignore` without `--no-index` passes for the wrong reason** (verified: a tracked path is
 never reported as ignored). *Mitigation:* U1 uses `--no-index` and U2 carries the untracking assertion.
 
-**Risk — Windows CRLF corrupts a digest computed from `git show` output.** Real: `core.autocrlf=true` turns 43
-blob bytes into 45 on the way out of a pipe. *Mitigation:* D8's command, U6's `\r\n` payload, AC-5.
+**Risk — Windows CRLF corrupts a digest computed from `git show` output.** Real **on some git versions**, where
+`core.autocrlf=true` turns 43 blob bytes into 45 on the way out of a pipe — **not** on git 2.54.0.windows.1, which
+was measured emitting 43 (see D8's correction), so do not treat this as a live landmine on this stack.
+*Mitigation:* `git cat-file blob`, which bypasses the filter on every version, plus D8's command, U6's `\r\n`
+payload, AC-5.
 
 **Risk — over-broad ignore rule.** `.shc/` is precise today, but a future edit could become `*key*`.
 *Mitigation:* U4 asserts no tracked path is ignored.

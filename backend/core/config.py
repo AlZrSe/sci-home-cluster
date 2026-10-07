@@ -196,11 +196,16 @@ def _resolve_secret_key() -> str:
 
     if published:
         # WARNING, not INFO, on purpose. This runs at import of
-        # backend.core.config, which is *before* main.py calls
-        # logging.basicConfig, so the INFO generation line depends on the
-        # launcher having configured logging first. logging.lastResort emits
+        # backend.core.config, and only backend/main.py configures logging -
+        # it calls logging.basicConfig (main.py:31) immediately before importing
+        # this module, precisely so the INFO generation line has a handler. Every
+        # other entrypoint (backend.core.security, backend.core.deps,
+        # backend.core.database, the API routers, the store, the CLI, pytest)
+        # imports it with root unconfigured, where the default WARNING level
+        # drops an INFO record before it is created. logging.lastResort emits
         # unhandled WARNING and above no matter how the process was started, so
-        # the one line an operator must not miss is the one that survives that.
+        # the one line an operator must not miss is the one that survives every
+        # way of getting here.
         logger.warning(
             "The JWT signing key at %s was published in git history, so anyone "
             "can read it; it has been replaced with a newly generated key. "

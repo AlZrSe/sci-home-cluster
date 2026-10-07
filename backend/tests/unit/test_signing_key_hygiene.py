@@ -22,6 +22,7 @@ the one place that ships on every clone.
 """
 
 import hashlib
+import io
 import logging
 import os
 import re
@@ -65,6 +66,73 @@ def _tracked_paths() -> list[str]:
     result = _git("ls-files", "-z")
     assert result.returncode == 0, result.stderr
     return [p for p in result.stdout.split("\0") if p]
+
+
+# Mode git records for a gitlink: a commit id, not a blob, so there is no
+# content to hash. `frontend` is the only one today, and the scan must not
+# assume that - it filters on the mode rather than on the name.
+_GITLINK_MODE = "160000"
+
+
+def _index_blobs() -> list[tuple[str, bytes]]:
+    """
+    ``(path, content)`` for every tracked regular file, read from the *index*.
+
+    The index, not the working tree, because that is what a commit contains and
+    the two are not the same object. They differ in exactly the state that
+    produces the accident this guards against: ``git add -f`` a secret, keep
+    working, and the index still holds the key while the file on disk no longer
+    does. A working-tree scan reads the edit, finds nothing and passes (issue
+    #56, defect D-6).
+
+    One ``git cat-file --batch`` process answers the whole index. A subprocess per
+    file would be ~140 process spawns here, which is the entire runtime of this
+    test spent before it measured anything.
+    """
+    listing = _git("ls-files", "-s", "-z")
+    assert listing.returncode == 0, listing.stderr
+    entries: list[tuple[str, str]] = []
+    for record in listing.stdout.split("\0"):
+        if not record:
+            continue
+        # "<mode> SP <oid> SP <stage> TAB <path>" - NUL-separated, so a path with
+        # a space or a newline in it needs no unquoting.
+        meta, _, path = record.partition("\t")
+        mode, oid, _stage = meta.split(" ")
+        if mode != _GITLINK_MODE:
+            entries.append((path, oid))
+
+    if not entries:
+        return []
+
+    # Several paths can share one object id; --batch answers a repeat happily,
+    # so ask once per distinct id to keep the request proportional to the index.
+    wanted = list(dict.fromkeys(oid for _path, oid in entries))
+
+    completed = subprocess.run(
+        ["git", "-C", str(REPO_ROOT), "cat-file", "--batch"],
+        input=("\n".join(wanted) + "\n").encode("ascii"),
+        capture_output=True,
+        check=False,
+    )
+    assert completed.returncode == 0, completed.stderr.decode(errors="replace")
+
+    # Each answer is "<oid> SP <type> SP <size> LF <content> LF". Content is read
+    # by its declared length and never by splitting on a newline - blob bytes are
+    # arbitrary and routinely end without one.
+    stream = io.BytesIO(completed.stdout)
+    by_oid: dict[str, bytes] = {}
+    for _ in wanted:
+        header = stream.readline()
+        if not header:
+            break
+        fields = header.rstrip(b"\n").split(b" ")
+        if len(fields) != 3 or fields[1] in (b"missing", b"ambiguous"):
+            continue
+        by_oid[fields[0].decode("ascii")] = stream.read(int(fields[2]))
+        stream.read(1)  # the LF git writes after the content
+
+    return [(path, by_oid[oid]) for path, oid in entries if oid in by_oid]
 
 
 def _digest_of_stripped_text(value: str) -> str:
@@ -152,7 +220,10 @@ def test_published_key_file_is_not_tracked(path):
     Checked per path rather than as one ``ls-files`` so a regression that
     untracks only one of them cannot be hidden behind an aggregate assertion.
 
-    Mutation that makes it red: ``git add .shc/secret_key`` (or the backend/ one).
+    Mutation that makes it red: ``git add -f .shc/secret_key`` (or the backend/
+    one). The ``-f`` is load-bearing, not decoration: ``.shc/`` is ignored, so a
+    plain ``git add`` is refused with exit 1 and stages nothing, which would
+    leave this test green and falsely prove the guard works.
 
     Separate from U1 on purpose, and the reason is U1 staying *green*: under this
     mutation (``git add -f .shc/secret_key``) both this test and U4 go red -
@@ -182,18 +253,22 @@ def test_no_tracked_file_contains_a_published_key():
     ``config/keys/jwt.txt`` satisfies every path-shaped assertion and still lets
     anyone who clones the repository mint a token the cluster accepts.
 
-    Non-regular entries are skipped: the ``frontend`` gitlink is a commit id,
-    not a blob, and there is nothing to read.
+    The bytes come from the **index** (``git ls-files -s`` + one
+    ``git cat-file --batch``), which is what AC-6 names and what a commit would
+    contain - not from the working tree. The distinction is load-bearing rather
+    than pedantic: stage a secret and then edit the file, and a working-tree scan
+    reads the edit, finds nothing, and passes while the index still holds a key
+    that the next ``git commit -a`` publishes. Gitlink entries are skipped
+    because they are commit ids, not blobs, and have no content to hash.
 
-    Mutation that makes it red: ``git add -f .shc/secret_key``, or committing the
-    same value under a different filename or inside any other tracked file.
+    Mutation that makes it red: ``git add -f .shc/secret_key`` - which is caught
+    even though import-time rotation rewrites the checked-out copy before this
+    test runs, precisely because the index still holds the staged blob; or
+    committing the same value under a different filename or inside any other
+    tracked file.
     """
     offenders: list[str] = []
-    for relative in _tracked_paths():
-        path = REPO_ROOT / relative
-        if not path.is_file():
-            continue
-        raw = path.read_bytes()
+    for relative, raw in _index_blobs():
         # Both forms, so a key committed bare or with a trailing newline is
         # caught regardless of how the runtime comparison strips it.
         candidates = {hashlib.sha256(raw).hexdigest()}
@@ -269,11 +344,12 @@ def test_deny_list_is_well_formed():
     """
     U5 / AC-5: exactly two well-formed, distinct, lowercase hex digests.
 
-    Every test in this file would pass against ``frozenset()``: the rotation
-    mechanism is proved with a synthetic digest, so nothing else pins the real
-    list. This is the assertion that does - a truncated, uppercase or
-    bytes-valued entry disables rotation in production while leaving the suite
-    green.
+    The rotation mechanism is proved with a synthetic digest (U6), so nothing
+    pinned the real list until U11 was added. U11 re-derives both digests from
+    the committed blobs, so the *data* is now checked in-suite - but U11 skips
+    itself where the history is absent (shallow clones). This assertion holds
+    unconditionally: a truncated, uppercase, or bytes-valued entry disables
+    rotation in production while every mechanism test stays green.
 
     Mutation that makes it red: ``frozenset()``, a truncated digest, an
     uppercase entry, or a ``bytes`` entry.
@@ -360,8 +436,9 @@ def test_published_key_is_replaced_and_warns(state_dir, monkeypatch, caplog):
     U6 / AC-4, AC-7, AC-9: rotation replaces the key and warns about it once.
 
     Deny-listed with a *synthetic* digest, because the mechanism is what is
-    under test here; whether the two real digests are correct is U5's job and QA
-    re-derives them from history independently.
+    under test here; whether the two real digests are the digests of the keys
+    actually committed is U11's job, which re-derives both in-suite from the
+    blobs in git history (U5 pins only their shape).
 
     Mutations that make it red: deleting the digest check; ``not in`` instead of
     ``in``; downgrading the WARNING to an INFO; hashing the raw file bytes
