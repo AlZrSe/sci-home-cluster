@@ -43,7 +43,9 @@ from backend.services.syncthing_service import SyncthingService  # noqa: E402
 
 # basicConfig above already put a handler on root, so this sets the level only:
 # it is a setLevel, not a second configuration, and it is where the operator's
-# LOG_LEVEL actually takes effect.
+# LOG_LEVEL actually takes effect. The generation INFO above is deliberately
+# emitted before it is applied, so a first-time key generation is reported even
+# at LOG_LEVEL=WARNING.
 logging.getLogger().setLevel(getattr(logging, settings.LOG_LEVEL))
 logger = logging.getLogger(__name__)
 
