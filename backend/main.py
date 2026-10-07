@@ -14,15 +14,39 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from backend.core.config import absolute_sqlite_path, settings
-from backend.core.database import init_database, close_database, run_migrations
-from backend.api.v1 import auth, nodes, syncthing, jobs
-from shared.schemas.error_response import ErrorResponse
-from backend.store import get_store
-from backend.services.syncthing_service import SyncthingService
+# Configure logging BEFORE anything that logs at import time.
+#
+# backend.core.config resolves and persists the JWT signing key during this
+# module's import of it, and reports a first-use generation at INFO. uvicorn
+# 0.25.0's LOGGING_CONFIG configures `uvicorn`, `uvicorn.error` and
+# `uvicorn.access` and no `root` handler, so the root logger would otherwise
+# have no handler and its default WARNING level would drop the record before it
+# was ever created - the line was reachable from pytest and from nowhere else
+# (issue #56, defect D-1).
+#
+# INFO for now, not settings.LOG_LEVEL: that value is not known until
+# backend.core.config is imported, which is the very import this has to precede.
+# It is applied immediately below, and a second basicConfig would be a no-op
+# once root has a handler - which is why the ordering is the fix.
+logging.basicConfig(level=logging.INFO)
 
-# Configure logging
-logging.basicConfig(level=getattr(logging, settings.LOG_LEVEL))
+from backend.core.config import absolute_sqlite_path, settings  # noqa: E402
+from backend.core.database import (  # noqa: E402
+    init_database,
+    close_database,
+    run_migrations,
+)
+from backend.api.v1 import auth, nodes, syncthing, jobs  # noqa: E402
+from shared.schemas.error_response import ErrorResponse  # noqa: E402
+from backend.store import get_store  # noqa: E402
+from backend.services.syncthing_service import SyncthingService  # noqa: E402
+
+# basicConfig above already put a handler on root, so this sets the level only:
+# it is a setLevel, not a second configuration, and it is where the operator's
+# LOG_LEVEL actually takes effect. The generation INFO above is deliberately
+# emitted before it is applied, so a first-time key generation is reported even
+# at LOG_LEVEL=WARNING.
+logging.getLogger().setLevel(getattr(logging, settings.LOG_LEVEL))
 logger = logging.getLogger(__name__)
 
 

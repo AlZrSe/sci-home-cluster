@@ -101,7 +101,7 @@ Key configuration settings:
 - `API_V1_STR`: "/api/v1"
 - `PROJECT_NAME`: "Scientific Home Cluster API"
 - `VERSION`: "1.0.0"
-- `SECRET_KEY`: (auto-generated on first run if not set via environment)
+- `SECRET_KEY`: (auto-generated on first run if not set via environment). Generated into `SHC_STATE_DIR` as `secret_key`, mode `0600` on POSIX, and **never committed** — `.shc/` is gitignored at any depth. Two signing keys were committed to this repository before that rule existed (`2d1a8cb:.shc/secret_key`, `08f1f27:backend/.shc/secret_key`), so the first start after issue #56 replaces any key whose SHA-256 digest is in `backend/core/config.py::PUBLISHED_KEY_SHA256` and logs a `WARNING`, invalidating every token issued before it. An explicit `SECRET_KEY` is never persisted and never rotated. See README "Where is the signing key?"
 - `ACCESS_TOKEN_EXPIRE_MINUTES`: 60 * 24 * 8 (8 days)
 - `SYNCTHING_ROOT`: (path to Syncthing synchronization directory)
 - `DATABASE_URL`: `"sqlite:///<repo-root>/data/scientific_home_cluster.db"` (for the initial SQLite implementation). The default is an **absolute** path anchored on the package location, not the current working directory, so the server, the test suite and `alembic upgrade head` all resolve the same file from any directory (issue #34). An explicit value still wins; a relative one is warned about at startup, not rejected. `SHC_STATE_DIR` (default `<repo-root>/.shc`) holds the generated signing key. Precedence is: environment variable, then `<CWD>/.env`, then the default.
@@ -213,7 +213,7 @@ Then the following must be true:
 ## Open Questions
 
 1. Should the Python package be named `backend` or `server`? The issue templates for backend components (007-014) assume a `backend/backend/` structure, implying the package is named `backend`. However, AGENTS.md references a `server/` directory. We have chosen to follow the issue templates to maintain consistency with existing backend-related issues.
-2. How should we handle the generation of the secret key? Should we generate it on first run and store it in a file, or require it to be set via environment variable?
+2. ~~How should we handle the generation of the secret key? Should we generate it on first run and store it in a file, or require it to be set via environment variable?~~ **Answered (issue #56): generate on first use, store in `SHC_STATE_DIR`, and never require configuration.** A missing key is not a startup failure — nothing fails closed, because the test session imports the module and a fresh clone has to work with `pip install -e . && uvicorn backend.main:app`. `SHC_STATE_DIR` (default `<repo-root>/.shc`) holds `secret_key` at mode `0600`; the directory is gitignored at any depth. The env var wins and is never persisted, so it cannot be a leaked key. The one addition over the original question is rotation: a persisted key whose digest is in `PUBLISHED_KEY_SHA256` is replaced on next start with a `WARNING`, because two keys were in public history and untracking does not unpublish them. Logging is `INFO` on generation (with the absolute path), `WARNING` on rotation, silence on an ordinary restart.
 3. Should we include API documentation (Swagger/ReDoc) setup in this spec or leave it for the API server core issue?
 
 ## References

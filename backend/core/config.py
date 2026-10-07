@@ -3,6 +3,7 @@ Configuration module for the Scientific Home Cluster Backend.
 Uses Pydantic v2 BaseSettings for environment variable management.
 """
 
+import hashlib
 import logging
 import os
 import secrets
@@ -38,6 +39,34 @@ DEFAULT_DATABASE_URL: Final[str] = "sqlite:///" + CANONICAL_DATABASE_PATH.as_pos
 # the literal ".shc", so `import backend.core.config` wrote ./.shc/secret_key
 # into whatever directory the process happened to be launched from.
 DEFAULT_STATE_DIR: Final[Path] = _REPO_ROOT / ".shc"
+
+# SHA-256 digests of the JWT signing keys that were committed to this public
+# repository and are therefore known to anyone who has cloned it:
+#
+#   .shc/secret_key              added in 2d1a8cb (issue #24)
+#   backend/.shc/secret_key      added in 08f1f27 (issue #20)
+#
+# Both files are untracked as of issue #56, but untracking does not unpublish:
+# the blobs stay in history, in every fork and in every mirror, and the live
+# one is .shc/secret_key - `_state_dir()` resolves there for every working
+# directory since #34, so a default checkout was signing with a public key.
+# _resolve_secret_key() replaces any key whose digest appears here and logs a
+# WARNING, which is how a running deployment is actually rotated rather than
+# merely warned about in a README nobody reads.
+#
+# Digests only, never key values: a digest cannot sign anything, so shipping it
+# is free. Computed over the *stripped* text of the checked-out file, not over
+# `git show` output - core.autocrlf turns the 43-byte blob into 45 bytes with a
+# trailing \r\n on the way out of a pipe, and a digest taken over that matches
+# nothing and would disable rotation silently (issue #56).
+PUBLISHED_KEY_SHA256: Final[frozenset[str]] = frozenset(
+    {
+        # .shc/secret_key
+        "8b5cb844a8beed1cfaa320a1443410de4d4c375d01af8e8d7083b48d9ad56952",
+        # backend/.shc/secret_key
+        "794185eb6dfdc1fa7362a89f1b51b83265777c2c6ef2bae1298a13a7c256c00b",
+    }
+)
 
 _SQLITE_DIALECT: Final[str] = "sqlite"
 
@@ -97,6 +126,17 @@ def get_version_from_pyproject() -> str:
         return "0.1.0"
 
 
+def _digest_secret_key(value: str) -> str:
+    """
+    SHA-256 of a signing key, as hex.
+
+    Takes the same string the reader produces - the stripped file text - so the
+    comparison against PUBLISHED_KEY_SHA256 cannot be thrown off by a trailing
+    newline the platform added (issue #56).
+    """
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
 def _resolve_secret_key() -> str:
     """
     Resolve the JWT signing key.
@@ -110,6 +150,14 @@ def _resolve_secret_key() -> str:
     This used to be secrets.token_urlsafe(32) inline as the field default,
     which meant a new key on every process start and therefore every
     previously issued token became invalid on each restart.
+
+    A persisted key whose digest is in PUBLISHED_KEY_SHA256 is treated as
+    absent: two of them were committed to this public repository, so anything
+    signing with one is signing with a credential the world can read. It is
+    replaced, not merely reported, because the code that starts the process runs
+    on every deployment while a README warning reaches nobody. An explicit
+    SECRET_KEY is never rotated - it is not persisted, so it cannot be a
+    published key, and an operator who set it owns it (issue #56).
     """
     configured = os.environ.get("SECRET_KEY")
     if configured:
@@ -118,10 +166,13 @@ def _resolve_secret_key() -> str:
     state_path = Path(_state_dir()) / "secret_key"
     try:
         existing = state_path.read_text(encoding="utf-8").strip()
-        if existing:
+        if existing and _digest_secret_key(existing) not in PUBLISHED_KEY_SHA256:
+            # Steady state: a normal restart reads the key back silently. A log
+            # line here would be noise on every boot.
             return existing
+        published = bool(existing)
     except OSError:
-        pass
+        published = False
 
     generated = secrets.token_urlsafe(32)
     try:
@@ -135,6 +186,35 @@ def _resolve_secret_key() -> str:
             "tokens will not survive a restart.",
             state_path,
         )
+        return generated
+
+    # Log the absolute location, not just the configured one: SHC_STATE_DIR is
+    # used verbatim and may be relative, and "which file is my signing key?"
+    # is unanswerable from a relative line (issue #56, mirroring the database
+    # path log in backend/core/database.py).
+    absolute_path = state_path if state_path.is_absolute() else Path.cwd() / state_path
+
+    if published:
+        # WARNING, not INFO, on purpose. This runs at import of
+        # backend.core.config, and only backend/main.py configures logging -
+        # it calls logging.basicConfig (main.py:31) immediately before importing
+        # this module, precisely so the INFO generation line has a handler. Every
+        # other entrypoint (backend.core.security, backend.core.deps,
+        # backend.core.database, the API routers, the store, the CLI, pytest)
+        # imports it with root unconfigured, where the default WARNING level
+        # drops an INFO record before it is created. logging.lastResort emits
+        # unhandled WARNING and above no matter how the process was started, so
+        # the one line an operator must not miss is the one that survives every
+        # way of getting here.
+        logger.warning(
+            "The JWT signing key at %s was published in git history, so anyone "
+            "can read it; it has been replaced with a newly generated key. "
+            "Previously issued tokens are now invalid - mint a new one with "
+            "POST /api/v1/auth/token after setting SHARED_TOKEN (issue #56).",
+            absolute_path,
+        )
+    else:
+        logger.info("Generated a new JWT signing key at %s.", absolute_path)
     return generated
 
 

@@ -117,6 +117,17 @@ All defined in `src/lib/types.ts` — mirrored in OpenAPI `components/schemas`:
 - **Localhost bypass**: On `localhost`, `127.0.0.1`, `::1`, `.local`, `.lovable.app` → token optional, auto-set to `"localhost-no-auth"`. Matching is case-insensitive and strips one surrounding `[` `]` pair, so IPv6 loopback matches in both the browser's `[::1]` form and the backend's `::1` form. The backend additionally accepts `0.0.0.0` (wildcard bind) and `testserver` (test-client default); a browser reports neither.
 - **Validation**: `GET /auth/verify` with Bearer header → `{ valid: boolean }`
 - **Token min length**: 8 characters
+- **Signing key**: `SECRET_KEY` is **locally generated**, not shipped. On first
+  use it is written to `SHC_STATE_DIR/secret_key` (default
+  `<repo-root>/.shc`, mode `0600` on POSIX) so tokens survive a restart; that
+  directory is gitignored at any depth. An explicit `SECRET_KEY` wins and is
+  never persisted. Two signing keys were committed to the public repository
+  before the ignore rule existed, so they are **revoked**: their SHA-256
+  digests are in `backend/core/config.py::PUBLISHED_KEY_SHA256` (digests only,
+  never key values) and the first start on current code replaces any key on
+  that list with a `WARNING`, invalidating every token issued before it. No key
+  or key path is exposed over `GET /health`, which has no auth dependency
+  (issue #56).
 
 The bypass reads the client-supplied `Host` header, so **it is a developer-convenience list, not a
 security boundary**: any client that can reach the backend and set an arbitrary `Host` can already
