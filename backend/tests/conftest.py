@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import AsyncGenerator, Generator, Optional
 
 import pytest
+import pytest_asyncio
 from httpx import AsyncClient, ASGITransport
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from sqlalchemy import delete
@@ -246,8 +247,8 @@ def reset_singleton_store():
 # ============================================================================
 
 
-@pytest.fixture
-def seeding_disabled(monkeypatch) -> Generator[DatabaseStore, None, None]:
+@pytest_asyncio.fixture
+async def seeding_disabled(monkeypatch) -> AsyncGenerator[DatabaseStore, None]:
     """
     Put the application store into production mode for a single test.
 
@@ -274,11 +275,11 @@ def seeding_disabled(monkeypatch) -> Generator[DatabaseStore, None, None]:
         # as a freshly started backend process would.
         store._seeded = False
 
-    import asyncio
-
-    asyncio.run(_clear())
-    yield store
-    asyncio.run(_clear())
+    await _clear()          # Setup: runs on test's event loop
+    try:
+        yield store
+    finally:
+        await _clear()      # Teardown: runs on test's event loop
 
 
 @pytest.fixture
