@@ -244,3 +244,38 @@ def test_lock_cleanup_on_exception():
 
         with open(lock_file, "r") as f:
             assert f.read() == "recovered"
+
+
+def test_portalocker_retry_on_contention():
+    """Test that portalocker LockException triggers retry logic and
+    timeout is honored."""
+    import threading
+    import time
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        lock_file = os.path.join(tmpdir, "portalocker_retry_test.lock")
+
+        # Acquire lock in a background thread and hold it
+        def hold_lock():
+            with file_lock(lock_file, mode="w", timeout=10.0) as _:
+                time.sleep(1.5)  # Hold lock for 1.5 seconds
+
+        thread = threading.Thread(target=hold_lock)
+        thread.start()
+
+        # Give thread time to acquire lock
+        time.sleep(0.3)
+
+        # Try to acquire lock with short timeout - should wait ~1s then
+        # raise TimeoutError
+        start_time = time.time()
+        with pytest.raises(TimeoutError):
+            with file_lock(lock_file, mode="w", timeout=1.0) as _:
+                pass
+
+        end_time = time.time()
+        # Should have timed out after approximately 1 second (not immediately)
+        assert end_time - start_time >= 0.9  # Allow small margin
+        assert end_time - start_time <= 2.0  # Should not take much longer
+
+        thread.join()

@@ -14,10 +14,12 @@ logger = logging.getLogger(__name__)
 # Try to import portalocker (preferred cross-platform solution)
 try:
     import portalocker
+    from portalocker.exceptions import BaseLockException
 
     PORTALOCKER_AVAILABLE = True
 except ImportError:
     PORTALOCKER_AVAILABLE = False
+    BaseLockException = None  # type: ignore[assignment,misc]
     logger.warning("portalocker not available, using platform-specific fallbacks")
 
 # Platform-specific fallback imports
@@ -90,7 +92,7 @@ def file_lock(file_path: str, mode: str = "r", timeout: float = 10.0) -> Generat
                     fcntl.flock(f.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
                     lock_acquired = True
                     break
-            except (OSError, IOError):
+            except (OSError, IOError, BaseLockException):
                 # Lock not available, wait and retry
                 time.sleep(0.1)
                 continue
@@ -175,7 +177,7 @@ def shared_lock(file_path: str, mode: str = "r", timeout: float = 10.0) -> Gener
                     fcntl.flock(f.fileno(), fcntl.LOCK_SH | fcntl.LOCK_NB)
                     lock_acquired = True
                     break
-            except (OSError, IOError):
+            except (OSError, IOError, BaseLockException):
                 # Lock not available, wait and retry
                 time.sleep(0.1)
                 continue
