@@ -70,7 +70,7 @@ This platform uses a client-server architecture with:
 ## Getting Started
 
 ### Prerequisites
-- Python 3.9+
+- Python 3.11+
 - Node.js 18+
 - Syncthing (for file synchronization)
 

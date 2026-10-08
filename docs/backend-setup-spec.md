@@ -8,7 +8,7 @@
 
 ## Tech Stack
 
-- **Language**: Python 3.9+
+- **Language**: Python 3.11+
 - **Framework**: FastAPI
 - **ASGI Server**: Uvicorn
 - **Data Validation**: Pydantic v2
@@ -113,7 +113,7 @@ Localhost bypass logic: When running on localhost, 127.0.0.1, ::1, .local, or .l
 ## Setup Instructions
 
 ### Prerequisites
-- Python 3.9 or higher
+- Python 3.11+
 - Git
 - (Optional) PDM for dependency management (otherwise use pip)
 
