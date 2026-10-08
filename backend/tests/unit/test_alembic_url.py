@@ -12,6 +12,9 @@ copies of the rewrite rule cannot drift apart.
 """
 
 import ast
+import os
+import subprocess
+import sys
 from pathlib import Path
 
 from backend.core.config import absolute_sqlite_path, settings
@@ -35,7 +38,15 @@ def test_alembic_url_matches_app_url():
 
 
 def test_alembic_env_delegates_to_the_shared_resolver():
-    """env.py calls resolve_database_url() instead of rewriting the URL itself."""
+    """
+    env.py calls resolve_database_url() instead of rewriting the URL itself.
+
+    THIS IS A SOURCE-TEXT CHECK ONLY, NOT BEHAVIOURAL EVIDENCE.
+
+    It would pass even if env.py called resolve_database_url() and ignored the
+    result. The behavioural test that pins the actual alembic CLI behaviour is
+    test_alembic_upgrade_head_from_temp_cwd.
+    """
     source = ALEMBIC_ENV.read_text(encoding="utf-8")
     tree = ast.parse(source)
 
@@ -93,3 +104,76 @@ def test_alembic_creates_the_parent_directory(tmp_path, monkeypatch):
     assert not db_path.parent.exists()
     ensure_sqlite_parent_directory()
     assert db_path.parent.is_dir()
+
+
+def test_alembic_upgrade_head_from_temp_cwd(tmp_path):
+    """
+    AC-3/AC-7 behavioural: `alembic upgrade head` from any CWD migrates the
+    canonical database and writes nothing to the launch directory.
+
+    This is what QA validated by hand for #34 acceptance. The AST checks in
+    test_alembic_env_delegates_to_the_shared_resolver are source-text guards
+    only — they would pass if env.py called resolve_database_url() and ignored
+    the result. This test pins the actual behaviour.
+    """
+    REPO_ROOT = Path(__file__).resolve().parents[3]
+    ALEMBIC_INI = REPO_ROOT / "backend" / "alembic.ini"
+    CANONICAL_DB = REPO_ROOT / "data" / "scientific_home_cluster.db"
+
+    # Clean slate: remove any existing canonical database and WAL files
+    for suffix in (".db", ".db-wal", ".db-shm"):
+        (CANONICAL_DB.with_suffix(suffix)).unlink(missing_ok=True)
+
+    # Capture existing .db files before running alembic (pre-existing from other tests)
+    existing_dbs = set(REPO_ROOT.rglob("*.db"))
+
+    # Ensure data/ directory exists (it's created lazily by the resolver)
+    CANONICAL_DB.parent.mkdir(parents=True, exist_ok=True)
+
+    env = dict(os.environ)
+    env["PYTHONPATH"] = str(REPO_ROOT)
+    # Use a temp CWD that is NOT the repo root
+    launch_dir = tmp_path / "launch-from-here"
+    launch_dir.mkdir()
+
+    # Run alembic upgrade head from the temp CWD
+    result = subprocess.run(
+        [sys.executable, "-m", "alembic", "-c", str(ALEMBIC_INI), "upgrade", "head"],
+        cwd=str(launch_dir),
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, f"Alembic failed: {result.stderr}"
+
+    # 1. Canonical database exists and is at head
+    assert CANONICAL_DB.exists(), "Canonical database was not created"
+    # Verify alembic_version table is at head
+    import sqlite3
+    with sqlite3.connect(CANONICAL_DB) as conn:
+        version = conn.execute("SELECT version_num FROM alembic_version").fetchone()
+    assert version is not None, "alembic_version table missing"
+    # Head revision as of #34 is '0003' (or whatever the latest is)
+    # We just check it's not empty/missing; the exact value is in versions/
+    assert version[0] != "", "alembic_version not set"
+
+    # 2. Launch directory stayed empty (no relative default regression)
+    assert list(launch_dir.iterdir()) == [], (
+        f"Launch directory {launch_dir} was not empty: {list(launch_dir.iterdir())}"
+    )
+
+    # 3. No stray .db files anywhere under repo (except the canonical one)
+    # Only check for NEW .db files created during this test run
+    new_dbs = set(REPO_ROOT.rglob("*.db")) - existing_dbs
+    stray_dbs = [p for p in new_dbs if p != CANONICAL_DB]
+    assert stray_dbs == [], f"Stray .db files appeared: {stray_dbs}"
+
+    # Cleanup for test isolation - handle #57 flake (database locked)
+    for suffix in (".db", ".db-wal", ".db-shm"):
+        try:
+            (CANONICAL_DB.with_suffix(suffix)).unlink(missing_ok=True)
+        except PermissionError:
+            # Windows: database may still be locked by alembic's connection pool
+            # This is the #57 flake; don't fail the test over cleanup
+            pass

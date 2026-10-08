@@ -4,8 +4,6 @@ Unit tests for the configuration module.
 
 import logging
 import os
-import subprocess
-import sys
 import tempfile
 from pathlib import Path
 
@@ -147,9 +145,34 @@ def test_import_has_no_filesystem_side_effects(tmp_path):
     """
     T3 / AC-4: importing the application writes nothing into the CWD.
 
-    Run in a subprocess so the import is genuinely fresh - this process has
-    already imported the module, so a cached import would prove nothing.
+    This test MUST NOT set SECRET_KEY in the child env — doing so short-circuits
+    _resolve_secret_key() and the test would pass even if DEFAULT_STATE_DIR
+    reverted to the old relative ".shc" (which wrote ./.shc/secret_key into the
+    launch directory). QA mutation-tested this: reverting DEFAULT_STATE_DIR to
+    Path(".shc") and re-running ONLY this test still passed.
+
+    Instead, we set SHC_STATE_DIR to a temp directory so key generation runs
+    and is contained, then assert the launch directory stays empty.
+
+    This test is one careless `setenv` away from proving nothing. Do not add
+    SECRET_KEY to the child env.
+
+    MUTATION TEST: To verify this test catches the DEFAULT_STATE_DIR regression,
+    temporarily comment out the `env["SHC_STATE_DIR"] = str(key_dir)` line and
+    revert DEFAULT_STATE_DIR to Path(".shc") in backend/core/config.py. The test
+    should fail because the key will be generated in the launch directory.
     """
+    import os
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    REPO_ROOT = Path(__file__).resolve().parents[3]
+
+    # Temp directory for the generated key (contained, not the launch dir)
+    key_dir = tmp_path / "keys"
+    key_dir.mkdir()
+
     env = dict(os.environ)
     # Filter out pytest-cov's COV_CORE_* variables to prevent coverage
     # measurement from leaking into the subprocess and corrupting the report.
@@ -160,25 +183,35 @@ def test_import_has_no_filesystem_side_effects(tmp_path):
     # The package is not installed on sys.path for the child, and the repo root
     # is the anchor under test, so hand it over explicitly.
     env["PYTHONPATH"] = str(REPO_ROOT)
-    # Short-circuits key generation: an import that persists a signing key is a
-    # filesystem side effect, and this test is about the directory litter, not
-    # about where a deliberately generated key goes.
-    env["SECRET_KEY"] = "test-key-not-persisted"
+    # Do NOT set SECRET_KEY — let _resolve_secret_key() generate one
+    env["SHC_STATE_DIR"] = str(key_dir)
     env.pop("DATABASE_URL", None)
+    env.pop("SECRET_KEY", None)  # Explicitly ensure it's not set
+
+    launch_dir = tmp_path / "launch-from-here"
+    launch_dir.mkdir()
 
     result = subprocess.run(
         [sys.executable, "-c", "import backend.main; import backend.core.config"],
-        cwd=str(tmp_path),
+        cwd=str(launch_dir),
         env=env,
         capture_output=True,
         text=True,
     )
 
     assert result.returncode == 0, result.stderr
-    # Nothing at all was created next to where the process was launched. This is
-    # what the old ".shc" default broke: it wrote ./.shc/secret_key here.
-    assert list(tmp_path.iterdir()) == []
-    assert not (tmp_path / ".shc").exists()
+
+    # Launch directory must be empty — no .shc/ created there
+    assert list(launch_dir.iterdir()) == [], (
+        f"Launch directory {launch_dir} was not empty: {list(launch_dir.iterdir())}"
+    )
+    assert not (launch_dir / ".shc").exists(), ".shc created in launch directory"
+
+    # Key should have been generated in the designated SHC_STATE_DIR
+    assert (key_dir / "secret_key").exists(), "Key not generated in SHC_STATE_DIR"
+    # File permission check (0o600) only meaningful on POSIX; Windows ignores chmod
+    if sys.platform != "win32":
+        assert (key_dir / "secret_key").stat().st_mode & 0o777 == 0o600, "Key not 0600"
 
 
 def test_relative_database_url_warns(tmp_path, monkeypatch, caplog):
