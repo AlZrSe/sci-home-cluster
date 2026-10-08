@@ -277,6 +277,34 @@ def test_state_dir_independent_of_cwd(tmp_path, monkeypatch):
     assert _state_dir() == "somewhere-relative"
 
 
+# ---------------------------------------------------------------------------
+# Issue #58: .env file discovery anchored to repository root.
+# ---------------------------------------------------------------------------
+
+
+def test_env_file_independent_of_cwd(tmp_path, monkeypatch):
+    """T7 / AC-1, AC-2: .env at repo root is loaded from any CWD."""
+    # Create a temp repo structure with a .env at its root
+    repo_root = tmp_path / "fake-repo"
+    repo_root.mkdir()
+    (repo_root / ".env").write_text("SHARED_TOKEN=from-repo-root-env\n")
+
+    # Two different launch directories
+    cwd1 = tmp_path / "launch-from-here"
+    cwd2 = tmp_path / "launch-from-there"
+    cwd1.mkdir()
+    cwd2.mkdir()
+
+    env_file = str(repo_root / ".env")
+
+    for cwd in (cwd1, cwd2):
+        monkeypatch.chdir(cwd)
+        s = Settings(_env_file=env_file, SECRET_KEY="test")
+        assert s.SHARED_TOKEN == "from-repo-root-env"
+        # Launch directory stays clean
+        assert list(cwd.iterdir()) == []
+
+
 @pytest.mark.parametrize(
     "url,expected",
     [
