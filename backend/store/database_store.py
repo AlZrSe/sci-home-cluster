@@ -70,63 +70,7 @@ class DatabaseStore:
             past = REFERENCE_TIME.timestamp() - (ms_ago / 1000.0)
             return datetime.fromtimestamp(past).isoformat().replace("T", " ")[:19]
 
-        nodes_data = [
-            {
-                "node_id": "node-alpha",
-                "hostname": "alpha.lan",
-                "gpus": [{"name": "NVIDIA RTX 4090", "memory_gb": 24}],
-                "cpus": 16,
-                "memory_gb": 64,
-                "os": "Ubuntu 24.04",
-                "status": "ONLINE",
-                "last_heartbeat": iso(4_000),
-                "current_job_id": "job-1041",
-            },
-            {
-                "node_id": "node-beta",
-                "hostname": "beta.lan",
-                "gpus": [
-                    {"name": "NVIDIA RTX 3090", "memory_gb": 24},
-                    {"name": "NVIDIA RTX 3090", "memory_gb": 24},
-                ],
-                "cpus": 24,
-                "memory_gb": 128,
-                "os": "Ubuntu 22.04",
-                "status": "ONLINE",
-                "last_heartbeat": iso(11_000),
-                "current_job_id": "job-1039",
-            },
-            {
-                "node_id": "node-gamma",
-                "hostname": "gamma.lan",
-                "gpus": [{"name": "Apple M3 Max (MPS)", "memory_gb": 36}],
-                "cpus": 14,
-                "memory_gb": 36,
-                "os": "macOS 15.3",
-                "status": "ONLINE",
-                "last_heartbeat": iso(28_000),
-            },
-            {
-                "node_id": "node-delta",
-                "hostname": "delta.lan",
-                "gpus": [],
-                "cpus": 8,
-                "memory_gb": 32,
-                "os": "Debian 12",
-                "status": "OFFLINE",
-                "last_heartbeat": iso(1_400_000),
-            },
-        ]
-
-        for node_dict in nodes_data:
-            gpus = [GPUInfo(**gpu_dict) for gpu_dict in node_dict["gpus"]]
-            node_dict["gpus"] = [gpu.model_dump() for gpu in gpus]
-            node_dict["last_heartbeat"] = datetime.fromisoformat(
-                node_dict["last_heartbeat"].replace(" ", "T")
-            )
-            node = NodeModel(**node_dict)
-            session.add(node)
-
+        # 1. Create JobModel objects FIRST (node_id=None initially)
         names = [
             "protein-fold-batch",
             "cfd-mesh-sweep",
@@ -176,6 +120,9 @@ class DatabaseStore:
                 retry={"max_retries": 3, "retry_delay_seconds": 60},
             )
 
+        job_models = []
+        job_node_assignments = {}  # job_id -> node_id for RUNNING jobs
+
         for i, name in enumerate(names):
             status = statuses[i]
             created = 1000 * 60 * (12 + i * 47)
@@ -187,11 +134,14 @@ class DatabaseStore:
             )
             job_id = f"job-{1050 - i}"
             spec = make_spec(name)
+            # Preserve deterministic node assignment for RUNNING jobs
             node_id = (
                 rnd.choice(["node-alpha", "node-beta", "node-gamma"])
                 if running
                 else None
             )
+            if running:
+                job_node_assignments[job_id] = node_id
             created_at = datetime.fromtimestamp(
                 REFERENCE_TIME.timestamp() - (created / 1000.0)
             )
@@ -225,7 +175,7 @@ class DatabaseStore:
                 job_id=job_id,
                 spec=spec.model_dump(),
                 status=status,
-                node_id=node_id,
+                node_id=None,  # Will be set after nodes are inserted
                 created_at=created_at,
                 started_at=started_at,
                 completed_at=completed_at,
@@ -234,10 +184,81 @@ class DatabaseStore:
                 retry_count=retry_count,
             )
             session.add(job)
+            job_models.append(job)
             job_num = int(job_id.split("-")[1])
             if job_num > self._job_counter:
                 self._job_counter = job_num
 
+        # Flush jobs so their PKs are assigned and can be referenced by nodes
+        await session.flush()
+
+        # 2. Create NodeModel objects with VALID current_job_id references
+        nodes_data = [
+            {
+                "node_id": "node-alpha",
+                "hostname": "alpha.lan",
+                "gpus": [{"name": "NVIDIA RTX 4090", "memory_gb": 24}],
+                "cpus": 16,
+                "memory_gb": 64,
+                "os": "Ubuntu 24.04",
+                "status": "ONLINE",
+                "last_heartbeat": iso(4_000),
+                "current_job_id": "job-1041",
+            },
+            {
+                "node_id": "node-beta",
+                "hostname": "beta.lan",
+                "gpus": [
+                    {"name": "NVIDIA RTX 3090", "memory_gb": 24},
+                    {"name": "NVIDIA RTX 3090", "memory_gb": 24},
+                ],
+                "cpus": 24,
+                "memory_gb": 128,
+                "os": "Ubuntu 22.04",
+                "status": "ONLINE",
+                "last_heartbeat": iso(11_000),
+                "current_job_id": "job-1040",  # FIXED: was job-1039 (didn't exist)
+            },
+            {
+                "node_id": "node-gamma",
+                "hostname": "gamma.lan",
+                "gpus": [{"name": "Apple M3 Max (MPS)", "memory_gb": 36}],
+                "cpus": 14,
+                "memory_gb": 36,
+                "os": "macOS 15.3",
+                "status": "ONLINE",
+                "last_heartbeat": iso(28_000),
+            },
+            {
+                "node_id": "node-delta",
+                "hostname": "delta.lan",
+                "gpus": [],
+                "cpus": 8,
+                "memory_gb": 32,
+                "os": "Debian 12",
+                "status": "OFFLINE",
+                "last_heartbeat": iso(1_400_000),
+            },
+        ]
+
+        for node_dict in nodes_data:
+            gpus = [GPUInfo(**gpu_dict) for gpu_dict in node_dict["gpus"]]
+            node_dict["gpus"] = [gpu.model_dump() for gpu in gpus]
+            node_dict["last_heartbeat"] = datetime.fromisoformat(
+                node_dict["last_heartbeat"].replace(" ", "T")
+            )
+            node = NodeModel(**node_dict)
+            session.add(node)
+
+        # Flush nodes so their PKs are assigned and can be referenced by jobs
+        await session.flush()
+
+        # 3. Update jobs with node_id references for RUNNING jobs
+        for job in job_models:
+            if job.job_id in job_node_assignments:
+                job.node_id = job_node_assignments[job.job_id]
+
+        # 4. Commit once
         await session.commit()
 
     async def _ensure_seeded(self) -> None:

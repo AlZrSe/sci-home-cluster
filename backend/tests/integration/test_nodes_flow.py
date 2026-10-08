@@ -89,7 +89,7 @@ class TestNodesFlow:
         assert beta["gpus"][0]["memory_gb"] == 24
         assert beta["cpus"] == 24
         assert beta["memory_gb"] == 128
-        assert beta["current_job_id"] == "job-1039"
+        assert beta["current_job_id"] == "job-1040"
 
         # node-gamma (Mac with MPS)
         gamma = nodes.get("node-gamma")
@@ -128,7 +128,7 @@ class TestNodesFlow:
         assert data["gpus"][0]["name"] == "NVIDIA RTX 3090"
         assert data["gpus"][0]["memory_gb"] == 24
         assert data["status"] == "ONLINE"
-        assert data["current_job_id"] == "job-1039"
+        assert data["current_job_id"] == "job-1040"
 
     @pytest.mark.asyncio
     async def test_get_node_not_found(self, async_client):
