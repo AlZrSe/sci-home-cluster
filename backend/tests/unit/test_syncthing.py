@@ -4,7 +4,6 @@ Unit tests for Syncthing service.
 
 import tempfile
 import pytest
-import pytest_asyncio
 from pathlib import Path
 from datetime import datetime
 
@@ -26,7 +25,7 @@ def temp_syncthing_root():
         yield root
 
 
-@pytest_asyncio.fixture
+@pytest.fixture
 async def syncthing_service(temp_syncthing_root):
     """
     Create a SyncthingService instance with a temp directory.
@@ -46,7 +45,7 @@ async def syncthing_service(temp_syncthing_root):
         await service.stop()
 
 
-@pytest_asyncio.fixture(autouse=True)
+@pytest.fixture(autouse=True)
 async def reset_store_fixture():
     """Reset store before each test."""
     from backend.store import get_store

@@ -4,7 +4,6 @@ Tests all endpoints: auth, jobs, nodes, syncthing.
 """
 
 import pytest
-import pytest_asyncio
 from httpx import AsyncClient, ASGITransport
 from backend.main import app
 from backend.tests.factories import create_job_spec
@@ -12,7 +11,7 @@ from shared.schemas.job_status import JobStatus
 from backend.store import get_store
 
 
-@pytest_asyncio.fixture
+@pytest.fixture
 async def async_client() -> AsyncClient:
     """Create an async client for testing."""
     async with AsyncClient(
@@ -21,7 +20,7 @@ async def async_client() -> AsyncClient:
         yield client
 
 
-@pytest_asyncio.fixture
+@pytest.fixture
 async def auth_client(async_client: AsyncClient) -> AsyncClient:
     """Create an authenticated client with localhost bypass token."""
     async_client.headers["Authorization"] = "Bearer localhost-no-auth"

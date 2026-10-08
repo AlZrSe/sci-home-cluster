@@ -6,17 +6,17 @@ fix here is backend-side.
 """
 
 import pytest
-import pytest_asyncio
 from httpx import AsyncClient, ASGITransport
 from sqlalchemy import inspect as sa_inspect
 
+from backend.core.config import settings
 from backend.core.database import get_engine
 from backend.core.security import create_access_token
 from backend.main import app
 from backend.store.database import CPUMetricModel
 
 
-@pytest_asyncio.fixture
+@pytest.fixture
 async def async_client() -> AsyncClient:
     async with AsyncClient(
         transport=ASGITransport(app=app), base_url="http://testserver"

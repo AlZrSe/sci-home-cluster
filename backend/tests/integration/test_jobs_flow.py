@@ -3,7 +3,6 @@ Integration tests for full job lifecycle: create → list → get → metrics �
 """
 
 import pytest
-import pytest_asyncio
 from httpx import AsyncClient, ASGITransport
 from backend.main import app
 from backend.tests.factories import JobSpecFactory, create_job_spec
@@ -14,7 +13,7 @@ from shared.schemas.job_status import JobStatus
 class TestJobLifecycle:
     """Integration tests for complete job lifecycle."""
 
-    @pytest_asyncio.fixture
+    @pytest.fixture
     async def async_client(self) -> AsyncClient:
         """Create an async client for testing."""
         async with AsyncClient(
@@ -408,7 +407,7 @@ class TestJobLifecycle:
 class TestJobAuthentication:
     """Tests for authentication on job endpoints."""
 
-    @pytest_asyncio.fixture
+    @pytest.fixture
     async def unauthenticated_client(self) -> AsyncClient:
         """Create an async client without auth."""
         async with AsyncClient(
@@ -440,7 +439,7 @@ class TestJobAuthentication:
 class TestJobValidation:
     """Tests for job validation edge cases."""
 
-    @pytest_asyncio.fixture
+    @pytest.fixture
     async def async_client(self) -> AsyncClient:
         async with AsyncClient(
             transport=ASGITransport(app=app), base_url="http://testserver"

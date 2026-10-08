@@ -3,7 +3,6 @@ Integration tests for node listing and detail endpoints.
 """
 
 import pytest
-import pytest_asyncio
 from httpx import AsyncClient, ASGITransport
 from backend.main import app
 
@@ -12,7 +11,7 @@ from backend.main import app
 class TestNodesFlow:
     """Integration tests for node management endpoints."""
 
-    @pytest_asyncio.fixture
+    @pytest.fixture
     async def async_client(self) -> AsyncClient:
         """Create an async client for testing with localhost bypass."""
         async with AsyncClient(
@@ -197,7 +196,7 @@ class TestNodesFlow:
 class TestNodesAuthentication:
     """Tests for authentication on node endpoints."""
 
-    @pytest_asyncio.fixture
+    @pytest.fixture
     async def unauthenticated_client(self) -> AsyncClient:
         """Create an async client without auth."""
         async with AsyncClient(
@@ -228,7 +227,7 @@ class TestNodesAuthentication:
 class TestNodesValidation:
     """Tests for node data validation and edge cases."""
 
-    @pytest_asyncio.fixture
+    @pytest.fixture
     async def async_client(self) -> AsyncClient:
         async with AsyncClient(
             transport=ASGITransport(app=app), base_url="http://testserver"
@@ -302,7 +301,7 @@ class TestNodesValidation:
 class TestNodeMetrics:
     """Integration tests for GET /nodes/{id}/metrics endpoint."""
 
-    @pytest_asyncio.fixture
+    @pytest.fixture
     async def auth_client(self) -> AsyncClient:
         """Create an async client with localhost bypass auth."""
         async with AsyncClient(
