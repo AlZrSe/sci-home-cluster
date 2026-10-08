@@ -217,7 +217,7 @@ class DatabaseStore:
                 "os": "Ubuntu 22.04",
                 "status": "ONLINE",
                 "last_heartbeat": iso(11_000),
-                "current_job_id": "job-1040",  # FIXED: was job-1039 (didn't exist)
+                "current_job_id": "job-1049",  # job-1049 exists and is on node-beta
             },
             {
                 "node_id": "node-gamma",

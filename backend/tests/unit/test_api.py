@@ -489,7 +489,7 @@ class TestNodesEndpoints:
         assert data["gpus"][0]["name"] == "NVIDIA RTX 3090"
         assert data["gpus"][0]["memory_gb"] == 24
         assert data["status"] == "ONLINE"
-        assert data["current_job_id"] == "job-1040"
+        assert data["current_job_id"] == "job-1049"
 
     @pytest.mark.asyncio
     async def test_get_node_not_found(self, auth_client):
