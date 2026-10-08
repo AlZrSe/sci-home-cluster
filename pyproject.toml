@@ -23,7 +23,7 @@ dependencies = [
     "psutil==5.9.0",
     "gputil==1.4.0",
     "portalocker==2.0.0",
-    "typer[rich]==0.9.0",
+    "typer==0.9.0",
     "rich==13.0.0",
     "watchdog==4.0.0",
 ]
@@ -42,6 +42,7 @@ dev = [
     "pytest-watch==4.2.0",
     "types-passlib==1.7.7.20240106",
     "types-python-jose==3.3.4.20240106",
+    "types-PyYAML==6.0.12.20260906",
 ]
 
 [build-system]
