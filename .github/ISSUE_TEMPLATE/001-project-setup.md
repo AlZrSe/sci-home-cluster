@@ -17,7 +17,7 @@ Set up the initial project structure, dependencies, and development environment 
 - [ ] Initial commit pushed to main branch
 
 ## Technical Notes
-- Use Python 3.9+ 
+- Use Python 3.11+ 
 - Dependencies should be pinned to specific versions for reproducibility
 - Consider using pre-commit hooks for code quality (ruff, mypy)
 - The syncthing/ directory should be excluded from git as it's user-specific
