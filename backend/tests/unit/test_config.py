@@ -151,6 +151,12 @@ def test_import_has_no_filesystem_side_effects(tmp_path):
     already imported the module, so a cached import would prove nothing.
     """
     env = dict(os.environ)
+    # Filter out pytest-cov's COV_CORE_* variables to prevent coverage
+    # measurement from leaking into the subprocess and corrupting the report.
+    for key in list(env.keys()):
+        if key.startswith("COV_CORE_"):
+            del env[key]
+
     # The package is not installed on sys.path for the child, and the repo root
     # is the anchor under test, so hand it over explicitly.
     env["PYTHONPATH"] = str(REPO_ROOT)
