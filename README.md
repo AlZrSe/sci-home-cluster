@@ -100,6 +100,9 @@ pip install -e .[dev]
 cd backend && alembic upgrade head
 ```
 
+> **Note**: Migrations use the same CWD-independent database resolver as the server.
+> See [Which database am I using?](#which-database-am-i-using) for details.
+
 ### 3. Frontend Setup
 ```bash
 cd frontend
@@ -154,6 +157,10 @@ cd frontend
 npm run dev
 ```
 - Frontend: http://localhost:5173 (or as shown by Vite)
+
+> **Note**: The database file location is CWD-independent and anchored to the repository root.
+> See [Which database am I using?](#which-database-am-i-using) for details on the canonical
+> database path, how to override it, and cleaning up stale database files from before issue #34.
 
 ### Single Command (using concurrently)
 ```bash
