@@ -14,6 +14,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
+import pytest_asyncio
 from httpx import AsyncClient, ASGITransport
 
 from backend.core.config import settings
@@ -25,7 +26,7 @@ from shared.schemas.job_status import JobStatus
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def async_client() -> AsyncClient:
     async with AsyncClient(
         transport=ASGITransport(app=app), base_url="http://testserver"

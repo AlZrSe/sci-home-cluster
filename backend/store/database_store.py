@@ -586,6 +586,10 @@ class DatabaseStore:
         flag: the tables really were just emptied, so there is nothing
         left to seed and nothing to derive a counter from.
         """
+        # Stop and AWAIT all log streams first to prevent "database is locked"
+        # errors from background tasks still holding connections and writing.
+        await self.stop_all_log_streams()
+
         async with get_session() as session:
             await session.execute(delete(LogEntryModel))
             await session.execute(delete(CPUMetricModel))
@@ -595,8 +599,6 @@ class DatabaseStore:
             await session.commit()
 
             self._job_counter = 0
-            for task in self._log_stream_tasks.values():
-                task.cancel()
             self._log_stream_tasks.clear()
             self._log_stream_subscribers.clear()
 

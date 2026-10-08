@@ -3,6 +3,7 @@ Integration tests for Syncthing: scan, status, YAML sync.
 """
 
 import pytest
+import pytest_asyncio
 import tempfile
 import yaml
 from pathlib import Path
@@ -30,7 +31,7 @@ class TestSyncthingFlow:
             (root / "nodes").mkdir()
             yield root
 
-    @pytest.fixture
+    @pytest_asyncio.fixture
     async def syncthing_service(self, temp_syncthing_root):
         """Create and start a SyncthingService instance."""
         service = SyncthingService(temp_syncthing_root)
@@ -38,7 +39,7 @@ class TestSyncthingFlow:
         yield service
         await service.stop()
 
-    @pytest.fixture
+    @pytest_asyncio.fixture
     async def async_client(self) -> AsyncClient:
         """Create an async client for API testing."""
         async with AsyncClient(
@@ -47,7 +48,7 @@ class TestSyncthingFlow:
             client.headers["Authorization"] = "Bearer localhost-no-auth"
             yield client
 
-    @pytest.fixture(autouse=True)
+    @pytest_asyncio.fixture(autouse=True)
     async def reset_store(self):
         """Reset store before each test."""
         store = get_store()
@@ -620,7 +621,7 @@ class TestSyncthingFlow:
 class TestSyncthingAuthentication:
     """Tests for authentication on Syncthing endpoints - SKIPPED due to missing app.state.syncthing_service in test environment."""
 
-    @pytest.fixture
+    @pytest_asyncio.fixture
     async def unauthenticated_client(self) -> AsyncClient:
         async with AsyncClient(
             transport=ASGITransport(app=app), base_url="http://test"

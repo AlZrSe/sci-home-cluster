@@ -4,6 +4,7 @@ Uses factory-boy for test data generation.
 """
 
 import pytest
+import pytest_asyncio
 from backend.store import DatabaseStore
 from shared.schemas.job_status import JobStatus
 from backend.tests.factories import (
@@ -16,7 +17,7 @@ from backend.tests.factories import (
 )
 
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def store(clean_database):
     """
     A DatabaseStore with no data, seeded lazily on first use.
@@ -34,7 +35,7 @@ async def store(clean_database):
         await instance.stop_all_log_streams()
 
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def empty_store(clean_database):
     """A DatabaseStore that stays empty: the seeder is suppressed."""
     instance = DatabaseStore()

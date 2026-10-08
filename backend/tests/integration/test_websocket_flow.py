@@ -3,6 +3,7 @@ Integration tests for job logs endpoints (HTTP fallback and history).
 """
 
 import pytest
+import pytest_asyncio
 from httpx import AsyncClient, ASGITransport
 from backend.main import app
 
@@ -11,7 +12,7 @@ from backend.main import app
 class TestJobLogsHistory:
     """Integration tests for GET /jobs/{id}/logs/history endpoint."""
 
-    @pytest.fixture
+    @pytest_asyncio.fixture
     async def auth_client(self) -> AsyncClient:
         """Create an async client with localhost bypass auth."""
         async with AsyncClient(
@@ -61,7 +62,7 @@ class TestJobLogsHistory:
 class TestJobLogsHTTP:
     """Integration tests for GET /jobs/{id}/logs HTTP fallback endpoint."""
 
-    @pytest.fixture
+    @pytest_asyncio.fixture
     async def auth_client(self) -> AsyncClient:
         """Create an async client with localhost bypass auth."""
         async with AsyncClient(

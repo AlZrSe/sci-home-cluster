@@ -29,8 +29,8 @@ from shared.schemas.node_spec import NodeSpec, GPUInfo
 from backend.store import DatabaseStore, get_store
 
 
-@pytest.fixture(scope="session", autouse=True)
-def isolated_database():
+@pytest_asyncio.fixture(scope="session", autouse=True)
+async def isolated_database():
     """
     Point the whole test session at a throwaway SQLite database.
 
@@ -39,8 +39,6 @@ def isolated_database():
     non-hermetic and causes "database is locked" errors whenever the
     Syncthing watcher thread writes concurrently with a test.
     """
-    import asyncio
-
     from backend.store.database import Base
 
     tmpdir = tempfile.mkdtemp(prefix="shc-test-db-")
@@ -65,20 +63,15 @@ def isolated_database():
     # and leaky into tests that deliberately exercise the default.
     settings.SEED_DEMO_DATA = True
 
-    async def _create_schema() -> None:
-        # A throwaway engine: creating the schema through the global
-        # engine would bind its pooled connections to this fixture's
-        # event loop, which differs from the per-test loops.
-        engine = create_async_engine(
-            "sqlite+aiosqlite:///" + db_path.as_posix(), echo=False
-        )
-        try:
-            async with engine.begin() as conn:
-                await conn.run_sync(Base.metadata.create_all)
-        finally:
-            await engine.dispose()
-
-    asyncio.run(_create_schema())
+    # Create schema on the pytest-asyncio session loop
+    engine = create_async_engine(
+        "sqlite+aiosqlite:///" + db_path.as_posix(), echo=False
+    )
+    try:
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+    finally:
+        await engine.dispose()
 
     yield url
     shutil.rmtree(tmpdir, ignore_errors=True)
@@ -175,8 +168,8 @@ def assert_no_db_in_source_tree():
         )
 
 
-@pytest.fixture(scope="session", autouse=True)
-def dispose_database_engine():
+@pytest_asyncio.fixture(scope="session", autouse=True)
+async def dispose_database_engine():
     """
     Dispose the global async engine once the test session ends.
 
@@ -185,13 +178,11 @@ def dispose_database_engine():
     finished and the process hangs forever. Disposing the engine closes
     those connections and lets the process exit.
 
-    Deliberately synchronous: an async session-scoped fixture would need
-    pytest-asyncio's function-scoped event_loop and raise ScopeMismatch.
+    Runs on the pytest-asyncio session loop so the engine is disposed
+    on the same loop it was created on.
     """
     yield
-    import asyncio
-
-    asyncio.run(close_database())
+    await close_database()
 
 
 @pytest.fixture(autouse=True)
@@ -210,8 +201,8 @@ def set_syncthing_root(monkeypatch):
         yield
 
 
-@pytest.fixture(autouse=True)
-def reset_singleton_store():
+@pytest_asyncio.fixture(autouse=True)
+async def reset_singleton_store():
     """
     Reset the application store singleton before and after each test.
 
@@ -219,27 +210,19 @@ def reset_singleton_store():
     a stream on the singleton store using the test client's event loop; if
     that task survives the test, the next test fails with "Event loop is
     closed" or blocks on the database write lock.
-    """
-    import asyncio
 
+    Runs on the test's event loop so background tasks are cancelled and
+    awaited on their native loop.
+    """
     store = get_store()
 
     async def _reset_and_stop() -> None:
         await store.stop_all_log_streams()
         await store.reset()
 
-    def _run() -> None:
-        try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
-            # No running loop, use asyncio.run
-            asyncio.run(_reset_and_stop())
-            return
-        asyncio.run_coroutine_threadsafe(_reset_and_stop(), loop).result(timeout=5)
-
-    _run()
+    await _reset_and_stop()
     yield
-    _run()
+    await _reset_and_stop()
 
 
 # ============================================================================
@@ -282,7 +265,7 @@ async def seeding_disabled(monkeypatch) -> AsyncGenerator[DatabaseStore, None]:
         await _clear()      # Teardown: runs on test's event loop
 
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def seeded_cluster(seeding_disabled) -> AsyncGenerator[DatabaseStore, None]:
     """
     A store whose demo dataset is explicitly present.
@@ -329,13 +312,13 @@ def flag_on(monkeypatch):
     monkeypatch.setattr(settings, "SEED_DEMO_DATA", True)
 
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def store_off(clean_database, flag_off) -> DatabaseStore:
     """A fresh DatabaseStore against empty tables, with seeding disabled."""
     return DatabaseStore()
 
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def store_on(clean_database, flag_on) -> DatabaseStore:
     """A fresh DatabaseStore against empty tables, with seeding enabled."""
     return DatabaseStore()
@@ -346,7 +329,7 @@ async def store_on(clean_database, flag_on) -> DatabaseStore:
 # ============================================================================
 
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def client() -> AsyncGenerator[AsyncClient, None]:
     """
     Create an AsyncClient for testing the FastAPI app.
@@ -399,7 +382,7 @@ def sample_node() -> NodeSpec:
     )
 
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def clean_database() -> AsyncGenerator[None, None]:
     """
     Truncate every table around a single test.
@@ -419,7 +402,7 @@ async def clean_database() -> AsyncGenerator[None, None]:
         await _clear_store_data(store)
 
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def mock_store(clean_database) -> DatabaseStore:
     """
     An isolated, EMPTY store for unit tests.
@@ -457,7 +440,7 @@ async def _clear_store_data(store: DatabaseStore) -> None:
     store._log_stream_subscribers.clear()
 
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def db_session() -> AsyncGenerator[AsyncSession, None]:
     """
     Database session fixture for integration tests.

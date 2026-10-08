@@ -3,6 +3,7 @@ Integration tests for authentication flow: token validation, creation, refresh.
 """
 
 import pytest
+import pytest_asyncio
 from httpx import AsyncClient, ASGITransport
 from backend.main import app
 from backend.core.security import create_access_token
@@ -15,7 +16,7 @@ from unittest.mock import patch
 class TestAuthFlow:
     """Integration tests for authentication endpoints."""
 
-    @pytest.fixture
+    @pytest_asyncio.fixture
     async def async_client(self) -> AsyncClient:
         """Create an async client for testing."""
         async with AsyncClient(
@@ -23,7 +24,7 @@ class TestAuthFlow:
         ) as client:
             yield client
 
-    @pytest.fixture
+    @pytest_asyncio.fixture
     async def auth_client(self, async_client: AsyncClient) -> AsyncClient:
         """Create a client with shared token configured."""
         with patch.object(settings, "SHARED_TOKEN", "test-shared-token-123"):
@@ -302,7 +303,7 @@ class TestAuthFlow:
 class TestAuthEdgeCases:
     """Tests for authentication edge cases and error handling."""
 
-    @pytest.fixture
+    @pytest_asyncio.fixture
     async def async_client(self) -> AsyncClient:
         async with AsyncClient(
             transport=ASGITransport(app=app), base_url="http://testserver"
@@ -396,7 +397,7 @@ class TestAuthEdgeCases:
 class TestAuthVerifyGet:
     """Integration tests for GET /auth/verify endpoint (Bearer header)."""
 
-    @pytest.fixture
+    @pytest_asyncio.fixture
     async def async_client(self) -> AsyncClient:
         """Create an async client for testing."""
         async with AsyncClient(
