@@ -11,6 +11,7 @@ removed.
 import asyncio
 import re
 from pathlib import Path
+from typing import AsyncGenerator
 from unittest.mock import patch
 
 import pytest
@@ -26,7 +27,7 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 
 
 @pytest.fixture
-async def async_client() -> AsyncClient:
+async def async_client() -> AsyncGenerator[AsyncClient, None]:
     async with AsyncClient(
         transport=ASGITransport(app=app), base_url="http://testserver"
     ) as client:
@@ -185,9 +186,9 @@ class TestNoRouteCallsAnotherRoute:
     """get_job_logs_history used to call the get_job_logs route function."""
 
     def test_history_endpoint_does_not_call_a_route(self):
-        source = (
-            REPO_ROOT / "backend" / "api" / "v1" / "jobs.py"
-        ).read_text(encoding="utf-8")
+        source = (REPO_ROOT / "backend" / "api" / "v1" / "jobs.py").read_text(
+            encoding="utf-8"
+        )
         # No `return await get_job_logs(` style call to a sibling route.
         assert not re.search(r"return await get_job_logs\(", source)
 

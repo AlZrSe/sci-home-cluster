@@ -202,9 +202,9 @@ def test_import_has_no_filesystem_side_effects(tmp_path):
     assert result.returncode == 0, result.stderr
 
     # Launch directory must be empty — no .shc/ created there
-    assert list(launch_dir.iterdir()) == [], (
-        f"Launch directory {launch_dir} was not empty: {list(launch_dir.iterdir())}"
-    )
+    assert (
+        list(launch_dir.iterdir()) == []
+    ), f"Launch directory {launch_dir} was not empty: {list(launch_dir.iterdir())}"
     assert not (launch_dir / ".shc").exists(), ".shc created in launch directory"
 
     # Key should have been generated in the designated SHC_STATE_DIR

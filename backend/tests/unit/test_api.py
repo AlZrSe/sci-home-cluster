@@ -4,6 +4,7 @@ Tests all endpoints: auth, jobs, nodes, syncthing.
 """
 
 import pytest
+from typing import AsyncGenerator
 from httpx import AsyncClient, ASGITransport
 from backend.main import app
 from backend.tests.factories import create_job_spec
@@ -12,7 +13,7 @@ from backend.store import get_store
 
 
 @pytest.fixture
-async def async_client() -> AsyncClient:
+async def async_client() -> AsyncGenerator[AsyncClient, None]:
     """Create an async client for testing."""
     async with AsyncClient(
         transport=ASGITransport(app=app), base_url="http://testserver"
@@ -540,10 +541,15 @@ class TestNodesEndpoints:
 
 
 @pytest.mark.skip(
-    reason="Requires app.state.syncthing_service which is set by lifespan (not run in unit tests)"
+    reason=(
+        "Requires app.state.syncthing_service which is set by "
+        "lifespan (not run in unit tests)"
+    )
 )
 class TestSyncthingEndpoints:
-    """Test Syncthing API endpoints - SKIPPED: requires app.state.syncthing_service from lifespan."""
+    """Test Syncthing API endpoints - SKIPPED.
+    Reason: requires app.state.syncthing_service from lifespan.
+    """
 
     @pytest.mark.asyncio
     async def test_syncthing_status(self, auth_client):
@@ -627,11 +633,6 @@ class TestErrorResponses:
     async def test_400_error_format(self, auth_client):
         """Test 400 errors follow ErrorResponse format."""
         # For JSON API, 400 errors are now 422, but we can test invalid spec
-        invalid_spec = {
-            "name": "test",
-            "command": "cmd",
-            "resources": {"gpus": 1, "cpus": 4, "memory_gb": 16},
-        }
         # This would be valid, so test a case that gives 400 - e.g. cancel completed job
         job_spec = create_job_spec(name="test-400", gpus=1, cpus=4, memory_gb=16)
         create_response = await auth_client.post(

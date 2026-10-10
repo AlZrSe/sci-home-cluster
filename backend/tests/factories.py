@@ -249,3 +249,10 @@ def create_gpu_info(
         name=name,
         memory_gb=memory_gb or 24,
     )
+
+
+def job_spec_to_yaml_bytes(spec: JobSpec) -> bytes:
+    """Convert a JobSpec to YAML bytes for multipart upload."""
+    import yaml
+
+    return yaml.safe_dump(spec.model_dump(mode="json"), sort_keys=False).encode()

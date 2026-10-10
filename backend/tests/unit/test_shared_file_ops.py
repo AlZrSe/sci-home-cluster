@@ -5,6 +5,7 @@ Unit tests for shared file operations.
 import pytest
 import tempfile
 import os
+import sys
 import yaml
 from pydantic import ValidationError
 from shared.file_ops.locking import file_lock, shared_lock
@@ -185,9 +186,6 @@ def test_shared_lock_basic():
         with shared_lock(lock_file, mode="r", timeout=2.0) as f:
             content = f.read()
             assert content == "shared content"
-
-
-import sys
 
 
 def test_lock_timeout():

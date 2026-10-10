@@ -3,7 +3,7 @@ Sliding window implementation for metrics summarization in the Scientific Home C
 """
 
 from collections import deque
-from typing import Generic, TypeVar, Optional
+from typing import Generic, TypeVar, Optional, Deque
 
 
 T = TypeVar("T", int, float)
@@ -25,14 +25,15 @@ class SlidingWindow(Generic[T]):
             raise ValueError("Window size must be positive")
 
         self.size = size
-        self._data = deque(maxlen=size)
+        self._data: Deque[T] = deque(maxlen=size)
 
-    def add(self, value: T) -> None:
+    def add(self, value: T, timestamp: Optional[float] = None) -> None:
         """
         Add a value to the sliding window.
 
         Args:
             value: Value to add
+            timestamp: Optional timestamp (ignored in base class)
         """
         self._data.append(value)
 
@@ -92,7 +93,7 @@ class SlidingWindow(Generic[T]):
         """
         if not self._data:
             return None
-        return sum(self._data) / len(self._data)
+        return float(sum(self._data)) / len(self._data)
 
     def sum(self) -> Optional[T]:
         """
@@ -120,9 +121,9 @@ class TimestampedSlidingWindow(SlidingWindow[float]):
             size: Maximum number of elements to store in the window
         """
         super().__init__(size)
-        self._timestamps = deque(maxlen=size)
+        self._timestamps: Deque[float] = deque(maxlen=size)
 
-    def add(self, value: float, timestamp: float) -> None:
+    def add(self, value: float, timestamp: Optional[float] = None) -> None:
         """
         Add a timestamped value to the sliding window.
 
@@ -130,8 +131,8 @@ class TimestampedSlidingWindow(SlidingWindow[float]):
             value: Value to add
             timestamp: Timestamp associated with the value (seconds since epoch)
         """
-        super().add(value)
-        self._timestamps.append(timestamp)
+        self._data.append(value)
+        self._timestamps.append(timestamp if timestamp is not None else 0.0)
 
     def get_timestamps(self) -> list[float]:
         """

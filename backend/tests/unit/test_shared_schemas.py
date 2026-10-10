@@ -63,7 +63,8 @@ def test_gpu_metric():
     assert metric.utilization_percent == 75
     assert metric.temperature_c == 65
 
-    # Test serialization - model_dump returns datetime object (not auto-converted to float)
+    # Test serialization - model_dump returns datetime object
+    # (not auto-converted to float)
     data = metric.model_dump()
     assert data["gpu_index"] == 0
     assert data["memory_used_mb"] == 8192
@@ -92,7 +93,8 @@ def test_cpu_metric():
     assert metric.temperature_c == 61
     assert metric.memory_used_gb == 9.6
 
-    # Test serialization - model_dump returns datetime object (not auto-converted to float)
+    # Test serialization - model_dump returns datetime object
+    # (not auto-converted to float)
     data = metric.model_dump()
     assert data["cpu_percent"] == 45
     assert data["memory_percent"] == 60

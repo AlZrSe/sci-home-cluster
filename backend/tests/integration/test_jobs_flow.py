@@ -1,8 +1,10 @@
 """
-Integration tests for full job lifecycle: create → list → get → metrics → logs → retry/cancel.
+Integration tests for full job lifecycle:
+create → list → get → metrics → logs → retry/cancel.
 """
 
 import pytest
+from typing import AsyncGenerator
 from httpx import AsyncClient, ASGITransport
 from backend.main import app
 from backend.tests.factories import JobSpecFactory, create_job_spec
@@ -14,7 +16,7 @@ class TestJobLifecycle:
     """Integration tests for complete job lifecycle."""
 
     @pytest.fixture
-    async def async_client(self) -> AsyncClient:
+    async def async_client(self) -> AsyncGenerator[AsyncClient, None]:
         """Create an async client for testing."""
         async with AsyncClient(
             transport=ASGITransport(app=app), base_url="http://testserver"
@@ -355,7 +357,9 @@ class TestJobLifecycle:
 
     @pytest.mark.asyncio
     async def test_full_job_lifecycle(self, async_client, job_spec_dict):
-        """Test complete job lifecycle: create → list → get → metrics → logs → cancel."""
+        """Test complete job lifecycle:
+        create → list → get → metrics → logs → cancel.
+        """
         # 1. Create job
         create_response = await async_client.post("/api/v1/jobs/", json=job_spec_dict)
         assert create_response.status_code == 201
@@ -408,7 +412,7 @@ class TestJobAuthentication:
     """Tests for authentication on job endpoints."""
 
     @pytest.fixture
-    async def unauthenticated_client(self) -> AsyncClient:
+    async def unauthenticated_client(self) -> AsyncGenerator[AsyncClient, None]:
         """Create an async client without auth."""
         async with AsyncClient(
             transport=ASGITransport(app=app), base_url="http://testserver"
@@ -440,7 +444,7 @@ class TestJobValidation:
     """Tests for job validation edge cases."""
 
     @pytest.fixture
-    async def async_client(self) -> AsyncClient:
+    async def async_client(self) -> AsyncGenerator[AsyncClient, None]:
         async with AsyncClient(
             transport=ASGITransport(app=app), base_url="http://testserver"
         ) as client:

@@ -3,6 +3,7 @@ Unit tests for the database store.
 Uses factory-boy for test data generation.
 """
 
+import asyncio
 import pytest
 from backend.store import DatabaseStore
 from shared.schemas.job_status import JobStatus
@@ -699,8 +700,8 @@ class TestStoreReset:
     @pytest.mark.asyncio
     async def test_reset_job_counter(self, store, sample_job_spec):
         """Test that job counter is reset to seed value."""
-        job = await store.create_job(sample_job_spec)
-        counter_after_create = store._job_counter
+        _ = await store.create_job(sample_job_spec)
+        _ = store._job_counter
 
         await store.reset()
 
@@ -955,7 +956,3 @@ class TestEdgeCases:
         result, total = await store.list_jobs(limit=10, offset=1000)
         assert result == []
         assert total >= 11  # At least seed + 1
-
-
-# Import asyncio at module level for tests that need it
-import asyncio

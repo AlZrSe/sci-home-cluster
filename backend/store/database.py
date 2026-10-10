@@ -32,7 +32,7 @@ class JobModel(Base):
 
     job_id = Column(String(50), primary_key=True)
     spec = Column(SQLiteJSON, nullable=False)
-    status = Column(
+    status: Column[JobStatus] = Column(
         SQLEnum(JobStatus),
         nullable=False,
         default=JobStatus.PENDING,
@@ -67,7 +67,7 @@ class NodeModel(Base):
     cpus = Column(Integer, nullable=False)
     memory_gb = Column(Integer, nullable=False)
     os = Column(String(100), nullable=False)
-    status = Column(
+    status: Column[str] = Column(
         SQLEnum("ONLINE", "OFFLINE", name="node_status"),
         nullable=False,
         default="OFFLINE",

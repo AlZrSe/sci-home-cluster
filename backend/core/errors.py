@@ -33,6 +33,7 @@ class APIError(HTTPException):
 
 # --- Auth -------------------------------------------------------------------
 
+
 def auth_token_missing(detail: str) -> APIError:
     return APIError(
         status.HTTP_401_UNAUTHORIZED,
@@ -78,6 +79,7 @@ def shared_token_not_configured(detail: str) -> APIError:
 
 
 # --- Resources --------------------------------------------------------------
+
 
 def job_not_found(job_id: str) -> APIError:
     return APIError(

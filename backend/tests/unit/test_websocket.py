@@ -7,13 +7,13 @@ These tests require a running app with proper lifespan initialization.
 import pytest
 import asyncio
 import io
-from typing import Any
+from typing import Any, AsyncGenerator
 from fastapi import HTTPException, WebSocket
 from httpx import AsyncClient, ASGITransport
 from backend.main import app
 from backend.store import get_store
 from shared.schemas.job_status import JobStatus
-from backend.tests.factories import create_job_spec
+from backend.tests.factories import create_job_spec, job_spec_to_yaml_bytes
 from backend.core.deps import get_ws_token_payload
 from backend.core.security import create_access_token
 from backend.core.config import settings
@@ -28,7 +28,7 @@ class TestWebSocketConnection:
     """Tests for WebSocket connection establishment."""
 
     @pytest.fixture
-    async def async_client(self) -> AsyncClient:
+    async def async_client(self) -> AsyncGenerator[AsyncClient, None]:
         """Create an async client for testing."""
         async with AsyncClient(
             transport=ASGITransport(app=app), base_url="http://testserver"
@@ -63,7 +63,7 @@ class TestWebSocketConnection:
             # WebSocket connection should be rejected
             async with async_client.websocket_connect(
                 "/api/v1/jobs/job-999999/logs/stream"
-            ) as ws:
+            ) as _ws:
                 pass  # Should not reach here
 
     @pytest.mark.asyncio
@@ -91,7 +91,7 @@ class TestWebSocketAuthentication:
     """Tests for WebSocket authentication."""
 
     @pytest.fixture
-    async def unauthenticated_client(self) -> AsyncClient:
+    async def unauthenticated_client(self) -> AsyncGenerator[AsyncClient, None]:
         """Create an async client without auth header."""
         async with AsyncClient(
             transport=ASGITransport(app=app), base_url="http://testserver"
@@ -132,8 +132,8 @@ class TestWebSocketAuthentication:
             ) as client:
                 async with client.websocket_connect(
                     f"/api/v1/jobs/{test_job_id}/logs/stream?token={token}"
-                ) as ws:
-                    assert ws is not None
+                ) as _ws:
+                    assert _ws is not None
 
     @pytest.mark.asyncio
     async def test_websocket_with_auth_header(self, test_job_id):
@@ -146,8 +146,8 @@ class TestWebSocketAuthentication:
                 async with client.websocket_connect(
                     f"/api/v1/jobs/{test_job_id}/logs/stream",
                     headers={"Authorization": f"Bearer {token}"},
-                ) as ws:
-                    assert ws is not None
+                ) as _ws:
+                    assert _ws is not None
 
     @pytest.mark.asyncio
     async def test_websocket_rejects_invalid_token(self, test_job_id):
@@ -159,7 +159,7 @@ class TestWebSocketAuthentication:
                 with pytest.raises(Exception):
                     async with client.websocket_connect(
                         "/api/v1/jobs/job-999999/logs/stream?token=invalid"
-                    ) as ws:
+                    ) as _ws:
                         pass
 
 
@@ -171,7 +171,7 @@ class TestWebSocketMessageStreaming:
     """Tests for WebSocket message streaming and structured messages."""
 
     @pytest.fixture
-    async def async_client(self) -> AsyncClient:
+    async def async_client(self) -> AsyncGenerator[AsyncClient, None]:
         async with AsyncClient(
             transport=ASGITransport(app=app), base_url="http://testserver"
         ) as client:
@@ -201,12 +201,12 @@ class TestWebSocketMessageStreaming:
         """Test WebSocket receives log lines for RUNNING job."""
         async with async_client.websocket_connect(
             f"/api/v1/jobs/{running_job_id}/logs/stream"
-        ) as ws:
+        ) as _ws:
             # Should receive log lines
             messages = []
             try:
                 for _ in range(3):
-                    message = await asyncio.wait_for(ws.receive_text(), timeout=3.0)
+                    message = await asyncio.wait_for(_ws.receive_text(), timeout=3.0)
                     messages.append(message)
             except asyncio.TimeoutError:
                 pass
@@ -221,9 +221,9 @@ class TestWebSocketMessageStreaming:
         """Test log lines have expected format with timestamp."""
         async with async_client.websocket_connect(
             f"/api/v1/jobs/{running_job_id}/logs/stream"
-        ) as ws:
+        ) as _ws:
             try:
-                message = await asyncio.wait_for(ws.receive_text(), timeout=3.0)
+                message = await asyncio.wait_for(_ws.receive_text(), timeout=3.0)
                 # Log format: "YYYY-MM-DD HH:MM:SS LEVEL  message"
                 assert "INFO" in message or "DEBUG" in message or "WARN" in message
                 # Should have timestamp at start
@@ -263,7 +263,7 @@ class TestWebSocketDisconnect:
     """Tests for WebSocket graceful disconnection."""
 
     @pytest.fixture
-    async def async_client(self) -> AsyncClient:
+    async def async_client(self) -> AsyncGenerator[AsyncClient, None]:
         async with AsyncClient(
             transport=ASGITransport(app=app), base_url="http://testserver"
         ) as client:
@@ -358,7 +358,7 @@ class TestWebSocketEdgeCases:
     """Tests for WebSocket edge cases."""
 
     @pytest.fixture
-    async def async_client(self) -> AsyncClient:
+    async def async_client(self) -> AsyncGenerator[AsyncClient, None]:
         async with AsyncClient(
             transport=ASGITransport(app=app), base_url="http://testserver"
         ) as client:
@@ -379,11 +379,11 @@ class TestWebSocketEdgeCases:
         # PENDING job - WebSocket should connect but not stream
         async with async_client.websocket_connect(
             f"/api/v1/jobs/{job_id}/logs/stream"
-        ) as ws:
+        ) as _ws:
             # For PENDING jobs, the stream worker exits immediately
             # Client might receive nothing or connection closes
             try:
-                message = await asyncio.wait_for(ws.receive_text(), timeout=1.0)
+                _ = await asyncio.wait_for(_ws.receive_text(), timeout=1.0)
             except asyncio.TimeoutError:
                 pass  # Expected for PENDING job
 
@@ -403,10 +403,10 @@ class TestWebSocketEdgeCases:
 
         async with async_client.websocket_connect(
             f"/api/v1/jobs/{job_id}/logs/stream"
-        ) as ws:
+        ) as _ws:
             # For COMPLETED jobs, the stream worker exits immediately
             try:
-                message = await asyncio.wait_for(ws.receive_text(), timeout=1.0)
+                _ = await asyncio.wait_for(_ws.receive_text(), timeout=1.0)
             except asyncio.TimeoutError:
                 pass  # Expected
 

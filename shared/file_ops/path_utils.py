@@ -24,7 +24,8 @@ def normalize_path(path: Union[str, Path]) -> Path:
     if path_obj == Path("~"):
         path_obj = Path.home()
     elif str(path_obj).startswith("~/"):
-        path_obj = Path.home() / path_obj[2:]
+        path_str = str(path_obj)
+        path_obj = Path.home() / path_str[2:]
 
     # Make absolute if it's not already
     if not path_obj.is_absolute():

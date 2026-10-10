@@ -2,6 +2,8 @@
 Utility functions for the backend.
 """
 
+from typing import Optional
+
 # Hosts that get the localhost bypass, and the suffixes whose subdomains do.
 #
 # Entries are CANONICAL: lowercase, and IPv6 WITHOUT surrounding brackets.
@@ -67,7 +69,7 @@ def get_settings():
     return settings
 
 
-def is_localhost(hostname: str) -> bool:
+def is_localhost(hostname: Optional[str]) -> bool:
     """
     Check if a hostname is localhost or a local development domain.
 

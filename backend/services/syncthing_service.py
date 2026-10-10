@@ -8,9 +8,9 @@ import concurrent.futures
 import logging
 import time
 from pathlib import Path
-from typing import Dict, Optional, Set
+from typing import Dict, Optional, Set, Any
 from datetime import datetime
-from watchdog.observers import Observer
+from watchdog.observers import Observer as ObserverType
 from watchdog.events import FileSystemEventHandler
 
 from shared.schemas.job_state import JobState
@@ -146,7 +146,7 @@ class SyncthingService:
 
     def __init__(self, root_path: Path):
         self.root_path = Path(root_path)
-        self.observer: Optional[Observer] = None
+        self.observer: Optional[Any] = None  # ObserverType has no stubs
         self.event_handler: Optional[SyncthingEventHandler] = None
         self._running = False
         self._scan_task: Optional[asyncio.Task] = None
@@ -173,7 +173,7 @@ class SyncthingService:
         self.event_handler = SyncthingEventHandler(self)
         # Set the event loop for cross-thread async operations
         self.event_handler.set_loop(asyncio.get_running_loop())
-        self.observer = Observer()
+        self.observer = ObserverType()
         self.observer.schedule(self.event_handler, str(jobs_dir), recursive=True)
         self.observer.schedule(self.event_handler, str(nodes_dir), recursive=True)
         self.observer.start()
@@ -250,7 +250,7 @@ class SyncthingService:
 
             # Read and parse YAML. read_yaml raises on any parse or
             # validation failure, so there is no None case to check.
-            job_state = read_yaml(Path(file_path), JobState)
+            job_state = read_yaml(str(Path(file_path)), JobState)
 
             # Update store
             store = get_store()
@@ -281,7 +281,7 @@ class SyncthingService:
         """Process a node state YAML file."""
         try:
             # Read and parse YAML. read_yaml raises on failure.
-            node_spec = read_yaml(Path(file_path), NodeSpec)
+            node_spec = read_yaml(str(Path(file_path)), NodeSpec)
 
             # Update store
             store = get_store()
@@ -357,12 +357,20 @@ class SyncthingService:
         """Manually trigger a full scan of the Syncthing folder."""
         logger.info("Manual scan triggered")
 
+        current_files = self._scan_folder_structure()
+        await self._process_deleted_files(current_files)
+        new_count = await self._process_new_files(current_files)
+        self._processed_files = current_files
+
+        return {"scanned": new_count, "total_processed": len(self._processed_files)}
+
+    def _scan_folder_structure(self) -> Set[str]:
+        """Scan jobs and nodes directories for current YAML files."""
+        current_job_files: Set[str] = set()
+        current_node_files: Set[str] = set()
+
         jobs_dir = self.root_path / "jobs"
         nodes_dir = self.root_path / "nodes"
-
-        # Get current files
-        current_job_files = set()
-        current_node_files = set()
 
         if jobs_dir.exists():
             for job_dir in jobs_dir.iterdir():
@@ -376,9 +384,10 @@ class SyncthingService:
                 if node_file.is_file():
                     current_node_files.add(str(node_file))
 
-        current_files = current_job_files | current_node_files
+        return current_job_files | current_node_files
 
-        # Detect deleted files
+    async def _process_deleted_files(self, current_files: Set[str]) -> None:
+        """Detect and handle deleted files."""
         deleted_files = self._processed_files - current_files
         for file_path in deleted_files:
             try:
@@ -397,15 +406,11 @@ class SyncthingService:
             except Exception as e:
                 logger.error(f"Error handling deleted file {file_path}: {e}")
 
-        # Process new/updated files
+    async def _process_new_files(self, current_files: Set[str]) -> int:
+        """Process new/updated files and return count of new files."""
         initial_count = len(self._processed_files)
         await self._initial_scan()
-        new_count = len(self._processed_files) - initial_count
-
-        # Update processed files to match current state
-        self._processed_files = current_files
-
-        return {"scanned": new_count, "total_processed": len(self._processed_files)}
+        return len(self._processed_files) - initial_count
 
     def get_status(self) -> Dict:
         """Get current service status."""

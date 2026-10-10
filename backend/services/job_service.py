@@ -10,12 +10,13 @@ from shared.schemas.job_spec import JobSpec
 from shared.schemas.job_status import JobStatus
 from shared.schemas.job_metrics import JobMetrics
 from backend.store import get_store
+from backend.store.database_store import DatabaseStore
 
 
 class JobService:
     def __init__(self):
         # Initialize the store
-        self._store = get_store()
+        self._store: DatabaseStore = get_store()
 
     async def list_jobs(
         self,
@@ -52,13 +53,13 @@ class JobService:
 
     async def retry_job(self, job_id: str) -> Optional[JobState]:
         """Retry a failed/cancelled job."""
-        job = await self._store.get_job(job_id)
+        job: Optional[JobState] = await self._store.get_job(job_id)
         if not job:
             return None
         if job.status not in (JobStatus.FAILED, JobStatus.CANCELLED):
             return None
         # Reset the job to PENDING
-        updated_job = await self._store.update_job(
+        updated_job: Optional[JobState] = await self._store.update_job(
             job_id,
             status=JobStatus.PENDING,
             node_id=None,  # When retried, it's not assigned to a node yet
@@ -72,14 +73,14 @@ class JobService:
 
     async def cancel_job(self, job_id: str) -> Optional[JobState]:
         """Cancel a running/pending job."""
-        job = await self._store.get_job(job_id)
+        job: Optional[JobState] = await self._store.get_job(job_id)
         if not job:
             return None
         if job.status not in (JobStatus.RUNNING, JobStatus.PENDING):
             return None
         # Cancel the job
         now = datetime.now()
-        updated_job = await self._store.update_job(
+        updated_job: Optional[JobState] = await self._store.update_job(
             job_id,
             status=JobStatus.CANCELLED,
             completed_at=now,
@@ -103,10 +104,9 @@ class JobService:
 
     def log_stream_available(self) -> bool:
         """Whether the store can produce any streamed log lines."""
-        available: bool = self._store.log_stream_available()
-        return available
+        return self._store.log_stream_available()
 
-    async def stop_log_stream(self, job_id: str):
+    async def stop_log_stream(self, job_id: str) -> None:
         """Stop the log stream for a job."""
         await self._store.stop_log_stream(job_id)
 

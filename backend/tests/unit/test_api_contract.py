@@ -61,13 +61,17 @@ class TestJobSpecContract:
         with pytest.raises(ValidationError):
             JobSpec(name="ab", command="python x.py", resources=self._resources())
         with pytest.raises(ValidationError):
-            JobSpec(name="has space", command="python x.py", resources=self._resources())
+            JobSpec(
+                name="has space", command="python x.py", resources=self._resources()
+            )
         with pytest.raises(ValidationError):
             JobSpec(name="bad!char", command="python x.py", resources=self._resources())
 
     def test_name_pattern_allows_the_documented_characters(self):
         for name in ("abc", "a-b_c", "Job123", "a_b-C9"):
-            spec = JobSpec(name=name, command="python x.py", resources=self._resources())
+            spec = JobSpec(
+                name=name, command="python x.py", resources=self._resources()
+            )
             assert spec.name == name
 
     def test_command_minimum_length(self):

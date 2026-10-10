@@ -3,6 +3,7 @@ Integration tests for authentication flow: token validation, creation, refresh.
 """
 
 import pytest
+from typing import AsyncGenerator
 from httpx import AsyncClient, ASGITransport
 from backend.main import app
 from backend.core.security import create_access_token
@@ -16,10 +17,11 @@ class TestAuthFlow:
     """Integration tests for authentication endpoints."""
 
     @pytest.fixture
-    async def async_client(self) -> AsyncClient:
+    async def async_client(self) -> AsyncGenerator[AsyncClient, None]:
         """Create an async client for testing."""
         async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://testserver"
+            transport=ASGITransport(app=app),
+            base_url="http://testserver",  # type: ignore[arg-type]
         ) as client:
             yield client
 
@@ -277,7 +279,8 @@ class TestAuthFlow:
             "/api/v1/auth/refresh",
             "/api/v1/jobs/",
             "/api/v1/nodes/",
-            # Syncthing endpoints skipped (require app.state.syncthing_service from lifespan)
+            # Syncthing endpoints skipped
+            # (require app.state.syncthing_service from lifespan)
         ]
 
         for endpoint in endpoints:
@@ -303,7 +306,7 @@ class TestAuthEdgeCases:
     """Tests for authentication edge cases and error handling."""
 
     @pytest.fixture
-    async def async_client(self) -> AsyncClient:
+    async def async_client(self) -> AsyncGenerator[AsyncClient, None]:
         async with AsyncClient(
             transport=ASGITransport(app=app), base_url="http://testserver"
         ) as client:
@@ -397,7 +400,7 @@ class TestAuthVerifyGet:
     """Integration tests for GET /auth/verify endpoint (Bearer header)."""
 
     @pytest.fixture
-    async def async_client(self) -> AsyncClient:
+    async def async_client(self) -> AsyncGenerator[AsyncClient, None]:
         """Create an async client for testing."""
         async with AsyncClient(
             transport=ASGITransport(app=app), base_url="http://testserver"

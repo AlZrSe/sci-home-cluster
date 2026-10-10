@@ -7,7 +7,7 @@ import os
 import yaml
 import tempfile
 import logging
-from typing import Type, TypeVar
+from typing import Type, TypeVar, Callable
 from pydantic import BaseModel as PydanticBaseModel
 
 logger = logging.getLogger(__name__)
@@ -109,7 +109,7 @@ def write_yaml(file_path: str, data: PydanticBaseModel) -> None:
         raise
 
 
-def update_yaml(file_path: str, model_class: Type[T], update_func) -> T:
+def update_yaml(file_path: str, model_class: Type[T], update_func: Callable[[T], T]) -> T:
     """
     Read a YAML file, update its contents, and write it back atomically.
 
@@ -127,6 +127,8 @@ def update_yaml(file_path: str, model_class: Type[T], update_func) -> T:
         ValidationError: If data doesn't match model schema
         IOError: If file cannot be written
     """
+    from typing import Callable
+
     # Read existing data
     current_data = read_yaml(file_path, model_class)
 

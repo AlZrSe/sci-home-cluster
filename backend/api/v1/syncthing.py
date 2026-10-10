@@ -13,9 +13,9 @@ from backend.services.syncthing_service import SyncthingService
 router = APIRouter()
 
 
-def get_syncthing_service(request: Request) -> "SyncthingService":
+def get_syncthing_service(request: Request) -> SyncthingService:
     """Get the Syncthing service instance from app state."""
-    return request.app.state.syncthing_service
+    return request.app.state.syncthing_service  # type: ignore[no-any-return]
 
 
 @router.get("/status")

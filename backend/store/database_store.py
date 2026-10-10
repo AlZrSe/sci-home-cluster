@@ -193,7 +193,7 @@ class DatabaseStore:
         await session.flush()
 
         # 2. Create NodeModel objects with VALID current_job_id references
-        nodes_data = [
+        nodes_data: List[Dict[str, object]] = [
             {
                 "node_id": "node-alpha",
                 "hostname": "alpha.lan",
@@ -242,10 +242,10 @@ class DatabaseStore:
         ]
 
         for node_dict in nodes_data:
-            gpus = [GPUInfo(**gpu_dict) for gpu_dict in node_dict["gpus"]]
+            gpus = [GPUInfo(**gpu_dict) for gpu_dict in node_dict["gpus"]]  # type: ignore[attr-defined]
             node_dict["gpus"] = [gpu.model_dump() for gpu in gpus]
             node_dict["last_heartbeat"] = datetime.fromisoformat(
-                node_dict["last_heartbeat"].replace(" ", "T")
+                node_dict["last_heartbeat"].replace(" ", "T")  # type: ignore[attr-defined]
             )
             node = NodeModel(**node_dict)
             session.add(node)
@@ -256,7 +256,7 @@ class DatabaseStore:
         # 3. Update jobs with node_id references for RUNNING jobs
         for job in job_models:
             if job.job_id in job_node_assignments:
-                job.node_id = job_node_assignments[job.job_id]
+                job.node_id = job_node_assignments[str(job.job_id)]  # type: ignore[assignment]
 
         # 4. Commit once
         await session.commit()
@@ -305,7 +305,7 @@ class DatabaseStore:
         """Convert a JobModel to a JobState."""
         return JobState(
             job_id=job_model.job_id,
-            spec=JobSpec(**job_model.spec),
+            spec=JobSpec(**job_model.spec),  # type: ignore[arg-type]
             status=job_model.status,
             node_id=job_model.node_id,
             created_at=job_model.created_at,
@@ -321,7 +321,7 @@ class DatabaseStore:
         return NodeSpec(
             node_id=node_model.node_id,
             hostname=node_model.hostname,
-            gpus=[GPUInfo(**gpu) for gpu in node_model.gpus],
+            gpus=[GPUInfo(**gpu) for gpu in node_model.gpus],  # type: ignore[attr-defined]
             cpus=node_model.cpus,
             memory_gb=node_model.memory_gb,
             os=node_model.os,
@@ -425,7 +425,7 @@ class DatabaseStore:
             total_result = await session.execute(
                 select(func.count()).select_from(query.subquery())
             )
-            total = total_result.scalar()
+            total = total_result.scalar() or 0
 
             query = (
                 query.order_by(JobModel.created_at.desc()).limit(limit).offset(offset)
@@ -436,7 +436,7 @@ class DatabaseStore:
             jobs = [self._model_to_job_state(job) for job in job_models]
             return jobs, total
 
-    async def update_job(self, job_id: str, **kwargs) -> Optional[JobState]:
+    async def update_job(self, job_id: str, **kwargs: object) -> Optional[JobState]:
         """Update a job's fields and return the updated job."""
         await self._ensure_seeded()
         async with get_session() as session:
@@ -506,7 +506,7 @@ class DatabaseStore:
                 return self._model_to_node_spec(node_model)
             return None
 
-    async def update_node(self, node_id: str, **kwargs) -> Optional[NodeSpec]:
+    async def update_node(self, node_id: str, **kwargs: object) -> Optional[NodeSpec]:
         """Update a node's fields and return the updated node."""
         await self._ensure_seeded()
         async with get_session() as session:
@@ -645,22 +645,22 @@ class DatabaseStore:
             if gpu_models or cpu_models:
                 gpu_metrics = [
                     GPUMetric(
-                        timestamp=m.timestamp,
-                        gpu_index=m.gpu_index,
-                        memory_used_mb=m.memory_used_mb,
-                        memory_total_mb=m.memory_total_mb,
-                        utilization_percent=m.utilization_percent,
-                        temperature_c=m.temperature_c,
+                        timestamp=m.timestamp,  # type: ignore[attr-defined]
+                        gpu_index=m.gpu_index,  # type: ignore[attr-defined]
+                        memory_used_mb=m.memory_used_mb,  # type: ignore[attr-defined]
+                        memory_total_mb=m.memory_total_mb,  # type: ignore[attr-defined]
+                        utilization_percent=m.utilization_percent,  # type: ignore[attr-defined]
+                        temperature_c=m.temperature_c,  # type: ignore[attr-defined]
                     )
                     for m in gpu_models
                 ]
                 cpu_metrics = [
                     CPUMetric(
-                        timestamp=m.timestamp,
-                        cpu_percent=m.cpu_percent,
-                        memory_percent=m.memory_percent,
-                        temperature_c=m.temperature_c,
-                        memory_used_gb=m.memory_used_gb,
+                        timestamp=m.timestamp,  # type: ignore[attr-defined]
+                        cpu_percent=m.cpu_percent,  # type: ignore[attr-defined]
+                        memory_percent=m.memory_percent,  # type: ignore[attr-defined]
+                        temperature_c=m.temperature_c,  # type: ignore[attr-defined]
+                        memory_used_gb=m.memory_used_gb,  # type: ignore[attr-defined]
                     )
                     for m in cpu_models
                 ]
@@ -690,7 +690,7 @@ class DatabaseStore:
         """Store job metrics in the database."""
         async with get_session() as session:
             for gpu_metric in metrics.gpu_metrics:
-                model = GPUMetricModel(
+                gpu_model = GPUMetricModel(
                     job_id=job_id,
                     timestamp=gpu_metric.timestamp,
                     gpu_index=gpu_metric.gpu_index,
@@ -699,9 +699,9 @@ class DatabaseStore:
                     utilization_percent=gpu_metric.utilization_percent,
                     temperature_c=gpu_metric.temperature_c,
                 )
-                session.add(model)
+                session.add(gpu_model)
             for cpu_metric in metrics.cpu_metrics:
-                model = CPUMetricModel(
+                cpu_model = CPUMetricModel(
                     job_id=job_id,
                     timestamp=cpu_metric.timestamp,
                     cpu_percent=cpu_metric.cpu_percent,
@@ -709,7 +709,7 @@ class DatabaseStore:
                     temperature_c=cpu_metric.temperature_c,
                     memory_used_gb=cpu_metric.memory_used_gb,
                 )
-                session.add(model)
+                session.add(cpu_model)
             await session.commit()
 
     async def get_node_metrics(self, node_id: str) -> Optional[JobMetrics]:
@@ -747,22 +747,22 @@ class DatabaseStore:
             if gpu_models or cpu_models:
                 gpu_metrics = [
                     GPUMetric(
-                        timestamp=m.timestamp,
-                        gpu_index=m.gpu_index,
-                        memory_used_mb=m.memory_used_mb,
-                        memory_total_mb=m.memory_total_mb,
-                        utilization_percent=m.utilization_percent,
-                        temperature_c=m.temperature_c,
+                        timestamp=m.timestamp,  # type: ignore[attr-defined]
+                        gpu_index=m.gpu_index,  # type: ignore[attr-defined]
+                        memory_used_mb=m.memory_used_mb,  # type: ignore[attr-defined]
+                        memory_total_mb=m.memory_total_mb,  # type: ignore[attr-defined]
+                        utilization_percent=m.utilization_percent,  # type: ignore[attr-defined]
+                        temperature_c=m.temperature_c,  # type: ignore[attr-defined]
                     )
                     for m in gpu_models
                 ]
                 cpu_metrics = [
                     CPUMetric(
-                        timestamp=m.timestamp,
-                        cpu_percent=m.cpu_percent,
-                        memory_percent=m.memory_percent,
-                        temperature_c=m.temperature_c,
-                        memory_used_gb=m.memory_used_gb,
+                        timestamp=m.timestamp,  # type: ignore[attr-defined]
+                        cpu_percent=m.cpu_percent,  # type: ignore[attr-defined]
+                        memory_percent=m.memory_percent,  # type: ignore[attr-defined]
+                        temperature_c=m.temperature_c,  # type: ignore[attr-defined]
+                        memory_used_gb=m.memory_used_gb,  # type: ignore[attr-defined]
                     )
                     for m in cpu_models
                 ]
@@ -789,7 +789,7 @@ class DatabaseStore:
         """Store node metrics in the database."""
         async with get_session() as session:
             for gpu_metric in metrics.gpu_metrics:
-                model = GPUMetricModel(
+                gpu_model = GPUMetricModel(
                     job_id=f"node:{node_id}",
                     timestamp=gpu_metric.timestamp,
                     gpu_index=gpu_metric.gpu_index,
@@ -798,9 +798,9 @@ class DatabaseStore:
                     utilization_percent=gpu_metric.utilization_percent,
                     temperature_c=gpu_metric.temperature_c,
                 )
-                session.add(model)
+                session.add(gpu_model)
             for cpu_metric in metrics.cpu_metrics:
-                model = CPUMetricModel(
+                cpu_model = CPUMetricModel(
                     job_id=f"node:{node_id}",
                     timestamp=cpu_metric.timestamp,
                     cpu_percent=cpu_metric.cpu_percent,
@@ -808,7 +808,7 @@ class DatabaseStore:
                     temperature_c=cpu_metric.temperature_c,
                     memory_used_gb=cpu_metric.memory_used_gb,
                 )
-                session.add(model)
+                session.add(cpu_model)
             await session.commit()
 
     def _empty_metrics(self, job_id: str) -> JobMetrics:
@@ -859,7 +859,7 @@ class DatabaseStore:
             utils = [0]
 
         def _avg(values: list) -> int:
-            return round(sum(values) / len(values)) if values else 0
+            return int(round(sum(values) / len(values))) if values else 0
 
         return JobMetricsSummary(
             gpu_memory_min_mb=min(mems) if gpu_metrics else 0,
@@ -899,9 +899,9 @@ class DatabaseStore:
 
         for i in range(120, -1, -1):
             if has_gpus:
-                util = min(99, max(6, util + (rnd.random() - 0.5) * 18))
-                mem = min(total, max(1200, mem + (rnd.random() - 0.45) * 900))
-            cpu = min(100, max(4, cpu + (rnd.random() - 0.5) * 14))
+                util = int(min(99, max(6, util + (rnd.random() - 0.5) * 18)))
+                mem = int(min(total, max(1200, mem + (rnd.random() - 0.45) * 900)))
+            cpu = int(min(100, max(4, cpu + (rnd.random() - 0.5) * 14)))
 
             ms_ago = i * 30_000
             timestamp = datetime.fromtimestamp(
@@ -967,9 +967,9 @@ class DatabaseStore:
         cpu_metrics: List[CPUMetric] = []
 
         for i in range(120, -1, -1):
-            util = min(99, max(6, util + (rnd.random() - 0.5) * 18))
-            mem = min(total, max(1200, mem + (rnd.random() - 0.45) * 900))
-            cpu = min(100, max(4, cpu + (rnd.random() - 0.5) * 14))
+            util = int(min(99, max(6, util + (rnd.random() - 0.5) * 18)))
+            mem = int(min(total, max(1200, mem + (rnd.random() - 0.45) * 900)))
+            cpu = int(min(100, max(4, cpu + (rnd.random() - 0.5) * 14)))
             ms_ago = i * 30_000
             timestamp = datetime.fromtimestamp(
                 datetime.now().timestamp() - (ms_ago / 1000.0)
@@ -1037,7 +1037,7 @@ class DatabaseStore:
             log_models = result.scalars().all()
 
             if log_models:
-                return [log.line for log in log_models]
+                return [log.line for log in log_models]  # type: ignore[attr-defined]
 
         # The job exists, but nothing has been logged for it yet. See the
         # matching gate in get_job_metrics (issue #35).

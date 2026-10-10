@@ -3,6 +3,7 @@ Integration tests for Syncthing: scan, status, YAML sync.
 """
 
 import pytest
+from typing import AsyncGenerator
 import tempfile
 import yaml
 from pathlib import Path
@@ -39,7 +40,7 @@ class TestSyncthingFlow:
         await service.stop()
 
     @pytest.fixture
-    async def async_client(self) -> AsyncClient:
+    async def async_client(self) -> AsyncGenerator[AsyncClient, None]:
         """Create an async client for API testing."""
         async with AsyncClient(
             transport=ASGITransport(app=app), base_url="http://testserver"
@@ -337,12 +338,16 @@ class TestSyncthingFlow:
         assert job.node_id == "node-alpha"
 
     # ============================================================================
-    # Syncthing API Tests - SKIPPED due to missing app.state.syncthing_service in test environment
+    # Syncthing API Tests - SKIPPED
     # ============================================================================
-    # These tests require the FastAPI lifespan to have run, which doesn't happen in test environment
+    # These tests require the FastAPI lifespan to have run,
+    # which doesn't happen in test environment
 
     @pytest.mark.skip(
-        reason="Requires app.state.syncthing_service which is set by lifespan (not run in integration tests)"
+        reason=(
+            "Requires app.state.syncthing_service which is set by "
+            "lifespan (not run in integration tests)"
+        )
     )
     @pytest.mark.asyncio
     async def test_syncthing_status_endpoint(self, async_client):
@@ -365,7 +370,10 @@ class TestSyncthingFlow:
         assert "state_files" in data["nodes_folder"]
 
     @pytest.mark.skip(
-        reason="Requires app.state.syncthing_service which is set by lifespan (not run in integration tests)"
+        reason=(
+            "Requires app.state.syncthing_service which is set by "
+            "lifespan (not run in integration tests)"
+        )
     )
     @pytest.mark.asyncio
     async def test_syncthing_scan_endpoint(self, async_client):
@@ -380,7 +388,10 @@ class TestSyncthingFlow:
         assert data["message"] == "Scan completed"
 
     @pytest.mark.skip(
-        reason="Requires app.state.syncthing_service which is set by lifespan (not run in integration tests)"
+        reason=(
+            "Requires app.state.syncthing_service which is set by "
+            "lifespan (not run in integration tests)"
+        )
     )
     @pytest.mark.asyncio
     async def test_syncthing_scan_picks_up_new_files(
@@ -426,7 +437,10 @@ class TestSyncthingFlow:
         assert job.spec.name == "api-scan-test-job"
 
     @pytest.mark.skip(
-        reason="Requires app.state.syncthing_service which is set by lifespan (not run in integration tests)"
+        reason=(
+            "Requires app.state.syncthing_service which is set by "
+            "lifespan (not run in integration tests)"
+        )
     )
     @pytest.mark.asyncio
     async def test_syncthing_status_shows_file_counts(
@@ -492,7 +506,9 @@ class TestSyncthingFlow:
 
     @pytest.mark.asyncio
     async def test_full_yaml_sync_flow(self, syncthing_service, temp_syncthing_root):
-        """Test complete YAML sync: create -> scan -> update -> scan -> delete -> scan."""
+        """Test complete YAML sync:
+        create -> scan -> update -> scan -> delete -> scan.
+        """
         store = get_store()
 
         # 1. Create job YAML and scan
@@ -618,17 +634,22 @@ class TestSyncthingFlow:
 
 @pytest.mark.integration
 class TestSyncthingAuthentication:
-    """Tests for authentication on Syncthing endpoints - SKIPPED due to missing app.state.syncthing_service in test environment."""
+    """Tests for authentication on Syncthing endpoints - SKIPPED.
+    Reason: missing app.state.syncthing_service in test environment.
+    """
 
     @pytest.fixture
-    async def unauthenticated_client(self) -> AsyncClient:
+    async def unauthenticated_client(self) -> AsyncGenerator[AsyncClient, None]:
         async with AsyncClient(
             transport=ASGITransport(app=app), base_url="http://test"
         ) as client:
             yield client
 
     @pytest.mark.skip(
-        reason="Requires app.state.syncthing_service which is set by lifespan (not run in integration tests)"
+        reason=(
+            "Requires app.state.syncthing_service which is set by "
+            "lifespan (not run in integration tests)"
+        )
     )
     @pytest.mark.asyncio
     async def test_syncthing_status_localhost_bypass(self, unauthenticated_client):
@@ -637,7 +658,10 @@ class TestSyncthingAuthentication:
         assert response.status_code == 200
 
     @pytest.mark.skip(
-        reason="Requires app.state.syncthing_service which is set by lifespan (not run in integration tests)"
+        reason=(
+            "Requires app.state.syncthing_service which is set by "
+            "lifespan (not run in integration tests)"
+        )
     )
     @pytest.mark.asyncio
     async def test_syncthing_scan_localhost_bypass(self, unauthenticated_client):

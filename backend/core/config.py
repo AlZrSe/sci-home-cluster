@@ -121,7 +121,10 @@ def get_version_from_pyproject() -> str:
         pyproject_path = _REPO_ROOT / "pyproject.toml"
         with open(pyproject_path, "rb") as f:
             data = tomllib.load(f)
-        return data.get("project", {}).get("version", "0.1.0")
+        version = data.get("project", {}).get("version")
+        if isinstance(version, str):
+            return version
+        return "0.1.0"
     except Exception:
         return "0.1.0"
 
@@ -315,7 +318,7 @@ class Settings(BaseSettings):
     @classmethod
     def assemble_cors_origins(
         cls, v: Union[str, List[Union[str, AnyHttpUrl]]]
-    ) -> Union[List[str], str]:
+    ) -> Union[str, List[Union[str, AnyHttpUrl]]]:
         if isinstance(v, str) and not v.startswith("["):
             return [i.strip() for i in v.split(",")]
         elif isinstance(v, (list, str)):

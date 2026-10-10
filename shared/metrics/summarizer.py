@@ -57,34 +57,26 @@ class GPUMetricsSummarizer:
         Returns:
             Dictionary with min/max/avg for memory, utilization, and temperature
         """
+        mem_min = self.memory_used.min()
+        mem_max = self.memory_used.max()
+        mem_avg = self.memory_used.avg()
+        util_min = self.utilization.min()
+        util_max = self.utilization.max()
+        util_avg = self.utilization.avg()
+        temp_min = self.temperature.min()
+        temp_max = self.temperature.max()
+        temp_avg = self.temperature.avg()
+
         return {
-            "gpu_memory_min_mb": int(self.memory_used.min())
-            if self.memory_used.min() is not None
-            else 0,
-            "gpu_memory_max_mb": int(self.memory_used.max())
-            if self.memory_used.max() is not None
-            else 0,
-            "gpu_memory_avg_mb": int(self.memory_used.avg())
-            if self.memory_used.avg() is not None
-            else 0,
-            "gpu_util_min": int(self.utilization.min())
-            if self.utilization.min() is not None
-            else 0,
-            "gpu_util_max": int(self.utilization.max())
-            if self.utilization.max() is not None
-            else 0,
-            "gpu_util_avg": int(self.utilization.avg())
-            if self.utilization.avg() is not None
-            else 0,
-            "temperature_min_c": int(self.temperature.min())
-            if self.temperature.min() is not None
-            else 0,
-            "temperature_max_c": int(self.temperature.max())
-            if self.temperature.max() is not None
-            else 0,
-            "temperature_avg_c": int(self.temperature.avg())
-            if self.temperature.avg() is not None
-            else 0,
+            "gpu_memory_min_mb": int(mem_min) if mem_min is not None else 0,
+            "gpu_memory_max_mb": int(mem_max) if mem_max is not None else 0,
+            "gpu_memory_avg_mb": int(mem_avg) if mem_avg is not None else 0,
+            "gpu_util_min": int(util_min) if util_min is not None else 0,
+            "gpu_util_max": int(util_max) if util_max is not None else 0,
+            "gpu_util_avg": int(util_avg) if util_avg is not None else 0,
+            "temperature_min_c": int(temp_min) if temp_min is not None else 0,
+            "temperature_max_c": int(temp_max) if temp_max is not None else 0,
+            "temperature_avg_c": int(temp_avg) if temp_avg is not None else 0,
         }
 
     def clear(self) -> None:
