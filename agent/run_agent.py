@@ -1,25 +1,56 @@
 #!/usr/bin/env python3
 """
-Worker Agent for Scientific Home Cluster
+Worker agent entry point.
+
+A shim, on purpose: parse, build settings, configure logging once, run. It owns
+no handler of its own. The previous version installed a plain ``StreamHandler``
+*before* configuring logging, which turned the later configuration into a
+no-op and left the ``[node=...]`` field of every shipped log line empty
+(issue #93 D2). There is exactly one logging entry point in this package, and
+it is :func:`agent.logging_config.configure_logging`.
 """
 
-import argparse
+from __future__ import annotations
+
+import asyncio
+import logging
 import sys
+from typing import Sequence
+
+from agent.config import (
+    EXIT_CONFIG_ERROR,
+    EXIT_INTERNAL_ERROR,
+    EXIT_OK,
+    ConfigError,
+    build_settings,
+)
+from agent.logging_config import configure_logging
+from agent.loop import Agent
+
+logger = logging.getLogger(__name__)
 
 
-def main():
-    parser = argparse.ArgumentParser(description="Scientific Home Cluster Worker Agent")
-    parser.add_argument(
-        "--node-id", required=True, help="Unique identifier for this node"
-    )
-    parser.add_argument(
-        "--syncthing-root", required=True, help="Path to Syncthing shared folder"
-    )
-    args = parser.parse_args()
+def main(argv: Sequence[str] | None = None) -> int:
+    """Return the process exit code. See ``agent.config`` for the table."""
+    args = list(sys.argv[1:] if argv is None else argv)
 
-    print(f"Starting agent for node {args.node_id}")
-    print(f"Syncthing root: {args.syncthing_root}")
-    # TODO: Implement agent logic
+    try:
+        settings = build_settings(args)
+    except ConfigError as exc:
+        # Nothing is configured yet, so there is no logger to say this with.
+        # argparse reports its own errors the same way.
+        sys.stderr.write(f"agent configuration error: {exc}\n")
+        return EXIT_CONFIG_ERROR
+
+    configure_logging(settings.LOG_LEVEL, settings.NODE_ID)
+
+    try:
+        return asyncio.run(Agent(settings).run())
+    except KeyboardInterrupt:
+        return EXIT_OK
+    except Exception:
+        logger.exception("unhandled internal error")
+        return EXIT_INTERNAL_ERROR
 
 
 if __name__ == "__main__":
