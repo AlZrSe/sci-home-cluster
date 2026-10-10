@@ -9,6 +9,7 @@ from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest
+from pydantic_settings import PydanticBaseSettingsSource
 
 from agent.config import (
     CONFIG_FILE_NAME,
@@ -339,11 +340,48 @@ def test_negative_intervals_rejected(syncthing_root: Path) -> None:
 def test_build_settings_does_not_read_process_environment(
     syncthing_root: Path, monkeypatch: Any
 ) -> None:
+    """Guard A: the *consequence* of a leaking source is pinned.
+
+    ``EnvSettingsSource`` looks up **unprefixed field names**, which is what makes
+    this worth asserting rather than only asserting the shape below: a backend
+    ``LOG_LEVEL=DEBUG`` or a stray ``SHUTDOWN_GRACE_S=0`` in the operator's shell
+    must not reach the agent, because it can fill any field the hand-merged dict
+    leaves at its default. The ``AGENT_``-prefixed names are included for the
+    same reason -- they are what ``_env_layer`` reads out of the *injected*
+    mapping, and they must not become a second path in either.
+    """
     monkeypatch.setenv("AGENT_LOG_LEVEL", "CRITICAL")
     monkeypatch.setenv("AGENT_SHUTDOWN_GRACE_S", "999")
+    monkeypatch.setenv("LOG_LEVEL", "DEBUG")
+    monkeypatch.setenv("SHUTDOWN_GRACE_S", "999")
+    monkeypatch.setenv("FOLDER_RETRY_MAX_S", "not-a-float")
     settings = build(base_env(syncthing_root))
     assert settings.LOG_LEVEL == "INFO"
     assert settings.SHUTDOWN_GRACE_S == 30.0
+    assert settings.FOLDER_RETRY_MAX_S == 60.0
+
+
+def test_settings_customise_sources_refuses_every_source_but_init() -> None:
+    """Guard B: R1's guard is the source list, not the absence of a symptom.
+
+    Asserting the *shape* is what makes this deterministic. The consequence in
+    the test above only shows up when the process environment happens to carry
+    the unprefixed field names -- a clean developer shell never trips it, which
+    is why adding ``env_settings`` to this return value can reach production
+    with a fully green suite. One distinct sentinel per argument proves which
+    source survives, and keeps holding if the fields or the ``AGENT_`` prefix
+    convention are ever renamed.
+    """
+    sentinel = object()
+    sources = AgentSettings.settings_customise_sources(
+        AgentSettings,
+        cast(PydanticBaseSettingsSource, sentinel),
+        cast(PydanticBaseSettingsSource, object()),
+        cast(PydanticBaseSettingsSource, object()),
+        cast(PydanticBaseSettingsSource, object()),
+    )
+    assert len(sources) == 1
+    assert sources[0] is sentinel
 
 
 # --- US-8: no credentials -------------------------------------------------

@@ -245,6 +245,13 @@ Every log line carries the node id (`[node=node-01]`), so four nodes writing int
 separable. Exit codes: `0` clean shutdown, `1` configuration error, `2` unexpected internal error,
 `3` watcher liveness lost, `4` shutdown grace expired with tasks still running.
 
+> **Which codes a stock process actually produces.** `1` (bad configuration) and `3` (a dead watcher)
+> are reachable by themselves. `0` needs a `SIGTERM`/`SIGINT` the agent can catch: POSIX delivers
+> one, Windows has no `add_signal_handler`, so there the agent only stops when the OS stops it and
+> the exit code is the killer's rather than the agent's. `2` means a bug nobody planned for, and
+> `4` means a task ignored the stop event — no shipped task does. Both are exercised by injecting
+> the failure, not by running the agent.
+
 ### CLI Usage
 ```bash
 # Submit a job (syncthing-root is required)

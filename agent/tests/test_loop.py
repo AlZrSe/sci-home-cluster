@@ -79,7 +79,7 @@ class DeadWatcher(RecordingWatcher):
         return False
 
 
-def signal_handlers_supported() -> bool:
+def signal_handlers_supported(sig: Any = signal.SIGTERM) -> bool:
     """Whether this loop will accept a signal handler, probed before acting.
 
     The probe has to come first: sending SIGTERM to a process that has *not*
@@ -90,11 +90,28 @@ def signal_handlers_supported() -> bool:
     except RuntimeError:
         return False
     try:
-        loop.add_signal_handler(signal.SIGTERM, lambda: None)
+        loop.add_signal_handler(sig, lambda: None)
     except (NotImplementedError, RuntimeError, ValueError, OSError, AttributeError):
         return False
-    loop.remove_signal_handler(signal.SIGTERM)
+    loop.remove_signal_handler(sig)
     return True
+
+
+def require_signal_delivery(sig: Any) -> None:
+    """Skip unless ``sig`` can really be delivered to this loop.
+
+    ``drive`` falls back to setting the stop event where ``add_signal_handler``
+    is unavailable, which is always on Windows. A signal test that takes that
+    fallback asserts shutdown *ordering* under a name that claims to cover
+    *delivery*, and CI output then overstates what AC-6 is checked for. Skipping
+    puts the gap in the report instead of hiding it; the fallback itself stays
+    covered by the two tests that never send a signal.
+    """
+    if not signal_handlers_supported(sig):
+        pytest.skip(
+            f"add_signal_handler is unavailable on this platform, so {sig.name} "
+            "delivery to a running agent is not covered here"
+        )
 
 
 async def drive(agent: Agent, sig: Any = None, settle: float = 0.15) -> int:
@@ -105,7 +122,7 @@ async def drive(agent: Agent, sig: Any = None, settle: float = 0.15) -> int:
     ), "the agent never registered its tasks"
     await asyncio.sleep(settle)
 
-    if sig is not None and signal_handlers_supported():
+    if sig is not None and signal_handlers_supported(sig):
         os.kill(os.getpid(), sig)
     else:
         stop = agent.supervisor.stop_event if agent.supervisor else None
@@ -128,6 +145,7 @@ async def make_agent(
 
 
 async def test_sigterm_triggers_orderly_shutdown(syncthing_root: Path) -> None:
+    require_signal_delivery(signal.SIGTERM)
     order: list[str] = []
     agent = await make_agent(syncthing_root, order)
     assert await drive(agent, signal.SIGTERM) == EXIT_OK
@@ -135,6 +153,7 @@ async def test_sigterm_triggers_orderly_shutdown(syncthing_root: Path) -> None:
 
 
 async def test_sigint_triggers_orderly_shutdown(syncthing_root: Path) -> None:
+    require_signal_delivery(signal.SIGINT)
     order: list[str] = []
     agent = await make_agent(syncthing_root, order)
     assert await drive(agent, signal.SIGINT) == EXIT_OK
@@ -294,9 +313,20 @@ async def test_folder_retry_is_bounded_and_backs_off(tmp_path: Path) -> None:
         b - a for a, b in zip(agent.probe_times, agent.probe_times[1:], strict=False)
     ]
     assert elapsed >= 1.0, "the retry budget must actually be waited out"
-    assert len(agent.probe_times) >= 2, "it must have retried"
+    # Three probes is the floor the product guarantees, not a timing artefact:
+    # the first sleep is FOLDER_RETRY_INTERVAL_S (1s) inside a 1.2s budget, so a
+    # third probe always follows the retry. It also keeps `gaps[:-1]` from being
+    # empty, which would make the spacing assertion below vacuous.
+    assert len(agent.probe_times) >= 3, "the 1.2s budget must fit a second retry"
     assert len(agent.probe_times) <= 4, "retries are ~1s apart, not a tight loop"
-    assert all(gap > 0.05 for gap in gaps), gaps
+    # The floor applies to the spacing *between* retries only. The final sleep
+    # is `min(FOLDER_RETRY_INTERVAL_S, remaining)` by design, so it is however
+    # much budget is left -- down to a few ms, which is well inside the
+    # platform's timer granularity. Asserting a floor on it fails for the right
+    # behaviour, intermittently (QA: 3 failures in 17 full-suite runs).
+    assert all(gap > 0.05 for gap in gaps[:-1]), gaps
+    assert gaps[-1] >= 0, gaps
+    assert elapsed < 2.0, "the final sleep is bounded by the remaining budget"
 
 
 async def test_no_retry_after_budget_exhausted(tmp_path: Path) -> None:

@@ -170,22 +170,36 @@ def test_log_format_carries_the_node_field() -> None:
     assert "node_id" in LOG_FORMAT
 
 
+def agent_module_sources() -> dict[str, str]:
+    """Every shipped ``agent/*.py``, keyed by file name. Tests are not shipped."""
+    package = Path(__file__).resolve().parents[1]
+    return {
+        path.name: path.read_text(encoding="utf-8")
+        for path in sorted(package.glob("*.py"))
+    }
+
+
 def test_no_unwired_class_is_shipped() -> None:
     """D3: a class whose reason for existing is not true is not carried.
 
     The lost implementation exported ``NodeIdFormatter``: defined, never
-    installed, and therefore a lie about how the format is applied.
+    installed, and therefore a lie about how the format is applied. The check
+    spans the whole package rather than one file, because a definition is
+    unwired whenever *nothing in the package* references it -- scanning only
+    ``logging_config.py`` made the guard blind to the same class appended to
+    ``loop.py``, ``watcher.py``, or anywhere else.
     """
-    source = (Path(__file__).resolve().parents[1] / "logging_config.py").read_text(
-        encoding="utf-8"
-    )
-    tree = ast.parse(source)
-    classes = [node.name for node in tree.body if isinstance(node, ast.ClassDef)]
-    assert classes, "no classes found; the AST check is looking at the wrong file"
-    for name in classes:
-        assert (
-            source.count(name) >= 2
-        ), f"{name} is defined in logging_config and never used there"
+    sources = agent_module_sources()
+    assert sources, "no agent modules found; the guard is looking in the wrong place"
+    package_text = "\n".join(sources.values())
+
+    unwired = [
+        f"{name}:{node.lineno} {node.name}"
+        for name, source in sources.items()
+        for node in ast.walk(ast.parse(source))
+        if isinstance(node, ast.ClassDef) and package_text.count(node.name) < 2
+    ]
+    assert not unwired, f"defined in agent/ and referenced by nothing there: {unwired}"
 
 
 def test_configure_logging_accepts_every_legal_level(
