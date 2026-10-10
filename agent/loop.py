@@ -211,12 +211,6 @@ class Agent:
         logger.info("watching %s and %s", self._paths.jobs_dir, self._paths.nodes_dir)
         return True
 
-    async def _folder_is_ready(self) -> bool:
-        for directory in (self._paths.jobs_dir, self._paths.nodes_dir):
-            if not directory.is_dir() or not os.access(directory, os.W_OK):
-                return False
-        return True
-
     async def _ensure_folder(self) -> bool:
         """Wait, bounded, for the Syncthing folder to be present and writable.
 
@@ -266,14 +260,18 @@ class Agent:
             await asyncio.sleep(min(FOLDER_RETRY_INTERVAL_S, remaining))
 
     def _describe_folder_problem(self) -> str | None:
-        """Create the sub-directories if possible; say why the folder is unusable."""
+        """Create the sub-directories if possible; say why the folder is unusable.
+
+        A path that exists as a *file* raises ``FileExistsError`` out of
+        ``mkdir(exist_ok=True)``, so it is reported by the ``OSError`` arm and
+        there is no separate "exists but is not a directory" case
+        (issue #93 QA D-H).
+        """
         for directory in (self._paths.jobs_dir, self._paths.nodes_dir):
             try:
                 directory.mkdir(parents=True, exist_ok=True)
             except OSError as exc:
                 return f"cannot create {directory}: {exc}"
-            if not directory.is_dir():
-                return f"{directory} exists but is not a directory"
             if not os.access(directory, os.W_OK):
                 return f"{directory} is not writable"
         return None

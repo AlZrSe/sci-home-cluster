@@ -8,7 +8,7 @@ import os
 import signal
 import time
 from pathlib import Path
-from typing import Any, Coroutine
+from typing import Any, Callable, Coroutine
 
 import pytest
 
@@ -27,7 +27,7 @@ from agent.loop import (
 )
 from agent.paths import AgentPaths, resolve_paths
 from agent.supervisor import SupervisorTask
-from agent.tests.conftest import FakeObserver, RecordingWatcher, wait_for
+from agent.tests.conftest import FakeObserver, RecordingWatcher, wait_for, wait_until
 from agent.watcher import FolderEvent, WatcherDead
 
 pytestmark = pytest.mark.unit
@@ -114,13 +114,27 @@ def require_signal_delivery(sig: Any) -> None:
         )
 
 
-async def drive(agent: Agent, sig: Any = None, settle: float = 0.15) -> int:
-    """Run ``agent.run()``, deliver ``sig`` once handlers are in, return the code."""
+async def drive(
+    agent: Agent,
+    sig: Any = None,
+    settle: float = 0.15,
+    until: Callable[[], bool] | None = None,
+    message: str = "the agent never reached the awaited condition",
+) -> int:
+    """Run ``agent.run()``, deliver ``sig`` once handlers are in, return the code.
+
+    ``until`` is the load-safe replacement for a fixed ``settle``: pass the
+    property the test actually needs, and the agent is stopped once it holds
+    rather than after a wall-clock budget a loaded machine can eat (issue #93
+    QA F5).
+    """
     running = asyncio.ensure_future(agent.run())
     assert await wait_for(
         lambda: agent.supervisor is not None and bool(agent.supervisor.task_names)
     ), "the agent never registered its tasks"
     await asyncio.sleep(settle)
+    if until is not None:
+        await wait_until(until, message)
 
     if sig is not None and signal_handlers_supported(sig):
         os.kill(os.getpid(), sig)
@@ -286,7 +300,14 @@ async def test_unwritable_root_logs_error_and_stays_alive(
         assert await wait_for(
             lambda: agent.supervisor is not None and bool(agent.supervisor.task_names)
         )
-        await asyncio.sleep(0.6)
+        # Wait for the budget to be spent rather than sleeping 0.6 s and hoping.
+        # The budget is 0.3 s of wall clock, and a loaded machine overruns it,
+        # so the sleep was a bet rather than a bound (issue #93 QA F5).
+        await wait_until(
+            lambda: any("giving up waiting" in r.getMessage() for r in caplog.records),
+            "the retry budget was never exhausted: "
+            f"{[r.getMessage() for r in caplog.records]!r}",
+        )
 
     assert not running.done(), "an unusable folder must not stop the agent"
     messages = [r.getMessage() for r in caplog.records]
@@ -313,17 +334,22 @@ async def test_folder_retry_is_bounded_and_backs_off(tmp_path: Path) -> None:
         b - a for a, b in zip(agent.probe_times, agent.probe_times[1:], strict=False)
     ]
     assert elapsed >= 1.0, "the retry budget must actually be waited out"
-    # Three probes is the floor the product guarantees, not a timing artefact:
-    # the first sleep is FOLDER_RETRY_INTERVAL_S (1s) inside a 1.2s budget, so a
-    # third probe always follows the retry. It also keeps `gaps[:-1]` from being
-    # empty, which would make the spacing assertion below vacuous.
-    assert len(agent.probe_times) >= 3, "the 1.2s budget must fit a second retry"
+    # Two probes is the floor, and it is the honest one: the third probe only
+    # happens when the first 1 s sleep returns inside the remaining 0.2 s of
+    # budget, so on a loaded machine -- where one `sleep(1.0)` overshoots by
+    # more than 0.2 s -- the budget is gone after two probes and `>= 3` failed
+    # for a retry loop behaving exactly as specified (issue #93 QA F5). Two is
+    # guaranteed: the folder is probed once, then retried at least once. The
+    # cadence, which is what actually distinguishes a retry from a spin, is
+    # asserted against the spacing below.
+    assert len(agent.probe_times) >= 2, "the folder is probed, then retried"
     assert len(agent.probe_times) <= 4, "retries are ~1s apart, not a tight loop"
     # The floor applies to the spacing *between* retries only. The final sleep
     # is `min(FOLDER_RETRY_INTERVAL_S, remaining)` by design, so it is however
     # much budget is left -- down to a few ms, which is well inside the
     # platform's timer granularity. Asserting a floor on it fails for the right
     # behaviour, intermittently (QA: 3 failures in 17 full-suite runs).
+    assert gaps[0] >= 0.5, f"the first retry waits a real interval, not a spin: {gaps}"
     assert all(gap > 0.05 for gap in gaps[:-1]), gaps
     assert gaps[-1] >= 0, gaps
     assert elapsed < 2.0, "the final sleep is bounded by the remaining budget"
@@ -367,7 +393,14 @@ async def test_watcher_start_failure_is_not_fatal(syncthing_root: Path) -> None:
     settings = quick_settings(syncthing_root)
     agent = Agent(settings, watcher=watcher)
 
-    assert await drive(agent, settle=0.4) == EXIT_OK
+    assert (
+        await drive(
+            agent,
+            until=lambda: attempts >= 2,
+            message="folder-watch never retried the watcher start",
+        )
+        == EXIT_OK
+    )
     assert attempts >= 2, "folder-watch retries on its next tick"
     assert agent.supervisor is not None
     assert agent.supervisor.task_names == [

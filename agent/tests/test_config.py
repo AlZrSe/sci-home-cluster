@@ -9,11 +9,13 @@ from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest
+from pydantic import ValidationError
 from pydantic_settings import PydanticBaseSettingsSource
 
 from agent.config import (
     CONFIG_FILE_NAME,
     NODE_ID_PATTERN,
+    STATE_DIR_NAME,
     AgentSettings,
     ConfigError,
     build_settings,
@@ -56,6 +58,28 @@ def test_defaults_when_nothing_configured(syncthing_root: Path) -> None:
     assert settings.FOLDER_WATCH_INTERVAL_S == 30.0
     assert settings.FOLDER_RETRY_MAX_S == 60.0
     assert settings.WATCHER_LIVENESS_INTERVAL_S == 60.0
+
+
+def test_default_state_dir_is_under_the_root_and_scoped_to_the_node(
+    syncthing_root: Path,
+) -> None:
+    """D-E: the shipped default is ``<root>/.agent/<node_id>``, pinned here.
+
+    Nothing pinned it before. ``test_paths.py`` calls ``resolve_paths()``
+    directly, which bypasses ``build_settings`` entirely, and ``test_loop.py``
+    re-asserts the value it was handed, so replacing the default with ``root``
+    left the suite fully green (issue #93 QA D-E).
+    """
+    settings = build(base_env(syncthing_root))
+    assert settings.AGENT_STATE_DIR == syncthing_root / STATE_DIR_NAME / "node-01"
+
+
+def test_default_state_dir_follows_the_node_id_from_the_cli(
+    syncthing_root: Path,
+) -> None:
+    """The node id is interpolated, so two nodes never share one state dir."""
+    settings = build(base_env(syncthing_root), "--node-id", "node-99")
+    assert settings.AGENT_STATE_DIR == syncthing_root / STATE_DIR_NAME / "node-99"
 
 
 def test_missing_node_id_is_rejected_with_actionable_message(
@@ -211,6 +235,72 @@ def test_config_file_is_found_for_a_tilde_root(
     ), "a tilde root silently skipped the shared config file (issue #93 D1)"
 
 
+# --- D-F: the state dir gets the same expansion as the root -----------------
+
+
+def test_state_dir_tilde_is_expanded_like_the_root(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    """An operator who can write ``SYNCTHING_ROOT=~/syncthing`` expects this to work.
+
+    It used to be rejected instead -- the validator ran before anything expanded
+    it, so ``AGENT_STATE_DIR=~/st`` failed with ``must be an absolute path, got
+    WindowsPath('~/st')`` while ``resolve_paths`` would have expanded it
+    happily (issue #93 QA D-F).
+    """
+    home = tmp_path / "home-state"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
+
+    settings = build({**base_env(tmp_path / "root"), "AGENT_STATE_DIR": "~/st"})
+
+    assert settings.AGENT_STATE_DIR == home / "st"
+
+
+def test_relative_state_dir_is_expanded_like_the_root(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    root = tmp_path / "root-relative"
+    root.mkdir()
+    monkeypatch.chdir(tmp_path)
+
+    settings = build({**base_env(root), "AGENT_STATE_DIR": "rel/state"})
+
+    assert settings.AGENT_STATE_DIR == (tmp_path / "rel" / "state").resolve()
+    assert settings.AGENT_STATE_DIR.is_absolute()
+
+
+def test_state_dir_from_the_shared_file_is_expanded_too(
+    syncthing_root: Path, tmp_path: Path, monkeypatch: Any
+) -> None:
+    """The TOML layer goes through the same expansion as the environment."""
+    home = tmp_path / "home-toml"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
+    write_config(syncthing_root, 'AGENT_STATE_DIR = "~/state"\n')
+
+    assert build(base_env(syncthing_root)).AGENT_STATE_DIR == home / "state"
+
+
+def test_a_relative_state_dir_is_still_refused_by_the_model(
+    syncthing_root: Path,
+) -> None:
+    """The validator is live for anyone constructing ``AgentSettings`` directly.
+
+    ``build_settings`` now expands before the model sees the value, so this is
+    the only remaining route to that ``raise`` -- and #97, #101 and #102 build
+    settings too, so the guard cannot simply be deleted (issue #93 QA D-F).
+    """
+    with pytest.raises(ValidationError):
+        AgentSettings(
+            NODE_ID="node-01",
+            SYNCTHING_ROOT=syncthing_root,
+            AGENT_STATE_DIR=Path("rel/state"),
+        )
+
+
 # --- the .toml suffix is load-bearing (VM-2) ------------------------------
 
 
@@ -252,11 +342,25 @@ def test_unknown_toml_key_is_rejected(syncthing_root: Path) -> None:
     assert "AGENT_LOG_LEVL" in str(excinfo.value)
 
 
-def test_toml_that_is_not_a_table_is_rejected(syncthing_root: Path) -> None:
+def test_nested_table_in_toml_is_rejected_as_an_unknown_key(
+    syncthing_root: Path,
+) -> None:
+    """D-B: TOML always has a top-level table, so that branch never existed.
+
+    ``_toml_layer`` used to raise "expected a table of keys at the top level"
+    behind ``isinstance(raw, dict)``, which ``tomllib.load`` can never fail. The
+    test that named it was really only exercising the unknown-key rejection and
+    passed vacuously: pytest names ``tmp_path`` after the test function, so the
+    substring "table" arrived through the fixture directory (issue #93 QA
+    D-A/D-B). A table *header* is a key, so the reachable behaviour is the
+    unknown-key one asserted here.
+    """
     write_config(syncthing_root, "AGENT_LOG_LEVEL = 3\n[agent.node-01]\nx = 1\n")
     with pytest.raises(ConfigError) as excinfo:
         build(base_env(syncthing_root))
-    assert "table" in str(excinfo.value)
+    message = str(excinfo.value)
+    assert "unknown key(s) agent." in message, message
+    assert "not a table" not in message
 
 
 def test_node_id_in_toml_is_rejected(syncthing_root: Path) -> None:
@@ -313,6 +417,32 @@ def test_unknown_log_level_is_rejected_listing_valid_levels(
     assert "LOUD" in message
     for level in ("INFO", "DEBUG", "WARNING", "ERROR", "CRITICAL"):
         assert level in message
+
+
+def test_cli_log_level_is_case_insensitive_like_every_other_layer(
+    syncthing_root: Path,
+) -> None:
+    """D-G: ``--log-level error`` must not be a usage error.
+
+    ``choices=VALID_LOG_LEVELS`` is uppercase-only, so the flag rejected a
+    spelling the validator accepts from ``AGENT_LOG_LEVEL`` and from the shared
+    file. Two layers, one field, two answers (issue #93 QA D-G).
+    """
+    assert build(base_env(syncthing_root), "--log-level", "error").LOG_LEVEL == (
+        "ERROR"
+    )
+    assert build(base_env(syncthing_root), "--log-level", "WaRnInG").LOG_LEVEL == (
+        "WARNING"
+    )
+
+
+def test_cli_and_env_agree_on_case_insensitive_log_levels(
+    syncthing_root: Path,
+) -> None:
+    """The flag and the environment are two spellings of the same field."""
+    via_env = build({**base_env(syncthing_root), "AGENT_LOG_LEVEL": "error"})
+    via_cli = build(base_env(syncthing_root), "--log-level", "ERROR")
+    assert via_cli.LOG_LEVEL == via_env.LOG_LEVEL == "ERROR"
 
 
 def test_syncthing_root_has_no_default() -> None:

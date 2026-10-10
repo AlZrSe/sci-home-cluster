@@ -211,8 +211,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--log-level",
         default=None,
+        type=str.upper,
         choices=VALID_LOG_LEVELS,
-        help="Log level for this run. Overrides AGENT_LOG_LEVEL and the config file.",
+        help=(
+            "Log level for this run. Overrides AGENT_LOG_LEVEL and the config "
+            "file. Case-insensitive, like every other layer."
+        ),
     )
     return parser
 
@@ -267,9 +271,10 @@ def _toml_layer(path: Path) -> dict[str, Any]:
     except (OSError, tomllib.TOMLDecodeError) as exc:
         raise ConfigError(f"{path}: cannot be read as TOML: {exc}") from exc
 
-    if not isinstance(raw, dict):
-        raise ConfigError(f"{path}: expected a table of keys at the top level")
-
+    # No "top level is not a table" check here: `tomllib.load` returns a dict
+    # for every document it accepts, and TOML has no other top-level shape
+    # (issue #93 QA D-B). A table *header* is a key, and falls out below as an
+    # unknown key.
     unknown = sorted(set(raw) - set(_SOURCE_NAMES))
     if unknown:
         raise ConfigError(
@@ -295,9 +300,9 @@ def _toml_layer(path: Path) -> dict[str, Any]:
         )
 
     layer: dict[str, Any] = {}
+    # Both keys in `_FORBIDDEN_TOML_KEYS` raised above, so every key read here
+    # is a real field name (issue #93 QA D-H).
     for source_name, value in raw.items():
-        if source_name in _FORBIDDEN_TOML_KEYS:
-            continue
         layer[_SOURCE_NAMES[source_name]] = value
     return layer
 
@@ -357,13 +362,18 @@ def build_settings(
             "guessed node id impersonates a node."
         )
 
-    if "AGENT_STATE_DIR" not in merged:
-        merged["AGENT_STATE_DIR"] = root / STATE_DIR_NAME / str(merged["NODE_ID"])
+    merged.setdefault("AGENT_STATE_DIR", root / STATE_DIR_NAME / str(merged["NODE_ID"]))
+    # The same treatment the root gets, and for the same reason: an operator who
+    # can write `SYNCTHING_ROOT=~/syncthing` reasonably expects
+    # `AGENT_STATE_DIR=~/state` to work, and `resolve_paths` would expand it
+    # anyway. Rejecting it here instead was an asymmetry with no user behind it
+    # (issue #93 QA D-F). The model still rejects a *relative* path for anyone
+    # constructing `AgentSettings` directly, which is what keeps that
+    # validator live.
+    merged["AGENT_STATE_DIR"] = _resolve_root(str(merged["AGENT_STATE_DIR"]))
 
     try:
         settings = AgentSettings(**merged)
-    except ConfigError:
-        raise
     except ValueError as exc:
         raise ConfigError(str(exc)) from exc
 

@@ -78,9 +78,6 @@ class SelfWriteLedger:
     def is_self_write(self, path: Path) -> bool:
         return path in self._entries
 
-    def forget(self, path: Path) -> None:
-        self._entries.pop(path, None)
-
     def clear(self) -> None:
         self._entries.clear()
 

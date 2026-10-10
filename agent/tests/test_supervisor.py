@@ -9,6 +9,7 @@ from typing import Any
 import pytest
 
 from agent.supervisor import TaskFailure, TaskSupervisor, SupervisorTask
+from agent.tests.conftest import wait_until
 
 pytestmark = pytest.mark.unit
 
@@ -35,7 +36,13 @@ def make_task(
 
 
 async def run_for(seconds: float) -> None:
+    """A plain sleep. Only for tests whose property is time-based, not count-based."""
     await asyncio.sleep(seconds)
+
+
+def ticked(calls: list[str], name: str, count: int = 2) -> bool:
+    """Whether task ``name`` has run at least ``count`` times."""
+    return calls.count(name) >= count
 
 
 async def test_raising_task_does_not_stop_sibling_task() -> None:
@@ -45,7 +52,12 @@ async def test_raising_task_does_not_stop_sibling_task() -> None:
     supervisor.add_task(make_task("bad", calls, raises=RuntimeError("boom")))
     supervisor.add_task(make_task("good", calls))
     await supervisor.start()
-    await run_for(0.15)
+    # Wait for the property instead of sleeping a fixed 0.15 s and hoping two
+    # 10 ms ticks landed in it (issue #93 QA F5).
+    await wait_until(
+        lambda: ticked(calls, "good") and ticked(calls, "bad"),
+        f"both tasks must keep ticking, got {calls}",
+    )
     await supervisor.shutdown(0.2)
 
     assert calls.count("good") >= 2
@@ -110,7 +122,10 @@ async def test_non_critical_failure_does_not_call_on_fatal() -> None:
     supervisor = TaskSupervisor(on_fatal=lambda n, e: fatals.append((n, e)))
     supervisor.add_task(make_task("folder-watch", calls, raises=OSError("nope")))
     await supervisor.start()
-    await run_for(0.1)
+    await wait_until(
+        lambda: len(supervisor.failures) >= 2,
+        "a non-critical task must keep ticking and keep recording failures",
+    )
     await supervisor.shutdown(0.2)
     assert fatals == []
     assert len(supervisor.failures) >= 2
@@ -140,7 +155,10 @@ async def test_base_exception_in_task_is_isolated() -> None:
     )
     supervisor.add_task(make_task("sibling", calls))
     await supervisor.start()
-    await run_for(0.1)
+    await wait_until(
+        lambda: ticked(calls, "sibling"),
+        f"the sibling must survive a BaseException, got {calls}",
+    )
     await supervisor.shutdown(0.2)
 
     assert calls.count("sibling") >= 2
@@ -212,7 +230,10 @@ async def test_spawn_of_a_running_task_is_a_no_op() -> None:
     task = make_task("extra", calls)
     supervisor.spawn(task)
     supervisor.spawn(task)
-    await run_for(0.1)
+    await wait_until(
+        lambda: ticked(calls, "extra"),
+        f"the spawned task must keep running, got {calls}",
+    )
     await supervisor.shutdown(0.2)
 
     assert supervisor.task_names.count("extra") == 1
@@ -237,7 +258,10 @@ async def test_spawn_starts_a_task_that_did_not_exist_at_start() -> None:
     await supervisor.start()
     assert supervisor.task_names == []
     supervisor.spawn(make_task("late", calls))
-    await run_for(0.1)
+    await wait_until(
+        lambda: ticked(calls, "late"),
+        f"a task spawned after start() must run, got {calls}",
+    )
     await supervisor.shutdown(0.2)
     assert calls.count("late") >= 2
 

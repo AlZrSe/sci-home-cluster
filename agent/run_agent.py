@@ -41,6 +41,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         # argparse reports its own errors the same way.
         sys.stderr.write(f"agent configuration error: {exc}\n")
         return EXIT_CONFIG_ERROR
+    except SystemExit as exc:
+        # argparse rejected the command line and has already written its usage
+        # message. Letting it through would make a bad flag exit 2 while every
+        # other bad input exits EXIT_CONFIG_ERROR, and would contradict this
+        # function's docstring -- and `sys.exit(main())` would propagate the
+        # exception instead of returning the documented code (issue #93 QA D-G).
+        # `--help` exits 0 and must stay 0.
+        return EXIT_OK if exc.code in (0, None) else EXIT_CONFIG_ERROR
 
     configure_logging(settings.LOG_LEVEL, settings.NODE_ID)
 

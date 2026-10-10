@@ -120,6 +120,44 @@ def test_main_returns_one_on_config_error(tmp_path: Path, capsys: Any) -> None:
     assert "NODE_ID" in capsys.readouterr().err
 
 
+def test_main_returns_one_on_an_unknown_cli_log_level(
+    tmp_path: Path, capsys: Any
+) -> None:
+    """D-G: argparse's exit 2 must not escape a function that returns an int.
+
+    ``main``'s docstring promises the process exit code and
+    ``EXIT_CONFIG_ERROR`` is documented as the code for a configuration error,
+    but a rejected flag raised ``SystemExit`` straight through it. Every other
+    bad-input path returns 1.
+    """
+    exit_code = run_agent.main(
+        [
+            "--node-id",
+            "node-01",
+            "--syncthing-root",
+            str(tmp_path),
+            "--log-level",
+            "LOUD",
+        ]
+    )
+    assert exit_code == EXIT_CONFIG_ERROR
+    assert "--log-level" in capsys.readouterr().err
+
+
+def test_main_returns_one_on_an_unknown_flag(tmp_path: Path, capsys: Any) -> None:
+    assert (
+        run_agent.main(["--node-id", "node-01", "--nope", str(tmp_path)])
+        == EXIT_CONFIG_ERROR
+    )
+    assert "--nope" in capsys.readouterr().err
+
+
+def test_main_returns_zero_for_help(capsys: Any) -> None:
+    """``--help`` is not a configuration error; it must stay a success."""
+    assert run_agent.main(["--help"]) == EXIT_OK
+    assert "--node-id" in capsys.readouterr().out
+
+
 def test_main_returns_two_on_internal_error(
     monkeypatch: Any, tmp_path: Path, preserve_root_logging: None
 ) -> None:

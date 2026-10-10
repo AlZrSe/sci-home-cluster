@@ -161,19 +161,16 @@ def test_ledger_max_remembered_is_the_documented_default() -> None:
     assert len(SelfWriteLedger()) == 0
 
 
-def test_forget_and_clear() -> None:
+def test_clear_empties_the_ledger() -> None:
     ledger = SelfWriteLedger()
     first, second = Path("jobs/a/state.yaml"), Path("jobs/b/state.yaml")
     ledger.record(first)
     ledger.record(second)
+    assert len(ledger) == 2
 
-    ledger.forget(first)
-    assert not ledger.is_self_write(first)
-    assert ledger.is_self_write(second)
-
-    ledger.forget(first)
     ledger.clear()
     assert len(ledger) == 0
+    assert not ledger.is_self_write(first)
     assert not ledger.is_self_write(second)
 
 
@@ -285,7 +282,7 @@ async def test_watcher_start_failure_is_not_fatal(
     watcher.stop()
 
 
-async def test_unwritable_folder_is_reported_not_written_to(
+def test_unwritable_folder_is_reported_not_written_to(
     syncthing_root: Path, monkeypatch: Any
 ) -> None:
     """``os.access`` answers "is it writable"; the agent writes nothing to find out."""
@@ -297,7 +294,6 @@ async def test_unwritable_folder_is_reported_not_written_to(
     monkeypatch.setattr("agent.loop.os.access", lambda *_a, **_k: False)
 
     before = sorted(p.name for p in syncthing_root.iterdir())
-    assert await agent._folder_is_ready() is False
     assert "not writable" in str(agent._describe_folder_problem())
     assert sorted(p.name for p in syncthing_root.iterdir()) == before
 

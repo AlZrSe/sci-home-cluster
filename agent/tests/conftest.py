@@ -167,6 +167,34 @@ async def wait_for(predicate: Callable[[], bool], timeout: float = 2.0) -> bool:
     return predicate()
 
 
+#: Generous ceiling for :func:`wait_until`. Long enough that a loaded machine
+#: misses the deadline only when the property is genuinely false, short enough
+#: that a real failure is reported in seconds rather than minutes.
+WAIT_UNTIL_TIMEOUT_S: float = 10.0
+
+
+async def wait_until(
+    predicate: Callable[[], bool],
+    message: str,
+    *,
+    timeout: float = WAIT_UNTIL_TIMEOUT_S,
+) -> None:
+    """Block until ``predicate`` holds; fail the test with ``message`` if it never does.
+
+    The load-safe replacement for "sleep a fixed fraction of a second, then
+    assert that something happened ``n`` times". A fixed sleep and a count
+    assertion are two separate bets: the sleep must outlast the interval *and*
+    the event loop must get enough scheduling slots to deliver the ticks. Under
+    load a 10 ms-interval task can be starved for the whole window, and the
+    count assertion then fails for a supervisor that is behaving correctly.
+
+    Waiting for the property itself removes the first bet. The caller keeps its
+    own assertion on the same property afterwards, so a genuine failure is still
+    reported as an assertion failure and not swallowed by the wait.
+    """
+    assert await wait_for(predicate, timeout), message
+
+
 def real_watch_supported() -> bool:
     """Whether this platform can run a real ``watchdog`` observer at all.
 
@@ -191,9 +219,11 @@ REAL_WATCH_SUPPORTED = real_watch_supported()
 
 __all__ = [
     "REPO_ROOT",
+    "WAIT_UNTIL_TIMEOUT_S",
     "FakeObserver",
     "RecordingWatcher",
     "REAL_WATCH_SUPPORTED",
     "wait_for",
+    "wait_until",
     "sys",
 ]
