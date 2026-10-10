@@ -691,9 +691,10 @@ in §6, confirm **that test alone** goes red, and revert. Paste the result into 
 survives its own mutation is not evidence, and this repository has already accepted two issues (#46, #60) for
 guards that did not carry the property they were named for.
 
-**#57 warning:** the suite is intermittently flaky (`sqlite3.OperationalError: database is locked`, and a hang
-after the summary line). If a run flakes, re-run it and say so in the PR description; do not silently retry, and
-do not attribute a #57 flake to this change.
+**#57 warning (RESOLVED — no longer applies):** this spec was written when the suite was intermittently
+flaky (`sqlite3.OperationalError: database is locked`, and a hang after the summary line). PR #109 fixed
+that and closed #57. **Do not invoke it to excuse a failure here.** A run that fails is a real result:
+re-run it to confirm it is reproducible, and if it persists, it belongs to this change.
 
 **Manual check (AC-3, AC-8):** delete `.shc/secret_key`, `uvicorn backend.main:app`, observe exactly one
 `INFO` line naming the absolute key path, and `/health` returning 200 with **no** `secret_key` string in the
