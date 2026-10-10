@@ -12,7 +12,9 @@ copies of the rewrite rule cannot drift apart.
 """
 
 import ast
+import contextlib
 import os
+import sqlite3
 import subprocess
 import sys
 from pathlib import Path
@@ -124,6 +126,12 @@ def test_alembic_upgrade_head_from_temp_cwd(tmp_path):
     for suffix in (".db", ".db-wal", ".db-shm"):
         (CANONICAL_DB.with_suffix(suffix)).unlink(missing_ok=True)
 
+    # Whether data/ predates this test decides who has to clean it up. The
+    # session fixture assert_no_db_in_source_tree fails if data/ did not exist
+    # when the session started and exists when it ends, so a test that creates
+    # it has to remove it again - and may only do so if it created it.
+    data_dir_existed = CANONICAL_DB.parent.is_dir()
+
     # Capture existing .db files before running alembic (pre-existing from other tests)
     existing_dbs = set(REPO_ROOT.rglob("*.db"))
 
@@ -150,8 +158,16 @@ def test_alembic_upgrade_head_from_temp_cwd(tmp_path):
     # 1. Canonical database exists and is at head
     assert CANONICAL_DB.exists(), "Canonical database was not created"
     # Verify alembic_version table is at head
-    import sqlite3
-    with sqlite3.connect(CANONICAL_DB) as conn:
+    #
+    # `contextlib.closing`, NOT a bare `with sqlite3.connect(...)`: the sqlite3
+    # connection context manager commits or rolls back and then returns, but it
+    # does NOT close the connection. On Windows the file handle therefore stays
+    # open for the rest of the function, the cleanup unlink below raises
+    # PermissionError, the `except PermissionError: pass` swallows it, and
+    # data/scientific_home_cluster.db survives the session - which then fails
+    # assert_no_db_in_source_tree at teardown on any checkout where data/ did
+    # not already exist. That was this test failing on `main` (issue #57).
+    with contextlib.closing(sqlite3.connect(CANONICAL_DB)) as conn:
         version = conn.execute("SELECT version_num FROM alembic_version").fetchone()
     assert version is not None, "alembic_version table missing"
     # Head revision as of #34 is '0003' (or whatever the latest is)
@@ -159,9 +175,9 @@ def test_alembic_upgrade_head_from_temp_cwd(tmp_path):
     assert version[0] != "", "alembic_version not set"
 
     # 2. Launch directory stayed empty (no relative default regression)
-    assert list(launch_dir.iterdir()) == [], (
-        f"Launch directory {launch_dir} was not empty: {list(launch_dir.iterdir())}"
-    )
+    assert (
+        list(launch_dir.iterdir()) == []
+    ), f"Launch directory {launch_dir} was not empty: {list(launch_dir.iterdir())}"
 
     # 3. No stray .db files anywhere under repo (except the canonical one)
     # Only check for NEW .db files created during this test run
@@ -169,11 +185,19 @@ def test_alembic_upgrade_head_from_temp_cwd(tmp_path):
     stray_dbs = [p for p in new_dbs if p != CANONICAL_DB]
     assert stray_dbs == [], f"Stray .db files appeared: {stray_dbs}"
 
-    # Cleanup for test isolation - handle #57 flake (database locked)
+    # Cleanup for test isolation.
+    #
+    # The connection above is closed and the `alembic upgrade head` subprocess
+    # has exited, so nothing holds the file and the unlink succeeds. The
+    # `except PermissionError: pass` that used to be here is what hid the leak:
+    # with the connection still open the unlink failed on every run, the error
+    # was swallowed, and data/scientific_home_cluster.db outlived the session
+    # (issue #57).
     for suffix in (".db", ".db-wal", ".db-shm"):
-        try:
-            (CANONICAL_DB.with_suffix(suffix)).unlink(missing_ok=True)
-        except PermissionError:
-            # Windows: database may still be locked by alembic's connection pool
-            # This is the #57 flake; don't fail the test over cleanup
-            pass
+        CANONICAL_DB.with_suffix(suffix).unlink(missing_ok=True)
+
+    # Leave the tree exactly as this test found it: data/ is created lazily by
+    # the resolver above, and assert_no_db_in_source_tree treats a data/ that
+    # appears during the session as a leak. Only remove it if we created it.
+    if not data_dir_existed:
+        CANONICAL_DB.parent.rmdir()
