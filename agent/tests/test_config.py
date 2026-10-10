@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import re
 from pathlib import Path
@@ -21,6 +22,7 @@ from agent.config import (
     build_settings,
     config_file_path,
 )
+from agent.logging_config import VALID_LOG_LEVELS
 from backend.services.syncthing_service import SyncthingEventHandler
 
 pytestmark = pytest.mark.unit
@@ -443,6 +445,30 @@ def test_cli_and_env_agree_on_case_insensitive_log_levels(
     via_env = build({**base_env(syncthing_root), "AGENT_LOG_LEVEL": "error"})
     via_cli = build(base_env(syncthing_root), "--log-level", "ERROR")
     assert via_cli.LOG_LEVEL == via_env.LOG_LEVEL == "ERROR"
+
+
+@pytest.mark.parametrize("alias", ["WARN", "FATAL"])
+def test_deprecated_level_aliases_are_accepted_everywhere(
+    syncthing_root: Path, alias: str
+) -> None:
+    """``LOG_LEVEL=WARN`` must start the agent, not fail it.
+
+    The stdlib deprecates ``WARN`` and ``FATAL`` but still defines them, and
+    hand-written operator configuration uses them constantly. Rejecting them
+    turns a working config into a startup failure for no benefit: they resolve
+    to the same numeric levels as ``WARNING`` and ``CRITICAL``. Every layer has
+    to agree, or the footgun just moves.
+    """
+    assert alias in VALID_LOG_LEVELS
+
+    via_env = build({**base_env(syncthing_root), "AGENT_LOG_LEVEL": alias.lower()})
+    via_cli = build(base_env(syncthing_root), "--log-level", alias.lower())
+    assert via_env.LOG_LEVEL == via_cli.LOG_LEVEL == alias
+
+    # And they must resolve to a real level, not merely be accepted as a string.
+    assert getattr(logging, alias) == getattr(
+        logging, "WARNING" if alias == "WARN" else "CRITICAL"
+    )
 
 
 def test_syncthing_root_has_no_default() -> None:

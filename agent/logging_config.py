@@ -32,14 +32,20 @@ LOG_FORMAT: Final[str] = (
     "%(asctime)s %(levelname)s [node=%(node_id)s] %(name)s: %(message)s"
 )
 
-#: Levels ``logging`` itself defines, excluding ``WARN``/``FATAL`` which are
-#: aliases. Resolved through ``getattr(logging, ...)`` so an operator typo gives
-#: a message naming the legal values instead of an ``AttributeError`` at startup
-#: (issue #93 C10).
+#: Levels ``logging`` itself defines, plus the ``WARN``/``FATAL`` aliases.
+#:
+#: The aliases are deprecated by the stdlib but common in hand-written operator
+#: configuration, and ``AGENT_LOG_LEVEL=WARN`` failing at startup is a footgun
+#: worth two strings. They resolve through ``getattr(logging, ...)`` to the same
+#: numeric levels as their canonical forms, so accepting them costs no ambiguity.
+#: Resolving that way is also what turns a typo into a message naming the legal
+#: values instead of an ``AttributeError`` at startup (issue #93 C10).
 VALID_LOG_LEVELS: Final[tuple[str, ...]] = (
     "CRITICAL",
+    "FATAL",
     "ERROR",
     "WARNING",
+    "WARN",
     "INFO",
     "DEBUG",
     "NOTSET",

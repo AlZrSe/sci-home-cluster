@@ -570,7 +570,6 @@ class SelfWriteLedger:
     MAX_REMEMBERED: Final[int] = 256
     def record(self, path: Path) -> None      # bounded, oldest-evicted
     def is_self_write(self, path: Path) -> bool
-    def forget(self, path: Path) -> None
     def clear(self) -> None
 
 class FolderWatcher:
@@ -785,7 +784,7 @@ except where marked *gate*. Named tests are enumerated in §9.
   `FolderEvent` is emitted; an event for any other path **is** emitted; and the ledger evicts beyond
   `MAX_REMEMBERED`.
   → `test_self_write_is_not_emitted_as_an_observed_event`,
-  `test_event_for_other_path_is_still_emitted`, `test_ledger_is_bounded`, `test_forget_and_clear`,
+  `test_event_for_other_path_is_still_emitted`, `test_ledger_is_bounded`, `test_clear_empties_the_ledger`,
   `test_tmp_and_dotfiles_are_ignored`, `test_non_yaml_suffix_is_ignored`,
   `test_yaml_suffix_is_case_insensitive`, `test_directory_events_are_ignored`,
   `test_all_three_event_kinds_are_reported`, `test_agent_filter_matches_the_backend_filter`,
@@ -1054,7 +1053,7 @@ QA then added more. Reproduce these names so the re-run is comparable.
 `test_self_write_is_not_emitted_as_an_observed_event` · `test_event_for_other_path_is_still_emitted` ·
 `test_tmp_and_dotfiles_are_ignored` *(includes `agent.toml`)* · `test_non_yaml_suffix_is_ignored` ·
 `test_yaml_suffix_is_case_insensitive` · `test_directory_events_are_ignored` ·
-`test_all_three_event_kinds_are_reported` · `test_ledger_is_bounded` · `test_forget_and_clear` ·
+`test_all_three_event_kinds_are_reported` · `test_ledger_is_bounded` · `test_clear_empties_the_ledger` ·
 `test_probe_liveness_raises_when_observer_is_dead` · `test_probe_liveness_passes_when_observer_is_alive` ·
 `test_probe_liveness_raises_when_never_started` · `test_start_schedules_jobs_and_nodes` ·
 `test_start_with_absent_folder_raises_a_clear_error` · `test_stop_is_safe_to_call_twice` ·

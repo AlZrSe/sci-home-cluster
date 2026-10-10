@@ -11,7 +11,7 @@ A distributed platform for running scientific long-running applications on vario
 | Shared Schemas & File Ops | ✅ **Done** | Issue [#2](https://github.com/AlZrSe/sci-home-cluster/issues/2) |
 | API Server Core | ✅ **Done** | Issue [#3](https://github.com/AlZrSe/sci-home-cluster/issues/3) |
 | Syncthing Sync Service | ✅ **Done** | Issue [#4](https://github.com/AlZrSe/sci-home-cluster/issues/4) |
-| Worker Agent | ✅ **Stub Implemented** | Phase 2 - basic structure, needs job execution logic |
+| Worker Agent | ✅ **Skeleton Delivered** | Issue [#93](https://github.com/AlZrSe/sci-home-cluster/issues/93) - config, logging, supervised loop, graceful shutdown. Job execution is #95-#98 |
 | CLI | ✅ **Stub Implemented** | Phase 2 - commands scaffolded, needs API integration |
 | Docker/Production | 📋 Planned | Phase 3 |
 
@@ -267,7 +267,10 @@ sci-run logs <job-id> --follow
 # sci-run cancel <job-id>
 ```
 
-> **Note**: The `sci-run cancel` command is a stub and not yet implemented. The worker agent requires `--syncthing-root` as a required parameter.
+> **Note**: The `sci-run cancel` command is a stub and not yet implemented.
+
+> **Note**: the worker agent takes `--syncthing-root` as an *optional* override. It requires
+> `SYNCTHING_ROOT` to be set by some means; see [Worker Agent](#worker-agent-on-each-compute-node).
 
 ### Environment Variables
 | Variable | Description | Default |
