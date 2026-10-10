@@ -18,7 +18,7 @@ Distributed platform for running scientific workloads on a home GPU cluster.
 | Backend lint | `ruff check . && ruff format . && mypy .` |
 | Backend test | `pytest --cov=backend` |
 | API server | `uvicorn backend.main:app --reload` |
-| Worker agent | `python agent/run_agent.py --node-id node-01` |
+| Worker agent | `run-agent --node-id node-01` (needs `SYNCTHING_ROOT` set; see README "Worker Agent") |
 
 ---
 

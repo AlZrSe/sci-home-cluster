@@ -82,7 +82,7 @@ ignore_errors = true
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
-testpaths = ["backend/tests"]
+testpaths = ["backend/tests", "agent/tests"]
 python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
@@ -95,8 +95,8 @@ markers = [
 ]
 
 [tool.coverage.run]
-source = ["backend"]
-omit = ["backend/tests/*", "backend/alembic/*"]
+source = ["backend", "agent"]
+omit = ["backend/tests/*", "backend/alembic/*", "agent/tests/*"]
 
 [tool.coverage.report]
 fail_under = 80
@@ -115,7 +115,7 @@ package-dir = {"" = "."}
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["backend*", "shared*", "agent*", "cli*"]
-exclude = ["test*", "docs*", "docker*", "frontend*", "stubs*", "node_modules*"]
+exclude = ["test*", "docs*", "docker*", "frontend*", "stubs*", "node_modules*", "agent.tests"]
 
 [project.scripts]
 sci-run = "cli.command:main"

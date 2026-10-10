@@ -11,7 +11,7 @@ A distributed platform for running scientific long-running applications on vario
 | Shared Schemas & File Ops | ✅ **Done** | Issue [#2](https://github.com/AlZrSe/sci-home-cluster/issues/2) |
 | API Server Core | ✅ **Done** | Issue [#3](https://github.com/AlZrSe/sci-home-cluster/issues/3) |
 | Syncthing Sync Service | ✅ **Done** | Issue [#4](https://github.com/AlZrSe/sci-home-cluster/issues/4) |
-| Worker Agent | ✅ **Stub Implemented** | Phase 2 - basic structure, needs job execution logic |
+| Worker Agent | ✅ **Skeleton Delivered** | Issue [#93](https://github.com/AlZrSe/sci-home-cluster/issues/93) - config, logging, supervised loop, graceful shutdown. Job execution is #95-#98 |
 | CLI | ✅ **Stub Implemented** | Phase 2 - commands scaffolded, needs API integration |
 | Docker/Production | 📋 Planned | Phase 3 |
 
@@ -207,14 +207,50 @@ cd backend && gunicorn main:app -w 4 -k uvicorn.workers.UvicornWorker --bind 0.0
 ```
 
 ### Worker Agent (on each compute node)
+
+The agent is **file-only**: it never opens a network connection to the backend and holds no
+credential. It reads the Syncthing folder, supervises its own tasks, and shuts down cleanly on
+`SIGTERM`/`SIGINT`.
+
 ```bash
-# Set Syncthing root first (REQUIRED)
+# Install once (editable is fine for development)
+pip install -e .
+
+# SYNCTHING_ROOT is required; there is no default, by design
 export SYNCTHING_ROOT=/path/to/syncthing-shared
 
-# Start agent
-cd agent
-python run_agent.py --node-id node-01 --syncthing-root $SYNCTHING_ROOT
+# Start the agent (run-agent is the installed console script)
+run-agent --node-id node-01
 ```
+
+Flags: `--node-id` (required, also readable from `$NODE_ID`), `--syncthing-root` (optional, wins over
+`$SYNCTHING_ROOT`, expands `~` and relative paths), and `--log-level`.
+
+**Configuration file.** The agent reads `<SYNCTHING_ROOT>/nodes/agent.toml`, so one edit configures
+the whole fleet — the file replicates with the folder. Keys are flat: `AGENT_LOG_LEVEL`,
+`AGENT_SHUTDOWN_GRACE_S`, `AGENT_FOLDER_WATCH_INTERVAL_S`, `AGENT_FOLDER_RETRY_MAX_S`,
+`AGENT_WATCHER_LIVENESS_INTERVAL_S`, `AGENT_STATE_DIR`. Unknown keys are rejected loudly.
+
+Precedence is **CLI flag > environment variable > `nodes/agent.toml` > default**.
+
+> **No hot reload.** `nodes/agent.toml` is read **once**, at startup. There is no `--config` flag and
+> the location is derived from the resolved `SYNCTHING_ROOT`. Editing the file has no effect until
+> you restart the agent.
+
+`NODE_ID` and `SYNCTHING_ROOT` are deliberately **not** settable in `agent.toml`: every node reads
+the same replicated file, so a `NODE_ID` there would make every agent claim the same identity, and
+the root is what locates the file in the first place. Both are errors, not silent ignores.
+
+Every log line carries the node id (`[node=node-01]`), so four nodes writing into one journal stay
+separable. Exit codes: `0` clean shutdown, `1` configuration error, `2` unexpected internal error,
+`3` watcher liveness lost, `4` shutdown grace expired with tasks still running.
+
+> **Which codes a stock process actually produces.** `1` (bad configuration) and `3` (a dead watcher)
+> are reachable by themselves. `0` needs a `SIGTERM`/`SIGINT` the agent can catch: POSIX delivers
+> one, Windows has no `add_signal_handler`, so there the agent only stops when the OS stops it and
+> the exit code is the killer's rather than the agent's. `2` means a bug nobody planned for, and
+> `4` means a task ignored the stop event — no shipped task does. Both are exercised by injecting
+> the failure, not by running the agent.
 
 ### CLI Usage
 ```bash
@@ -231,7 +267,10 @@ sci-run logs <job-id> --follow
 # sci-run cancel <job-id>
 ```
 
-> **Note**: The `sci-run cancel` command is a stub and not yet implemented. The worker agent requires `--syncthing-root` as a required parameter.
+> **Note**: The `sci-run cancel` command is a stub and not yet implemented.
+
+> **Note**: the worker agent takes `--syncthing-root` as an *optional* override. It requires
+> `SYNCTHING_ROOT` to be set by some means; see [Worker Agent](#worker-agent-on-each-compute-node).
 
 ### Environment Variables
 | Variable | Description | Default |
