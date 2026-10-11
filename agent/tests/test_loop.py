@@ -7,8 +7,9 @@ import logging
 import os
 import signal
 import time
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Callable, Coroutine
+from typing import Any, Callable, Coroutine, Iterator
 
 import pytest
 
@@ -27,7 +28,15 @@ from agent.loop import (
 )
 from agent.paths import AgentPaths, resolve_paths
 from agent.supervisor import SupervisorTask
-from agent.tests.conftest import FakeObserver, RecordingWatcher, wait_for, wait_until
+from agent.tests.conftest import (
+    GUARDED_SIGNALS,
+    SIGNAL_GUARD,
+    FakeObserver,
+    RecordingWatcher,
+    SignalSafetyGuard,
+    wait_for,
+    wait_until,
+)
 from agent.watcher import FolderEvent, WatcherDead
 
 pytestmark = pytest.mark.unit
@@ -79,39 +88,97 @@ class DeadWatcher(RecordingWatcher):
         return False
 
 
-def signal_handlers_supported(sig: Any = signal.SIGTERM) -> bool:
-    """Whether this loop will accept a signal handler, probed before acting.
+#: Dispositions that would *not* carry a signal to the agent. ``SIG_DFL`` makes
+#: the kernel kill pytest outright, ``SIG_IGN`` drops it silently, and
+#: ``default_int_handler`` turns SIGINT into a ``KeyboardInterrupt`` that
+#: interrupts the whole session rather than failing a test. The last one is not
+#: optional knowledge: asyncio's ``remove_signal_handler`` restores
+#: ``default_int_handler`` for SIGINT and ``SIG_DFL`` for everything else, so a
+#: SIG_DFL-only check sails straight past the defect that disarms SIGINT.
+UNSAFE_DISPOSITIONS: tuple[Any, ...] = (
+    None,
+    signal.SIG_DFL,
+    signal.SIG_IGN,
+    signal.default_int_handler,
+)
 
-    The probe has to come first: sending SIGTERM to a process that has *not*
-    replaced its default handler kills it, pytest included.
+
+def loop_delivers_signals(loop: asyncio.AbstractEventLoop) -> bool:
+    """Whether ``loop``'s class routes signals to callbacks of its own.
+
+    Read-only on purpose. The obvious way to ask -- install a handler and take
+    it back out with ``remove_signal_handler`` -- is not an undo: on POSIX that
+    calls ``signal.signal(sig, SIG_DFL)``, so the "probe" disarms whatever the
+    agent had already armed and the signal that follows kills pytest instead of
+    reaching it (issue #114 D1/D2). Comparing the resolved implementation
+    against the base class asks the same question with no side effect, and
+    works on POSIX and Windows alike without a ``sys.platform`` branch (D3).
     """
-    try:
-        loop = asyncio.get_running_loop()
-    except RuntimeError:
-        return False
-    try:
-        loop.add_signal_handler(sig, lambda: None)
-    except (NotImplementedError, RuntimeError, ValueError, OSError, AttributeError):
-        return False
-    loop.remove_signal_handler(sig)
-    return True
+    base = asyncio.BaseEventLoop.add_signal_handler
+    return type(loop).add_signal_handler is not base
 
 
-def require_signal_delivery(sig: Any) -> None:
-    """Skip unless ``sig`` can really be delivered to this loop.
+def deliver_signal_to_self(sig: Any) -> None:
+    """Send ``sig`` to this process -- once we have checked something will catch it.
 
-    ``drive`` falls back to setting the stop event where ``add_signal_handler``
-    is unavailable, which is always on Windows. A signal test that takes that
-    fallback asserts shutdown *ordering* under a name that claims to cover
-    *delivery*, and CI output then overstates what AC-6 is checked for. Skipping
-    puts the gap in the report instead of hiding it; the fallback itself stays
-    covered by the two tests that never send a signal.
+    The disposition is asserted here, immediately before the ``os.kill``, and
+    not a line earlier: at ``SIG_DFL`` the kernel applies the default action,
+    which kills *pytest* mid-file -- no traceback, no summary, exit 143. That
+    is the failure mode issue #114 was filed for, and ``getsignal`` is the
+    exact, non-heuristic test of "would anything catch this".
+
+    ``None`` counts as disarmed too: ``signal.getsignal`` returns it for a
+    disposition that Python never installed, and ``SIG_IGN`` drops the signal
+    without a word. What counts as "armed" is narrower than "not ``SIG_DFL``"
+    -- see :data:`UNSAFE_DISPOSITIONS`.
     """
-    if not signal_handlers_supported(sig):
-        pytest.skip(
-            f"add_signal_handler is unavailable on this platform, so {sig.name} "
-            "delivery to a running agent is not covered here"
-        )
+    disposition = signal.getsignal(sig)
+    assert disposition not in UNSAFE_DISPOSITIONS, (
+        f"{sig.name} is at {disposition!r} rather than a handler this suite "
+        "armed -- refusing to signal the pytest process, where SIG_DFL kills "
+        "it outright and default_int_handler interrupts the whole session. A "
+        "handler was disarmed after the agent armed it (issue #114)"
+    )
+    with SIGNAL_GUARD.expecting(int(sig)):
+        os.kill(os.getpid(), sig)
+
+
+#: Ceiling for "the agent stopped after the signal". Deliberately not longer:
+#: a bigger budget hides loop starvation rather than surviving it (spec R5).
+STOP_TIMEOUT_S: float = 5.0
+
+
+@contextmanager
+def spy_on_armed_signal_handlers(
+    loop: asyncio.AbstractEventLoop,
+) -> Iterator[list[int]]:
+    """Record which of the agent's own signal handlers actually fired.
+
+    ``Agent._install_signal_handlers`` arms ``stop.set`` for SIGTERM and
+    SIGINT. Wrapping the callback at the loop boundary lets a test assert that
+    *the signal* stopped the agent -- asserting only that the agent exited
+    cleanly cannot tell a delivered signal apart from ``drive``'s ``stop.set()``
+    fallback, so such a test passes either way and proves nothing (AC-6).
+
+    The production method is untouched and still runs; only the loop boundary
+    is wrapped, and it is restored on the way out.
+    """
+    fired: list[int] = []
+    cls = type(loop)
+    original = cls.add_signal_handler
+
+    def spy(_loop: Any, sig: Any, callback: Callable[..., None], *args: Any) -> None:
+        def wrapped(*inner: Any) -> None:
+            fired.append(int(sig))
+            callback(*args, *inner)
+
+        original(_loop, sig, wrapped, *args)
+
+    setattr(cls, "add_signal_handler", spy)
+    try:
+        yield fired
+    finally:
+        setattr(cls, "add_signal_handler", original)
 
 
 async def drive(
@@ -127,6 +194,13 @@ async def drive(
     property the test actually needs, and the agent is stopped once it holds
     rather than after a wall-clock budget a loaded machine can eat (issue #93
     QA F5).
+
+    ``sig`` is genuinely *delivered* -- sent to this process -- and there is no
+    capability probe in front of it. The old probe was the bug: it installed a
+    no-op handler and removed it, which on POSIX leaves ``SIG_DFL`` where the
+    agent's handler was, so the signal that followed killed pytest (issue
+    #114). With ``sig=None`` the stop event is set directly instead, which is
+    the fallback path the shutdown-ordering tests are about.
     """
     running = asyncio.ensure_future(agent.run())
     assert await wait_for(
@@ -136,13 +210,35 @@ async def drive(
     if until is not None:
         await wait_until(until, message)
 
-    if sig is not None and signal_handlers_supported(sig):
-        os.kill(os.getpid(), sig)
-    else:
-        stop = agent.supervisor.stop_event if agent.supervisor else None
-        assert stop is not None
+    supervisor = agent.supervisor
+    assert supervisor is not None
+    stop = supervisor.stop_event
+
+    if sig is None:
         stop.set()
-    return await asyncio.wait_for(running, 5.0)
+    else:
+        deliver_signal_to_self(sig)
+        stopped = await wait_for(lambda: stop.is_set(), timeout=STOP_TIMEOUT_S)
+        if not stopped and not loop_delivers_signals(asyncio.get_running_loop()):
+            # Asked and it did not land: this platform's loop has no signal
+            # support at all (Windows). Report that by name rather than
+            # passing a fallback stop off as a delivery, but only *after*
+            # trying -- an up-front capability guess is what let this test
+            # assert nothing for a year.
+            stop.set()
+            await asyncio.wait_for(running, STOP_TIMEOUT_S)
+            pytest.skip(
+                f"{sig.name} was delivered but no handler stopped the agent: "
+                "this platform's event loop does not implement "
+                "add_signal_handler, so signal delivery to a running agent is "
+                "not covered here"
+            )
+        assert stopped, (
+            f"the agent did not stop within {STOP_TIMEOUT_S}s of {sig.name} "
+            "being delivered -- the handler never reached Agent.run()"
+        )
+
+    return await asyncio.wait_for(running, STOP_TIMEOUT_S)
 
 
 async def make_agent(
@@ -159,18 +255,26 @@ async def make_agent(
 
 
 async def test_sigterm_triggers_orderly_shutdown(syncthing_root: Path) -> None:
-    require_signal_delivery(signal.SIGTERM)
     order: list[str] = []
     agent = await make_agent(syncthing_root, order)
-    assert await drive(agent, signal.SIGTERM) == EXIT_OK
+    with spy_on_armed_signal_handlers(asyncio.get_running_loop()) as fired:
+        assert await drive(agent, signal.SIGTERM) == EXIT_OK
+    assert fired == [int(signal.SIGTERM)], (
+        "the agent's own SIGTERM handler stopped it, not drive()'s stop.set() "
+        f"fallback; fired={fired}"
+    )
     assert order == ["hand_back", "watcher.stop", "write_state"]
 
 
 async def test_sigint_triggers_orderly_shutdown(syncthing_root: Path) -> None:
-    require_signal_delivery(signal.SIGINT)
     order: list[str] = []
     agent = await make_agent(syncthing_root, order)
-    assert await drive(agent, signal.SIGINT) == EXIT_OK
+    with spy_on_armed_signal_handlers(asyncio.get_running_loop()) as fired:
+        assert await drive(agent, signal.SIGINT) == EXIT_OK
+    assert fired == [int(signal.SIGINT)], (
+        "the agent's own SIGINT handler stopped it, not drive()'s stop.set() "
+        f"fallback; fired={fired}"
+    )
     assert order == ["hand_back", "watcher.stop", "write_state"]
 
 
@@ -200,18 +304,95 @@ async def test_write_final_state_seam_is_called(syncthing_root: Path) -> None:
 async def test_signal_handlers_fall_back_where_unsupported(
     syncthing_root: Path, monkeypatch: Any, caplog: pytest.LogCaptureFixture
 ) -> None:
+    refused: list[Any] = []
+
     def refuse(*_a: Any, **_k: Any) -> None:
+        refused.append(_a)
         raise NotImplementedError("add_signal_handler is not supported here")
 
-    monkeypatch.setattr(asyncio.AbstractEventLoop, "add_signal_handler", refuse)
+    # Patch the class the running loop *resolves* to, not
+    # asyncio.AbstractEventLoop. On Linux the loop is a
+    # _UnixSelectorEventLoop, which overrides add_signal_handler in
+    # asyncio.unix_events, so a patch on the base class is never reached: the
+    # production code took the success path, nothing warned, and this test
+    # failed with a bare "assert 0 == 1" instead of naming the real cause
+    # (issue #114). On Windows the loop inherits the base implementation, and
+    # ``type(loop)`` is still the right object to patch -- no platform branch.
+    monkeypatch.setattr(
+        type(asyncio.get_running_loop()), "add_signal_handler", refuse, raising=True
+    )
     order: list[str] = []
     agent = await make_agent(syncthing_root, order)
     with caplog.at_level(logging.WARNING, logger="agent.loop"):
         assert await drive(agent) == EXIT_OK
 
+    assert refused, (
+        "the patch never landed: add_signal_handler was not the method the "
+        "running loop resolved to, so this test asserted nothing about the "
+        "fallback"
+    )
     warnings = [r for r in caplog.records if "signal handlers" in r.getMessage()]
     assert len(warnings) == 1, "the fallback warns once, not once per signal"
     assert order == ["hand_back", "watcher.stop", "write_state"]
+
+
+# --- the signal safety guard itself (issue #114 D4) ------------------------
+
+
+def test_signal_delivery_refuses_to_run_at_the_default_disposition(
+    monkeypatch: Any,
+) -> None:
+    """Layer 1, with the process never put at risk: ``os.kill`` is a recorder."""
+    killed: list[Any] = []
+
+    def record_kill(pid: int, sig: Any) -> None:
+        killed.append((pid, sig))
+
+    monkeypatch.setattr(os, "kill", record_kill)
+
+    for unsafe in UNSAFE_DISPOSITIONS:
+        monkeypatch.setattr(signal, "getsignal", lambda _sig, _d=unsafe: _d)
+        with pytest.raises(AssertionError, match="SIG_DFL"):
+            deliver_signal_to_self(signal.SIGTERM)
+        assert killed == [], "the guard must refuse *before* the signal is sent"
+
+
+def test_signal_delivery_sends_the_signal_once_a_handler_is_armed(
+    monkeypatch: Any,
+) -> None:
+    """The other half of the same assertion: a handler means the kill happens."""
+    killed: list[Any] = []
+
+    def handler(*_a: Any) -> None:
+        return None
+
+    monkeypatch.setattr(os, "kill", lambda pid, sig: killed.append((pid, sig)))
+    monkeypatch.setattr(signal, "getsignal", lambda _sig: handler)
+
+    deliver_signal_to_self(signal.SIGTERM)
+    assert killed == [(os.getpid(), signal.SIGTERM)]
+
+
+def test_the_safety_guard_counts_only_signals_nobody_asked_for() -> None:
+    guard = SignalSafetyGuard()
+    with guard.expecting(int(signal.SIGTERM)):
+        guard.record(int(signal.SIGTERM))
+    assert guard.take_recorded() == [], "a deliberate delivery is not a stray"
+
+    guard.record(int(signal.SIGINT))
+    guard.record(int(signal.SIGINT))
+    assert guard.take_recorded() == [int(signal.SIGINT), int(signal.SIGINT)]
+    assert guard.take_recorded() == [], "recording is drained, not accumulated"
+
+
+def test_the_safety_guard_is_armed_while_a_test_runs() -> None:
+    """Layer 2 is live: a stray signal has somewhere to land, not a dead end."""
+    for signum in GUARDED_SIGNALS:
+        disposition = signal.getsignal(signum)
+        assert disposition not in UNSAFE_DISPOSITIONS, (
+            f"{signal.Signals(signum).name} is at {disposition!r} while a test "
+            "is running; a stray signal there would kill or interrupt pytest"
+        )
 
 
 async def test_stop_is_safe_to_call_twice(syncthing_root: Path) -> None:
