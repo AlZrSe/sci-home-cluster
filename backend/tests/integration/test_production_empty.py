@@ -94,13 +94,12 @@ class TestProductionDatabaseStartsEmpty:
     @pytest.mark.asyncio
     async def test_health_endpoint_on_empty_db(self, auth_client, seeding_disabled):
         """
-        I3: /health still returns 200 on an empty cluster.
+        I3: /health returns 200 on an empty cluster and reports "healthy".
 
-        The body reports status "degraded" because main.py:255 derives
-        store health from the node count and no agent has registered yet.
-        That is a known, deliberately unfixed consequence of defaulting the
-        seeder off - the health contract is tracked separately in #32 and
-        must not be "fixed" by re-enabling seeding.
+        Store status reflects database reachability, not node population.
+        Node count is exposed separately. The "healthy" status here means
+        the store answered its queries; node count is 0 and reported
+        separately. This resolves issue #32.
 
         The 200 matters: the frontend probes /health to decide whether the
         backend is reachable and falls back to mock data otherwise.
@@ -109,8 +108,8 @@ class TestProductionDatabaseStartsEmpty:
 
         assert response.status_code == 200
         data = response.json()
-        assert data["status"] == "degraded"
-        assert data["store"]["status"] == "degraded"
+        assert data["status"] == "healthy"
+        assert data["store"]["status"] == "healthy"
         assert data["store"]["nodes"] == 0
         assert data["database"]["status"] == "healthy"
 
@@ -119,10 +118,8 @@ class TestProductionDatabaseStartsEmpty:
         self, auth_client, seeded_cluster
     ):
         """
-        The counterpart to I3: one registered node is enough for "healthy".
-
-        Confirms the degraded status above is about the node count and not
-        about the database or the config being broken.
+        Counterpart to I3: a registered node increases the node count.
+        Health remains "healthy" because store status reflects DB reachability.
         """
         response = await auth_client.get("/api/v1/health")
 

@@ -301,7 +301,7 @@ async def health_check():
     nodes_count = len(await store.list_nodes())
     jobs_count, _ = await store.list_jobs()
 
-    store_status = "healthy" if nodes_count > 0 else "degraded"
+    store_status = "healthy"
 
     # Check config status
     config_status = "healthy"
