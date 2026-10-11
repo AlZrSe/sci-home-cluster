@@ -325,6 +325,31 @@ class Settings(BaseSettings):
             return v
         raise ValueError(v)
 
+    # Lovable preview CORS opt-in
+    ENABLE_LOVABLE_PREVIEW_CORS: bool = False
+
+    @property
+    def effective_cors_origins(self) -> list[str]:
+        """
+        Returns the effective CORS origins list, optionally including
+        Lovable preview origins.
+
+        When ENABLE_LOVABLE_PREVIEW_CORS is True, adds known Lovable preview
+        origins to the base BACKEND_CORS_ORIGINS list. This is opt-in to avoid
+        exposing authenticated responses to arbitrary Lovable previews in
+        development.
+        """
+        origins = [str(origin) for origin in self.BACKEND_CORS_ORIGINS]
+        if self.ENABLE_LOVABLE_PREVIEW_CORS:
+            origins.extend(
+                [
+                    "https://preview.lovableproject.com",
+                    # Additional specific preview URLs can be added via
+                    # BACKEND_CORS_ORIGINS env var
+                ]
+            )
+        return origins
+
     # Logging
     LOG_LEVEL: str = "INFO"
 
