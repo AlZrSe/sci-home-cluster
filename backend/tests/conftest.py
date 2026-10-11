@@ -255,7 +255,7 @@ def _rebind_session_event_loop(event_loop):
 
 
 @pytest.fixture(scope="session", autouse=True)
-def dispose_database_engine(event_loop):
+def dispose_database_engine(event_loop, isolated_database):
     """
     Dispose the global async engine once the test session ends.
 
@@ -275,6 +275,10 @@ def dispose_database_engine(event_loop):
     pytest finalises a fixture before the fixtures it depends on, so this
     runs while the loop is still open, and the loop is closed only after the
     engine has been disposed on it.
+
+    Requesting `isolated_database` ensures this fixture tears down BEFORE
+    `isolated_database`, so the engine is disposed while the temp database
+    file still exists (issue #111).
     """
     yield
     if not event_loop.is_closed():
