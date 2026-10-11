@@ -132,3 +132,10 @@ data/
 
 test_venv/
 test_venv2/
+.venv-main-check/
+
+# Working/temporary files
+acceptance_comment.md
+close_comment.md
+mypy_output.txt
+pr_body.md
