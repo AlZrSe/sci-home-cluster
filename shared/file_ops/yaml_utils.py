@@ -47,7 +47,8 @@ def read_yaml(file_path: str, model_class: Type[T]) -> T:
         raise
     except Exception as e:
         logger.error(
-            f"Failed to validate YAML file {file_path} against {model_class.__name__}: {e}"
+            f"Failed to validate YAML file {file_path} against "
+            f"{model_class.__name__}: {e}"
         )
         raise
 
@@ -109,7 +110,11 @@ def write_yaml(file_path: str, data: PydanticBaseModel) -> None:
         raise
 
 
-def update_yaml(file_path: str, model_class: Type[T], update_func: Callable[[T], T]) -> T:
+def update_yaml(
+    file_path: str,
+    model_class: Type[T],
+    update_func: Callable[[T], T],
+) -> T:
     """
     Read a YAML file, update its contents, and write it back atomically.
 
@@ -127,8 +132,6 @@ def update_yaml(file_path: str, model_class: Type[T], update_func: Callable[[T],
         ValidationError: If data doesn't match model schema
         IOError: If file cannot be written
     """
-    from typing import Callable
-
     # Read existing data
     current_data = read_yaml(file_path, model_class)
 
