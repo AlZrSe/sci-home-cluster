@@ -163,7 +163,7 @@ def create_job_spec(
     gpus: Optional[int] = None,
     cpus: Optional[int] = None,
     memory_gb: Optional[int] = None,
-    **kwargs,
+    **kwargs: object,
 ) -> JobSpec:
     """
     Create a JobSpec with optional overrides.
@@ -178,7 +178,7 @@ def create_job_spec(
     Returns:
         JobSpec instance
     """
-    factory_kwargs = {
+    factory_kwargs: dict[str, object] = {
         "resources": ResourcesFactory(
             gpus=gpus if gpus is not None else 1,
             cpus=cpus if cpus is not None else 4,
