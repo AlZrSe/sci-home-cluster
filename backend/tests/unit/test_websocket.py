@@ -4,12 +4,17 @@ SKIPPED: ASGI WebSocket testing has limitations with FastAPI lifespan and app.st
 These tests require a running app with proper lifespan initialization.
 """
 
-import pytest
 import asyncio
 import io
+from datetime import timedelta
 from typing import Any, AsyncGenerator
-from fastapi import HTTPException, WebSocket
+
+import pytest
+from fastapi import WebSocket, WebSocketException
 from httpx import AsyncClient, ASGITransport
+from starlette.testclient import TestClient
+from starlette.websockets import WebSocketDisconnect
+
 from backend.main import app
 from backend.store import get_store
 from shared.schemas.job_status import JobStatus
@@ -528,6 +533,121 @@ class TestWebSocketWithJWTAuth:
 
 
 # ============================================================================
+# Issue #53 - WebSocket auth rejection with proper close frame
+# ============================================================================
+#
+# These tests drive a REAL AsyncClient websocket handshake to verify that
+# unauthenticated connections on non-bypass hosts receive an immediate
+# close frame (code 1008) instead of hanging. The defect was that the
+# global HTTPException handler returned JSONResponse which Starlette
+# discards on websocket scopes.
+#
+# These tests use base_url="http://evil-localhost.com" to simulate a
+# non-bypass host and MUST NOT be marked @pytest.mark.skip.
+# ============================================================================
+
+
+@pytest.mark.unit
+class TestWebSocketAuthRejection:
+    """Tests for WebSocket authentication rejection (issue #53)."""
+
+    @pytest.fixture
+    def client_non_bypass(self) -> TestClient:
+        """Create a test client with a non-bypass host."""
+        return TestClient(app, base_url="http://evil-localhost.com")
+
+    def test_websocket_rejects_no_token(self, client_non_bypass):
+        """Test WebSocket rejects connection with no token on non-bypass host."""
+        with patch.object(settings, "LOCALHOST_BYPASS", True):
+            try:
+                with client_non_bypass.websocket_connect(
+                    "/api/v1/jobs/any/logs", headers={"Host": "evil-localhost.com"}
+                ) as _ws:
+                    pytest.fail("Expected WebSocketDisconnect to be raised")
+            except WebSocketDisconnect as e:
+                assert e.code == 1008
+                assert "Authentication required" in e.reason
+
+    def test_websocket_rejects_invalid_token(self, client_non_bypass):
+        """Test WebSocket rejects connection with invalid token on non-bypass host."""
+        with patch.object(settings, "LOCALHOST_BYPASS", True):
+            try:
+                with client_non_bypass.websocket_connect(
+                    "/api/v1/jobs/any/logs?token=invalid",
+                    headers={"Host": "evil-localhost.com"},
+                ) as _ws:
+                    pytest.fail("Expected WebSocketDisconnect to be raised")
+            except WebSocketDisconnect as e:
+                assert e.code == 1008
+                assert "Invalid or expired token" in e.reason
+
+    def test_websocket_rejects_expired_token(self, client_non_bypass):
+        """Test WebSocket rejects connection with expired token on non-bypass host."""
+        with patch.object(settings, "LOCALHOST_BYPASS", True):
+            # Create an expired token (expires in the past)
+            expired_token = create_access_token(
+                {"sub": "test-user"}, expires_delta=timedelta(seconds=-3600)
+            )
+            try:
+                with client_non_bypass.websocket_connect(
+                    f"/api/v1/jobs/any/logs?token={expired_token}",
+                    headers={"Host": "evil-localhost.com"},
+                ) as _ws:
+                    pytest.fail("Expected WebSocketDisconnect to be raised")
+            except WebSocketDisconnect as e:
+                assert e.code == 1008
+                assert "Invalid or expired token" in e.reason
+
+    def test_websocket_localhost_bypass_works(self):
+        """Test WS connection works with localhost bypass (no regression on #31)."""
+        with patch.object(settings, "LOCALHOST_BYPASS", True):
+            client = TestClient(app, base_url="http://localhost:8000")
+            try:
+                with client.websocket_connect(
+                    "/api/v1/jobs/nonexistent/logs",
+                    headers={"Host": "localhost:8000"},
+                ) as ws:
+                    # If we get here, auth passed but job not found
+                    # The route will close with 1008 "Job not found"
+                    ws.receive_text()
+            except WebSocketDisconnect as e:
+                # Job not found is also 1008 but with different reason
+                assert e.code == 1008
+                assert "Job not found" in e.reason
+
+    def test_websocket_valid_token_works(self):
+        """Test WS connection works with valid token on non-bypass host."""
+        with patch.object(settings, "LOCALHOST_BYPASS", False):
+            token = create_access_token({"sub": "test-user"})
+            client = TestClient(app, base_url="http://evil-localhost.com")
+            try:
+                with client.websocket_connect(
+                    f"/api/v1/jobs/any/logs?token={token}",
+                    headers={"Host": "evil-localhost.com"},
+                ) as ws:
+                    # Connection accepted (auth passes); route fails with
+                    # "Job not found" after auth
+                    assert ws is not None
+                    try:
+                        ws.receive_text()
+                    except WebSocketDisconnect as e:
+                        # Job not found is expected after successful auth
+                        assert e.code == 1008
+                        assert "Job not found" in e.reason
+            except WebSocketDisconnect as e:
+                if e.code == 1008 and "Job not found" in e.reason:
+                    # Auth passed, job not found - this is expected
+                    pass
+                elif (
+                    "Authentication required" in e.reason
+                    or "Invalid or expired token" in e.reason
+                ):
+                    pytest.fail(f"Valid token was rejected: {e}")
+                else:
+                    pytest.fail(f"Unexpected WebSocketDisconnect: {e}")
+
+
+# ============================================================================
 # Issue #31 - the WebSocket half of the localhost bypass
 # ============================================================================
 #
@@ -625,17 +745,19 @@ class TestWebSocketLocalhostBypass:
     )
     def test_ws_non_localhost_hosts_are_refused(self, host_header):
         with patch.object(settings, "LOCALHOST_BYPASS", True):
-            with pytest.raises(HTTPException) as excinfo:
+            with pytest.raises(WebSocketException) as excinfo:
                 asyncio.run(get_ws_token_payload(websocket=_ws(host_header)))
-        assert excinfo.value.status_code == 401
+        assert excinfo.value.code == 1008
+        assert "Authentication required" in excinfo.value.reason
 
     @pytest.mark.parametrize("host_header", ["[::1]:8000", "localhost:8000"])
     def test_ws_bypass_does_not_fire_when_disabled(self, host_header):
         """With LOCALHOST_BYPASS off, a local host is no longer special."""
         with patch.object(settings, "LOCALHOST_BYPASS", False):
-            with pytest.raises(HTTPException) as excinfo:
+            with pytest.raises(WebSocketException) as excinfo:
                 asyncio.run(get_ws_token_payload(websocket=_ws(host_header)))
-        assert excinfo.value.status_code == 401
+        assert excinfo.value.code == 1008
+        assert "Authentication required" in excinfo.value.reason
 
     @pytest.mark.asyncio
     async def test_ws_ipv6_loopback_bypass_is_identical_to_ipv4(self):
@@ -661,6 +783,7 @@ class TestWebSocketLocalhostBypass:
         sends this form; the bracketed spelling is the reachable one.
         """
         with patch.object(settings, "LOCALHOST_BYPASS", True):
-            with pytest.raises(HTTPException) as excinfo:
+            with pytest.raises(WebSocketException) as excinfo:
                 await get_ws_token_payload(websocket=_ws("::1"))
-        assert excinfo.value.status_code == 401
+        assert excinfo.value.code == 1008
+        assert "Authentication required" in excinfo.value.reason
