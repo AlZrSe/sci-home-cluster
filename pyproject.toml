@@ -15,17 +15,17 @@ dependencies = [
     "sqlalchemy>=2.0.37,<2.1",
     "alembic==1.13.1",
     "aiosqlite==0.19.0",
-    "pyyaml==5.3.1",
+    "pyyaml>=5.3.1,<7.0.0",
     "pydantic>=2.0.0,<3.0.0",
     "pydantic-settings==2.0.0",
     "python-jose[cryptography]==3.3.0",
     "passlib[bcrypt]==1.7.4",
-    "psutil==5.9.0",
+    "psutil>=5.9.0,<8.0.0",
     "gputil==1.4.0",
     "portalocker==2.0.0",
     "typer==0.9.0",
     "rich==13.0.0",
-    "watchdog==4.0.0",
+    "watchdog>=4.0.0,<7.0.0",
 ]
 
 # Development dependencies
@@ -68,13 +68,13 @@ exclude = ["^(test_venv|test_venv2|venv_test|venv|node_modules|frontend)/", "bac
 
 # These modules are not yet typed to the project's standard. Each entry
 # is deliberately narrow - do not widen these patterns, fix the module.
-[[tool.mypy-overrides]]
-module = "backend.core.deps"
-ignore_errors = true
+# [[tool.mypy-overrides]]
+# module = "backend.core.deps"
+# ignore_errors = true
 
-[[tool.mypy-overrides]]
-module = "backend.api.v1.jobs"
-ignore_errors = true
+# [[tool.mypy-overrides]]
+# module = "backend.api.v1.jobs"
+# ignore_errors = true
 
 # Test files - ignore ASGITransport and other test-specific type issues
 [[tool.mypy-overrides]]
@@ -131,14 +131,14 @@ module = "backend.tests.integration.test_auth_flow"
 ignore_errors = true
 
 # Core config - return type issues
-[[tool.mypy-overrides]]
-module = "backend.core.config"
-ignore_errors = true
+# [[tool.mypy-overrides]]
+# module = "backend.core.config"
+# ignore_errors = true
 
 # Factories - type issues
-[[tool.mypy-overrides]]
-module = "backend.tests.factories"
-ignore_errors = true
+# [[tool.mypy-overrides]]
+# module = "backend.tests.factories"
+# ignore_errors = true
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
