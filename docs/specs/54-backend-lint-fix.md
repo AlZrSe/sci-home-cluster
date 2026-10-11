@@ -1,189 +1,221 @@
-# Specification: Fix Backend Ruff and Mypy Errors (Issue #54)
+# Specification: Make the lint and type gates green (Issue #54)
 
-## Issue Summary
-Backend `ruff check`, `ruff format`, and `mypy` are failing on `main` branch. A CI gate (issue #26) would land red if added now. This spec defines the work to make all three commands pass cleanly.
+> **This supersedes the `593c4dd` version of this spec.** That version described
+> the pre-#54 state (41 ruff errors, 139 mypy errors, 4 files needing format) and
+> drove commit `593c4dd`, which fixed the bulk of it. The residual is 7 items, all
+> in `shared/file_ops/`. The counts in the old document are stale and must not be
+> used as a baseline.
 
-## Current State
-- **Ruff check**: 41 errors (1 fixable with `--fix`, 7 more with `--unsafe-fixes`)
-- **Ruff format**: 4 files would be reformatted
-- **Mypy**: 139 errors in 27 files
+## Issue summary
 
-## User Stories
+Issue #54: *"Backend ruff and mypy are red on main, so a CI gate added under #26
+would land red."* PR #116 (#114) landed meanwhile and is unrelated. The gates are
+**still red** — this issue makes them exit 0 so #26 can add a gate that lands green.
 
-### US-1: Clean CI Gate
-**As a** developer  
-**I want** `ruff check . && ruff format . && mypy .` to pass on `main`  
-**So that** a CI gate can be added without false failures
+## Ground truth on `main` @ `216093d`
 
-### US-2: Maintainable Code Quality
-**As a** maintainer  
-**I want** zero lint/type errors in the codebase  
-**So that** new contributions don't accumulate technical debt
+Measured on Linux, Python 3.13.5, ruff 0.5.0, mypy 1.0.0.
 
-### US-3: Refactored Complex Code
-**As a** developer  
-**I want** the `manual_scan` method in `syncthing_service.py` to be under complexity threshold  
-**So that** it's easier to maintain and test
+```
+$ .venv/bin/python -m ruff check .
+shared/file_ops/locking.py:43:5: C901 `file_lock` is too complex (14 > 10)
+shared/file_ops/locking.py:128:5: C901 `shared_lock` is too complex (14 > 10)
+shared/file_ops/yaml_utils.py:50:89: E501 Line too long (91 > 88)
+shared/file_ops/yaml_utils.py:112:89: E501 Line too long (90 > 88)
+shared/file_ops/yaml_utils.py:130:24: F401 [*] `typing.Callable` imported but unused
+Found 5 errors.
 
-## Acceptance Criteria
+$ .venv/bin/python -m ruff format --check .
+Would reformat: shared/file_ops/yaml_utils.py
 
-### AC-1: Ruff Check Passes
-- [ ] `ruff check backend/` exits 0 with no errors
-- [ ] No unused imports (F401), unused variables (F841), undefined names (F821)
-- [ ] No line-too-long violations (E501) — wrap or restructure lines > 88 chars
-- [ ] No import-not-at-top violations (E402)
-- [ ] Complexity (C901) ≤ 10 for all functions
-
-### AC-2: Ruff Format Passes
-- [ ] `ruff format backend/ --check` exits 0
-- [ ] All 4 currently-misformatted files are reformatted:
-  - `backend/core/errors.py`
-  - `backend/tests/unit/test_api_contract.py`
-  - `backend/tests/unit/test_api_fixes.py`
-  - `backend/tests/unit/test_config.py`
-
-### AC-3: Mypy Passes
-- [ ] `mypy backend/` exits 0 with no errors
-- [ ] All missing type annotations added
-- [ ] All type incompatibilities resolved
-- [ ] Missing stubs for `yaml` installed (`types-PyYAML`)
-- [ ] Async generator return types annotated as `AsyncGenerator`
-- [ ] ASGITransport type mismatches resolved in test files
-- [ ] SQLAlchemy model attribute access issues fixed in `database_store.py`
-
-### AC-4: No Regression
-- [ ] All existing tests pass: `pytest backend/tests/ --cov=backend`
-- [ ] No functional behavior changes
-
-## Error Inventory & Fix Strategy
-
-### Category A: Ruff — Auto-fixable / Trivial (≈20 errors)
-| File | Error | Fix |
-|------|-------|-----|
-| `backend/tests/unit/test_api.py:630` | F841 `invalid_spec` unused | Remove or prefix `_` |
-| `backend/tests/unit/test_contract_fixes.py:12` | F401 `settings` unused | Remove import |
-| `backend/tests/unit/test_shared_file_ops.py:190` | E402 `import sys` not at top | Move to top |
-| `backend/tests/unit/test_store.py:702-703` | F841 `job`, `counter_after_create` unused | Remove or prefix `_` |
-| `backend/tests/unit/test_store.py:961` | E402 `import asyncio` not at top | Move to top |
-| `backend/tests/unit/test_websocket.py` (6×) | F821 `job_spec_to_yaml_bytes` undefined | Import from `tests.factories` or define locally |
-| `backend/tests/unit/test_websocket.py` (4×) | F841 `ws` unused | Prefix `_` |
-| `backend/tests/unit/test_websocket.py` (2×) | F841 `message` unused | Prefix `_` or remove |
-| `backend/services/syncthing_service.py:356` | C901 complexity 13 > 10 | Refactor into helper methods |
-
-### Category B: Ruff — Line Length (E501) (≈15 errors)
-All in test files, mostly long comment lines or skip reasons. Fix by:
-- Splitting long comments across multiple lines
-- Using shorter variable names in comprehension lines
-- Acceptable to use `# noqa: E501` on skip-reason strings if splitting harms readability
-
-### Category C: Ruff Format (4 files)
-Run `ruff format backend/` to auto-fix.
-
-### Category D: Mypy — Missing Stubs (3 files)
-| File | Error | Fix |
-|------|-------|-----|
-| `shared/file_ops/yaml_utils.py:7` | Library stubs not installed for "yaml" | `pip install types-PyYAML` |
-| `backend/tests/integration/test_syncthing_flow.py:7` | Same | Same |
-| `backend/tests/unit/test_syncthing.py:106` | Same | Same |
-| `backend/tests/unit/test_shared_schemas.py:409` | Same | Same |
-
-### Category E: Mypy — Shared Metrics Types (≈15 errors)
-Files: `shared/metrics/sliding_window.py`, `shared/metrics/summarizer.py`
-- Add type annotations for `_data`, `_timestamps`
-- Fix `add` method signature compatibility
-- Handle `Optional[float]` → `int` conversions safely
-- Fix `no-any-return` by adding proper return type handling
-
-### Category F: Mypy — Core Config & Deps (≈5 errors)
-- `backend/core/config.py:124` — Return `str` not `Any`
-- `backend/core/config.py:322` — Fix `ALLOWED_HOSTS` return type
-- `backend/core/deps.py:29,61` — Handle `Optional[str]` for `is_localhost`
-
-### Category G: Mypy — Store / Database (≈40 errors)
-File: `backend/store/database_store.py` — **Highest complexity**
-- SQLAlchemy model attribute access (`JobModel.timestamp`, `gpu_index`, etc.)
-- Column vs. instance attribute confusion
-- `CPUMetricModel` / `GPUMetricModel` assignment mismatches
-- Return type mismatches (Tuple with `Optional[int]` vs `int`)
-- Float → int assignments
-- Fix by: using proper SQLAlchemy column access patterns, ensuring model definitions match usage
-
-### Category H: Mypy — Services (≈15 errors)
-- `backend/services/syncthing_service.py`: `Observer` type, `Path` vs `str` for `read_yaml`
-- `backend/services/node_service.py`: `no-any-return` on all methods
-- `backend/services/job_service.py`: `no-any-return` on all methods
-- `backend/api/v1/syncthing.py`: `no-any-return`
-- Fix by: adding proper return type annotations, importing `Observer` from `watchdog.observers` correctly
-
-### Category I: Mypy — Test Files (≈40 errors)
-- Async generator fixtures: annotate return as `AsyncGenerator[...]`
-- `ASGITransport` type mismatch: FastAPI app vs ASGI callable — cast or use `app.router`
-- `test_contract_fixes.py:251` — Return `int` not `Optional[int]`
-- `test_api_fixes.py:251` — Same
-
-## Test Scenarios
-
-| Scenario | Command | Expected |
-|----------|---------|----------|
-| Ruff check clean | `ruff check backend/` | Exit 0, no output |
-| Ruff format clean | `ruff format backend/ --check` | Exit 0 |
-| Mypy clean | `mypy backend/` | Exit 0, no errors |
-| Full lint pipeline | `ruff check backend/ && ruff format backend/ --check && mypy backend/` | Exit 0 |
-| Unit tests pass | `pytest backend/tests/unit -v` | All pass |
-| Integration tests pass | `pytest backend/tests/integration -v` | All pass |
-| Coverage maintained | `pytest backend/tests/ --cov=backend` | ≥ 80% |
-
-## Definition of Done
-1. All three lint commands pass (`ruff check`, `ruff format --check`, `mypy`)
-2. All existing tests pass
-3. No functional changes introduced
-4. Specification document updated if any decisions deviate from this plan
-5. Commit with message: `fix: resolve backend ruff and mypy errors for CI gate (#54)`
-
-## Implementation Notes for SWE
-
-### Priority Order
-1. **Run `ruff format backend/`** — auto-fixes 4 files, no risk
-2. **Run `ruff check backend/ --fix`** — auto-fixes 1 error, safe
-3. **Fix trivial ruff errors** (unused vars, imports, E402) — mechanical
-4. **Fix `job_spec_to_yaml_bytes` undefined** — find/define helper
-5. **Refactor `manual_scan` complexity** — extract helpers, preserve behavior
-6. **Fix E501 line lengths** — split comments, minor restructuring
-7. **Install `types-PyYAML`** — resolves 4 mypy import errors
-8. **Fix shared metrics types** — core library, fix first
-9. **Fix core config/deps** — few errors, high impact
-10. **Fix store/database_store.py** — most errors, requires SQLAlchemy knowledge
-11. **Fix services** — straightforward type annotations
-12. **Fix test file mypy errors** — async generators, ASGITransport casts
-13. **Run full test suite** — verify no regressions
-
-### `job_spec_to_yaml_bytes` Resolution
-Search for this function in codebase. If not found, add to `backend/tests/factories.py`:
-```python
-def job_spec_to_yaml_bytes(spec: JobSpec) -> bytes:
-    import yaml
-    return yaml.safe_dump(spec.model_dump(mode="json"), sort_keys=False).encode()
+$ .venv/bin/python -m mypy .
+shared/file_ops/yaml_utils.py:7: error: Library stubs not installed for "yaml"  [import]
+Found 1 error in 1 file (checked 73 source files)
 ```
 
-### `manual_scan` Refactoring
-Extract these helpers from the 13-complexity method:
-- `_scan_folder_structure()`
-- `_process_yaml_files()`
-- `_update_job_states()`
-- `_sync_with_database()`
+**7 items: 5 ruff + 1 ruff-format + 1 mypy.** All in `shared/file_ops/`.
 
-### SQLAlchemy Model Issues
-The `database_store.py` errors suggest model definitions (`JobModel`, `NodeModel`, `GPUMetricModel`, `CPUMetricModel`) don't match the attributes being accessed. Check `backend/store/database.py` for actual column definitions and align.
+Test baseline: `pytest` (no args) → **691 passed, 29 skipped**, exit 0.
+`pytest backend/tests -q` → **521 passed, 29 skipped**.
 
-### ASGITransport Fix Pattern
+## Resolution plan, per item
+
+### 1–2. C901 `file_lock` / `shared_lock` complexity 14 > 10 → **refactor, do not suppress**
+
+`shared/file_ops/locking.py` is 209 lines. `file_lock` (L43–124) and
+`shared_lock` (L128–209) are ~82-line near-copies that differ only in the lock
+mode passed to portalocker (`LOCK_EX` vs `LOCK_SH`). The complexity is
+**duplication, not inherent difficulty**.
+
+Suppressing C901 would leave the duplication in place *and* hide the marker on
+exactly the code issue #71 just touched. So: extract the shared core.
+
+**Intended shape** — one private core that takes the lock flags, plus two thin
+public wrappers that keep their existing signatures, docstrings and error
+messages:
+
 ```python
-from httpx import ASGITransport
-transport = ASGITransport(app=app.router)  # or cast(app, "ASGIApp")
+def _portalocker_flags(shared: bool) -> int: ...      # LOCK_SH or LOCK_EX | LOCK_NB
+def _acquire(f, shared, timeout) -> bool: ...          # the retry loop, platform branches
+def _release(f) -> None: ...                          # the release branches
+def _lock(file_path, mode, timeout, *, shared, label) -> Generator: ...   # the core
+@contextmanager
+def file_lock(file_path, mode="r", timeout=10.0) -> Generator: ...        # calls _lock(shared=False)
+@contextmanager
+def shared_lock(file_path, mode="r", timeout=10.0) -> Generator: ...      # calls _lock(shared=True)
 ```
 
-## References
-- `pyproject.toml` — ruff/mypy config
-- `PROCESS.md` — Definition of Done
-- `docs/spec.md` — Architecture spec
-- Issue #26 — CI gate (blocked by this)
-- Issue #56 — Signing key hygiene (related to config.py changes)
+`label` carries `"shared lock"` vs `"lock"` so both existing `TimeoutError`
+messages and both `logger.warning` texts stay byte-identical. A prototype of
+this shape reached **complexity 5** (limit 10, so 2× headroom) and took the file
+from 209 to ~130 lines, with all three gates green.
+
+#### HARD CONSTRAINT — the `lock_acquired` guard must survive
+
+A first prototype of this refactor **dropped the `lock_acquired` flag** (L71,
+L100, L112). That flag is load-bearing: without it, a thread whose acquire loop
+timed out would reach `finally` and call `portalocker.unlock(f)` on a descriptor
+it never locked — which on POSIX **releases another thread's lock**. The guard
+must be preserved exactly:
+
+```python
+lock_acquired = False
+try:
+    ...
+    if not lock_acquired:
+        f.close()
+        raise TimeoutError(...)
+    yield f
+finally:
+    try:
+        if lock_acquired:      # <-- MUST remain
+            _release(f)
+    except Exception as e:
+        logger.warning(...)
+    finally:
+        f.close()
+```
+
+QA/verification must prove this, not assume it (see AC-5).
+
+### 3–4. E501 line-too-long (2×) → mechanical
+
+`yaml_utils.py:50` (91 chars) and `:112` (90 chars). Split the offending
+expressions. Do not silence E501.
+
+### 5. F401 unused `typing.Callable` (1×) → mechanical
+
+`yaml_utils.py:10` imports `Callable` and `yaml_utils.py:130` re-imports it
+*inside* `update_yaml`. The top-level import is the unused one (F401). Delete it
+from line 10. Note the local re-import at L130 is then redundant but is **not**
+flagged; removing it too is fine and tidier, but is not required.
+
+### 6. `ruff format --check` → run `ruff format` on `yaml_utils.py`
+
+Mechanical. Must not reformat the rest of the repo into a diff (verify with
+`git status` that only the intended files changed).
+
+### 7. mypy `Library stubs not installed for "yaml"` → **environment, not code**
+
+`types-PyYAML==6.0.12.20260906` is **already pinned** at `pyproject.toml:45` in
+the `dev` extra (added by PRs #74/#84). The local `.venv` predates it —
+`pip list` shows only `PyYAML 5.3.1`.
+
+**The fix is to build the venv correctly, not to change source or config.**
+Verified: `pip install -e ".[dev]"` completes cleanly (pip 26.2.1, Python 3.13.5)
+and in such a venv mypy is green with **zero** source or config changes.
+
+Do **not** add a `[[tool.mypy-overrides]]` for `yaml`. `ignore_missing_imports =
+true` is already set globally *and the error still fires* — a further override
+would be dead configuration that hides a real missing dependency.
+
+## Scope
+
+**In scope:** the 7 items above, and regression tests for the locking refactor.
+
+**Explicitly out of scope:**
+- Issue **#107** (dev-install / environment). Its central claim — that
+  `pip install -e ".[dev]"` fails — is **no longer true**; all three of its
+  defects were fixed by PRs #81, #80, #78. #107 should be closed separately.
+- Issue **#26** (CI workflow). This issue only makes the gates green so #26 can
+  land a green gate.
+- The pre-existing `[annotation-unchecked]` mypy **notes** under `backend/` —
+  they are informational and do not affect the exit code.
+- Windows behaviour. This refactor must stay platform-neutral but cannot be
+  executed against Windows here (see Risks).
+
+## Acceptance criteria
+
+- [ ] **AC-1 (headline).** In a **fresh venv** built with
+      `python -m venv venv && pip install -e ".[dev]"`, all three of
+      `ruff check .`, `ruff format --check .`, `mypy .` **exit 0**.
+      Running them in the pre-existing `.venv` does **not** satisfy this — that
+      venv is stale and is exactly the trap issue #107 describes.
+- [ ] **AC-2.** `ruff check .` reports `All checks passed!`.
+- [ ] **AC-3.** `ruff format --check .` reports all files already formatted.
+- [ ] **AC-4.** `mypy .` reports `Success: no issues found`.
+- [ ] **AC-5.** The `lock_acquired` guard is preserved: a thread that times out
+      acquiring a lock **must not** release a lock it does not hold. Proven by a
+      test, not by reading the diff (see test scenarios).
+- [ ] **AC-6.** `file_lock` and `shared_lock` keep their **public signatures,
+      docstrings, and exact `TimeoutError` / `logger.warning` message text** —
+      callers (`backend/services/syncthing_service.py`, the CLI, and the tests)
+      depend on them. Grep for callers and confirm none broke.
+- [ ] **AC-7.** `shared_lock` still requests a *shared* lock and `file_lock` an
+      *exclusive* one. A test must observe the actual flag reaching portalocker
+      (mock/spy), not infer it from the function name.
+- [ ] **AC-8.** `pytest` (no args) still reports **691 passed, 29 skipped**, exit 0.
+      Any delta must be explained.
+- [ ] **AC-9.** `pytest backend/tests -q` still reports **521 passed, 29 skipped**.
+- [ ] **AC-10.** `ruff check agent/` still passes; `mypy agent/` still succeeds —
+      the #114 fix must not regress.
+- [ ] **AC-11.** The only files changed are `shared/file_ops/locking.py`,
+      `shared/file_ops/yaml_utils.py`, any **new** test file, and this spec.
+      No drive-by reformatting elsewhere (`git diff --stat` proof).
+
+## Test scenarios
+
+1. **Contention timeout does not steal another thread's lock** (AC-5). Hold an
+   exclusive `file_lock` on a path in thread A; in thread B attempt
+   `file_lock` on the same path with a short timeout and assert it raises
+   `TimeoutError`. Then assert thread A's lock is **still held** — re-acquiring
+   in a third party must still time out, and the file must still be exclusively
+   locked. This is the test that fails if `lock_acquired` is dropped.
+2. **Lock mode is correct** (AC-7). Spy on `portalocker.lock` and assert
+   `file_lock` passes a flag containing `LOCK_EX` and `shared_lock` one
+   containing `LOCK_SH`.
+3. **Messages preserved** (AC-6). Assert `file_lock` raises `TimeoutError`
+   whose text contains `"Could not acquire lock on"` and `shared_lock` one
+   containing `"Could not acquire shared lock on"`.
+4. **Existing locking tests still pass** — there is already
+   `backend/tests/unit/test_shared_file_ops.py::test_lock_timeout` and
+   `test_portalocker_retry_on_contention`. Do not delete or weaken them.
+
+## Risks
+
+- **R1 — dropping `lock_acquired`.** The single highest risk. Mitigated by AC-5
+  and test scenario 1. Issue #71 recently modified this file, so re-read it
+  before refactoring.
+- **R2 — behaviour drift in the platform branches.** The `msvcrt` / `fcntl`
+  fallbacks are unreachable on Linux when portalocker is installed. Preserve
+  them verbatim; do not "simplify" them away, even though they are untestable
+  here.
+- **R3 — Windows unverified.** The refactor must be platform-neutral by
+  construction. It cannot be executed against Windows from this environment.
+  Say so explicitly in the PR rather than claiming cross-platform verification.
+- **R4 — `BaseLockException` import.** `locking.py` L17 imports
+  `portalocker.exceptions.BaseLockException` inside a `try:` and sets it to
+  `None` on `ImportError` (L22). The `except (OSError, IOError,
+  BaseLockException)` tuple at L95/L180 therefore contains `None` when
+  portalocker is absent. Do not change this; it is pre-existing and out of
+  scope, but be aware a refactor that "tidies" it could alter behaviour.
+- **R5 — the stale `.venv`.** Verifying AC-1 in the existing `.venv` proves
+  nothing. Build a fresh venv, or at minimum `pip install -e ".[dev]"` into it
+  and confirm `types-PyYAML` is present.
+
+## Open questions
+
+1. Should #107 be closed as fixed? Its premise no longer holds. (Recommend yes;
+   PM decision.)
+2. Should the `.venv` in the repo be deleted as part of #26, to stop it being a
+   trap? (Out of scope here.)
