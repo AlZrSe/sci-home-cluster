@@ -18,16 +18,14 @@ def normalize_path(path: Union[str, Path]) -> Path:
     Returns:
         Normalized Path object
     """
-    path_obj = Path(path)
+    # Convert to string first to handle both str and Path inputs uniformly
+    path_str = str(path)
 
-    # Expand user home directory (~)
-    if path_obj == Path("~"):
-        path_obj = Path.home()
-    elif str(path_obj).startswith("~/"):
-        path_str = str(path_obj)
-        path_obj = Path.home() / path_str[2:]
+    # Expand ~ and ~user/ using the standard library (cross-platform)
+    expanded = os.path.expanduser(path_str)
 
-    # Make absolute if it's not already
+    # Convert to Path and resolve to absolute
+    path_obj = Path(expanded)
     if not path_obj.is_absolute():
         path_obj = path_obj.resolve()
 
@@ -153,5 +151,5 @@ def is_within_syncthing_root(path: Union[str, Path]) -> bool:
     try:
         path_obj = normalize_path(path)
         return syncthing_root in path_obj.parents or path_obj == syncthing_root
-    except Exception:
+    except (OSError, RuntimeError):
         return False

@@ -7,8 +7,10 @@ import tempfile
 import os
 import sys
 import yaml
+from pathlib import Path
 from pydantic import ValidationError
 from shared.file_ops.locking import file_lock, shared_lock
+from shared.file_ops.path_utils import normalize_path
 from shared.file_ops.yaml_utils import read_yaml, write_yaml, update_yaml
 from shared.schemas.job_spec import JobSpec
 from shared.schemas.job_resources import JobResources
@@ -277,3 +279,116 @@ def test_portalocker_retry_on_contention():
         assert end_time - start_time <= 2.0  # Should not take much longer
 
         thread.join()
+
+
+class TestNormalizePath:
+    """Tests for normalize_path function covering tilde expansion
+    and path normalization.
+    """
+
+    def test_bare_tilde_expands_to_home(self):
+        """T1: Bare tilde expands to home directory."""
+        result = normalize_path("~")
+        assert result == Path.home()
+        assert result.is_absolute()
+
+    def test_tilde_prefix_expands_to_home_plus_path(self):
+        """T2: ~/path expands to home directory + path."""
+        result = normalize_path("~/projects")
+        assert result == Path.home() / "projects"
+        assert result.is_absolute()
+
+    def test_tilde_nested_path(self):
+        """T3: ~/a/b/c expands correctly with nested paths."""
+        result = normalize_path("~/a/b/c")
+        assert result == Path.home() / "a" / "b" / "c"
+        assert result.is_absolute()
+
+    @pytest.mark.skipif(
+        sys.platform == "win32", reason="~user/ expansion is Unix-specific"
+    )
+    def test_tilde_other_user_unix(self):
+        """T4: ~user/path expands to that user's home (Unix only, best effort)."""
+        # On Unix, ~root typically expands to /root
+        # If the user doesn't exist, expanduser returns the path unchanged
+        result = normalize_path("~root/foo")
+        # Should not raise; result may be expanded or unchanged
+        # depending on user existence
+        assert isinstance(result, Path)
+        assert result.is_absolute()
+
+    def test_absolute_path_unchanged(self):
+        """T5: Absolute paths unchanged (resolved)."""
+        result = normalize_path("/absolute/path")
+        assert result == Path("/absolute/path").resolve()
+        assert result.is_absolute()
+
+    def test_relative_path_becomes_absolute(self):
+        """T6: Relative paths without tilde become absolute via resolve()."""
+        result = normalize_path("relative/path")
+        assert result == Path("relative/path").resolve()
+        assert result.is_absolute()
+
+    def test_path_object_with_tilde(self):
+        """T7: Path objects with tilde are handled correctly."""
+        result = normalize_path(Path("~/test"))
+        assert result == Path.home() / "test"
+        assert result.is_absolute()
+
+    def test_path_object_absolute(self):
+        """T8: Path objects with absolute paths work correctly."""
+        result = normalize_path(Path("/abs"))
+        assert result == Path("/abs").resolve()
+        assert result.is_absolute()
+
+    def test_empty_string_returns_cwd(self):
+        """T9: Empty string returns current working directory."""
+        result = normalize_path("")
+        assert result == Path.cwd()
+        assert result.is_absolute()
+
+    def test_dot_returns_cwd(self):
+        """T10: Dot returns current working directory."""
+        result = normalize_path(".")
+        assert result == Path.cwd()
+        assert result.is_absolute()
+
+    def test_dotdot_returns_parent(self):
+        """T11: Double dot returns parent of current working directory."""
+        result = normalize_path("..")
+        assert result == Path.cwd().parent
+        assert result.is_absolute()
+
+    def test_windows_style_tilde_backslash(self):
+        """T12: Windows-style backslash paths with tilde (if on Windows)."""
+        if sys.platform == "win32":
+            # On Windows, os.path.expanduser handles ~\path
+            result = normalize_path(r"~\path")
+            assert result.is_absolute()
+            # Should expand to USERPROFILE\path
+            assert str(result).startswith(str(Path.home()))
+
+    def test_expanduser_idempotent(self):
+        """Double expansion doesn't change result (expanduser is idempotent)."""
+        result1 = normalize_path("~/projects")
+        result2 = normalize_path(result1)
+        assert result1 == result2
+
+    def test_no_exception_for_valid_paths(self):
+        """AC-9: No TypeError, AttributeError, or other exceptions for valid paths."""
+        test_paths = [
+            "~",
+            "~/projects",
+            "~/a/b/c",
+            "/absolute/path",
+            "relative/path",
+            Path("~/test"),
+            Path("/abs"),
+            "",
+            ".",
+            "..",
+        ]
+        for p in test_paths:
+            result = normalize_path(p)
+            assert isinstance(result, Path)
+            assert result.is_absolute()
