@@ -160,7 +160,11 @@ def _resolve_secret_key() -> str:
     replaced, not merely reported, because the code that starts the process runs
     on every deployment while a README warning reaches nobody. An explicit
     SECRET_KEY is never rotated - it is not persisted, so it cannot be a
-    published key, and an operator who set it owns it (issue #56).
+    published key, and an operator who sets it owns it (issue #56).
+
+    Non-UTF-8 or corrupt key files are treated as absent and replaced with
+    a newly generated key (issue #67). The write is atomic via a temp file
+    and os.replace to avoid leaving a partially written key.
     """
     configured = os.environ.get("SECRET_KEY")
     if configured:
@@ -168,21 +172,41 @@ def _resolve_secret_key() -> str:
 
     state_path = Path(_state_dir()) / "secret_key"
     try:
-        existing = state_path.read_text(encoding="utf-8").strip()
+        # Read as bytes first to catch UnicodeDecodeError explicitly.
+        raw = state_path.read_bytes()
+        existing = raw.decode("utf-8").strip()
         if existing and _digest_secret_key(existing) not in PUBLISHED_KEY_SHA256:
             # Steady state: a normal restart reads the key back silently. A log
             # line here would be noise on every boot.
             return existing
         published = bool(existing)
-    except OSError:
+    except (OSError, UnicodeDecodeError) as e:
+        if isinstance(e, UnicodeDecodeError):
+            logger.warning(
+                "The JWT signing key at %s contains invalid UTF-8; "
+                "it will be replaced with a newly generated key.",
+                state_path,
+            )
         published = False
 
     generated = secrets.token_urlsafe(32)
     try:
         state_path.parent.mkdir(parents=True, exist_ok=True)
-        state_path.write_text(generated, encoding="utf-8")
-        # Restrict to the owner: this file signs every access token.
-        state_path.chmod(0o600)
+        # Atomic write: temp file -> fsync (via close) -> rename.
+        # os.replace is atomic on POSIX and Windows (since Python 3.3).
+        tmp_path = state_path.with_suffix(".tmp")
+        tmp_path.write_text(generated, encoding="utf-8")
+        # Restrict to the owner before the rename so the final file has 0o600.
+        try:
+            tmp_path.chmod(0o600)
+        except OSError:
+            # chmod may fail on some filesystems (FAT, network mounts); log
+            # at debug and continue - the key in memory is still usable.
+            logger.debug(
+                "Could not set 0o600 permissions on %s; continuing anyway.",
+                tmp_path,
+            )
+        os.replace(tmp_path, state_path)
     except OSError:
         logger.warning(
             "Could not persist the generated SECRET_KEY to %s; "

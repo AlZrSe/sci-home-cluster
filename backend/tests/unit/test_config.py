@@ -14,6 +14,7 @@ from backend.core.config import (
     DEFAULT_DATABASE_URL,
     DEFAULT_STATE_DIR,
     Settings,
+    _resolve_secret_key,
     _state_dir,
     absolute_sqlite_path,
     sqlite_path_from_url,
@@ -318,3 +319,201 @@ def test_env_file_independent_of_cwd(tmp_path, monkeypatch):
 def test_sqlite_path_from_url(url, expected):
     """The URL parser handles every shape SQLAlchemy accepts."""
     assert sqlite_path_from_url(url) == expected
+
+
+# ---------------------------------------------------------------------------
+# Issue #67: _resolve_secret_key() resilience — handle non-UTF-8 secret file.
+# ---------------------------------------------------------------------------
+
+
+class TestResolveSecretKeyUnicode:
+    """Tests for UnicodeDecodeError handling and atomic write."""
+
+    def test_corrupt_utf8_replaced(self, tmp_path, monkeypatch, caplog):
+        """T1 / AC-1, AC-2, AC-8: Corrupt UTF-8 file is replaced with valid key."""
+        state_dir = tmp_path / ".shc"
+        state_dir.mkdir()
+        monkeypatch.setenv("SHC_STATE_DIR", str(state_dir))
+        # Write invalid UTF-8 bytes
+        (state_dir / "secret_key").write_bytes(b"\xff\xfe\xfd")
+
+        with caplog.at_level(logging.WARNING, logger="backend.core.config"):
+            key = _resolve_secret_key()
+
+        # Key must be valid URL-safe base64 (43 chars for token_urlsafe(32))
+        assert len(key) == 43
+        # File must now contain the new key
+        assert (state_dir / "secret_key").read_text() == key
+        # Warning must be logged about the decode failure
+        assert any("invalid UTF-8" in r.getMessage() for r in caplog.records)
+
+    def test_empty_file_replaced(self, tmp_path, monkeypatch):
+        """T2 / AC-3: Empty file is treated as absent and replaced."""
+        state_dir = tmp_path / ".shc"
+        state_dir.mkdir()
+        monkeypatch.setenv("SHC_STATE_DIR", str(state_dir))
+        (state_dir / "secret_key").write_text("")
+
+        key = _resolve_secret_key()
+
+        assert (state_dir / "secret_key").read_text() == key
+        assert len(key) == 43
+
+    def test_valid_key_reused(self, tmp_path, monkeypatch):
+        """T3 / AC-4: Valid existing key is reused (no regression)."""
+        state_dir = tmp_path / ".shc"
+        state_dir.mkdir()
+        monkeypatch.setenv("SHC_STATE_DIR", str(state_dir))
+        valid = "valid_urlsafe_base64_key_that_is_long_enough"
+        (state_dir / "secret_key").write_text(valid)
+
+        k1 = _resolve_secret_key()
+        k2 = _resolve_secret_key()
+
+        assert k1 == k2 == valid
+
+    def test_published_key_rotated(self, tmp_path, monkeypatch, caplog):
+        """T4 / AC-5: Published key (in PUBLISHED_KEY_SHA256) is rotated."""
+        import backend.core.config as config_module
+
+        state_dir = tmp_path / ".shc"
+        state_dir.mkdir()
+        monkeypatch.setenv("SHC_STATE_DIR", str(state_dir))
+        # Use a test key and add its digest to the published set for this test
+        published = "test_published_key_that_is_long_enough_to_be_valid"
+        published_digest = config_module._digest_secret_key(published)
+        # Temporarily add to the frozenset by patching the module variable
+        original_published = config_module.PUBLISHED_KEY_SHA256
+        config_module.PUBLISHED_KEY_SHA256 = frozenset(
+            [*original_published, published_digest]
+        )
+        try:
+            (state_dir / "secret_key").write_text(published)
+
+            with caplog.at_level(logging.WARNING, logger="backend.core.config"):
+                key = _resolve_secret_key()
+
+            assert key != published
+            assert len(key) == 43
+            assert "published in git history" in caplog.text
+        finally:
+            config_module.PUBLISHED_KEY_SHA256 = original_published
+
+    def test_atomic_write_no_partial_file(self, tmp_path, monkeypatch):
+        """T8 / AC-6: Write uses atomic pattern (temp file + os.replace)."""
+        state_dir = tmp_path / ".shc"
+        state_dir.mkdir()
+        monkeypatch.setenv("SHC_STATE_DIR", str(state_dir))
+
+        key = _resolve_secret_key()
+
+        content = (state_dir / "secret_key").read_text()
+        assert content == key
+        # Temp file should not exist after atomic rename
+        assert not (state_dir / "secret_key.tmp").exists()
+
+    def test_no_secret_in_logs(self, tmp_path, monkeypatch, caplog):
+        """T9 / AC-7: No secret key material appears in log output."""
+        state_dir = tmp_path / ".shc"
+        state_dir.mkdir()
+        monkeypatch.setenv("SHC_STATE_DIR", str(state_dir))
+
+        with caplog.at_level(logging.DEBUG, logger="backend.core.config"):
+            key = _resolve_secret_key()
+
+        log_text = caplog.text
+        # The generated key must not appear in logs
+        assert key not in log_text
+        # Also check for partial key material (first/last 10 chars)
+        assert key[:10] not in log_text
+        assert key[-10:] not in log_text
+        # token_urlsafe should not appear in logs
+        assert "token_urlsafe" not in log_text
+
+    def test_permissions_600(self, tmp_path, monkeypatch):
+        """AC-9: File permissions are 0o600 on new and replaced keys."""
+        import sys
+
+        state_dir = tmp_path / ".shc"
+        state_dir.mkdir()
+        monkeypatch.setenv("SHC_STATE_DIR", str(state_dir))
+
+        _resolve_secret_key()
+
+        # Permission check only meaningful on POSIX
+        if sys.platform != "win32":
+            mode = (state_dir / "secret_key").stat().st_mode & 0o777
+            assert mode == 0o600
+
+    def test_missing_file_generates_key(self, tmp_path, monkeypatch):
+        """T5: Missing file generates a new key."""
+        state_dir = tmp_path / ".shc"
+        state_dir.mkdir()
+        monkeypatch.setenv("SHC_STATE_DIR", str(state_dir))
+        # Ensure file doesn't exist
+        key_file = state_dir / "secret_key"
+        assert not key_file.exists()
+
+        key = _resolve_secret_key()
+
+        assert key_file.exists()
+        assert key_file.read_text() == key
+        assert len(key) == 43
+
+    def test_permission_denied_read_generates_new_key(
+        self, tmp_path, monkeypatch, caplog
+    ):
+        """T6: Permission denied on read generates a new key."""
+        import sys
+
+        if sys.platform == "win32":
+            pytest.skip("Permission test not reliable on Windows")
+
+        state_dir = tmp_path / ".shc"
+        state_dir.mkdir()
+        monkeypatch.setenv("SHC_STATE_DIR", str(state_dir))
+        key_file = state_dir / "secret_key"
+        key_file.write_text("existing_valid_key_long_enough")
+        # Remove read permission
+        key_file.chmod(0o000)
+
+        try:
+            with caplog.at_level(logging.WARNING, logger="backend.core.config"):
+                key = _resolve_secret_key()
+            # Should generate a new key (not the old one)
+            assert len(key) == 43
+            assert key != "existing_valid_key_long_enough"
+            # The file should now contain the new key (write succeeded
+            # because dir has write perm)
+            assert key_file.read_text() == key
+        finally:
+            # Restore permissions for cleanup
+            key_file.chmod(0o600)
+
+    def test_permission_denied_write_uses_in_memory_key(
+        self, tmp_path, monkeypatch, caplog
+    ):
+        """T7: Permission denied on write logs warning and uses in-memory key."""
+        import sys
+
+        if sys.platform == "win32":
+            pytest.skip("Permission test not reliable on Windows")
+
+        state_dir = tmp_path / ".shc"
+        state_dir.mkdir()
+        monkeypatch.setenv("SHC_STATE_DIR", str(state_dir))
+        # Remove write permission on directory
+        state_dir.chmod(0o555)
+
+        try:
+            with caplog.at_level(logging.WARNING, logger="backend.core.config"):
+                key = _resolve_secret_key()
+            # Should generate a key in memory
+            assert len(key) == 43
+            # Should log a warning about OSError during write
+            assert any("Could not persist" in r.getMessage() for r in caplog.records)
+            # File should not exist (write failed)
+            assert not (state_dir / "secret_key").exists()
+        finally:
+            # Restore permissions for cleanup
+            state_dir.chmod(0o700)
