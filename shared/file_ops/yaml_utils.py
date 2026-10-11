@@ -10,6 +10,8 @@ import logging
 from typing import Type, TypeVar, Callable
 from pydantic import BaseModel as PydanticBaseModel
 
+from shared.file_ops.path_utils import normalize_path
+
 logger = logging.getLogger(__name__)
 
 T = TypeVar("T", bound=PydanticBaseModel)
@@ -31,11 +33,12 @@ def read_yaml(file_path: str, model_class: Type[T]) -> T:
         yaml.YAMLError: If YAML is malformed
         ValidationError: If data doesn't match model schema
     """
-    if not os.path.exists(file_path):
+    path_obj = normalize_path(file_path)
+    if not path_obj.exists():
         raise FileNotFoundError(f"YAML file not found: {file_path}")
 
     try:
-        with open(file_path, "r") as f:
+        with open(path_obj, "r") as f:
             data = yaml.safe_load(f)
 
         if data is None:
@@ -47,7 +50,10 @@ def read_yaml(file_path: str, model_class: Type[T]) -> T:
         raise
     except Exception as e:
         logger.error(
-            f"Failed to validate YAML file {file_path} against {model_class.__name__}: {e}"
+            "Failed to validate YAML file %s against %s: %s",
+            file_path,
+            model_class.__name__,
+            e,
         )
         raise
 
@@ -64,10 +70,12 @@ def write_yaml(file_path: str, data: PydanticBaseModel) -> None:
         IOError: If file cannot be written
         yaml.YAMLError: If data cannot be serialized to YAML
     """
+    path_obj = normalize_path(file_path)
+
     # Ensure directory exists
-    directory = os.path.dirname(file_path)
-    if directory and not os.path.exists(directory):
-        os.makedirs(directory, exist_ok=True)
+    directory = path_obj.parent
+    if directory and not directory.exists():
+        directory.mkdir(parents=True, exist_ok=True)
 
     # Serialize data to YAML string
     try:
@@ -88,7 +96,7 @@ def write_yaml(file_path: str, data: PydanticBaseModel) -> None:
         with tempfile.NamedTemporaryFile(
             mode="w",
             dir=directory,
-            prefix=os.path.basename(file_path) + ".",
+            prefix=path_obj.name + ".",
             suffix=".tmp",
             delete=False,
         ) as tmp_file:
@@ -96,7 +104,7 @@ def write_yaml(file_path: str, data: PydanticBaseModel) -> None:
             tmp_file_path = tmp_file.name
 
         # Atomically replace target file with temporary file
-        os.replace(tmp_file_path, file_path)
+        os.replace(tmp_file_path, path_obj)
 
     except Exception as e:
         # Clean up temporary file on error
@@ -109,7 +117,11 @@ def write_yaml(file_path: str, data: PydanticBaseModel) -> None:
         raise
 
 
-def update_yaml(file_path: str, model_class: Type[T], update_func: Callable[[T], T]) -> T:
+def update_yaml(
+    file_path: str,
+    model_class: Type[T],
+    update_func: "Callable[[T], T]",
+) -> T:
     """
     Read a YAML file, update its contents, and write it back atomically.
 
@@ -127,15 +139,16 @@ def update_yaml(file_path: str, model_class: Type[T], update_func: Callable[[T],
         ValidationError: If data doesn't match model schema
         IOError: If file cannot be written
     """
-    from typing import Callable
+
+    path_obj = normalize_path(file_path)
 
     # Read existing data
-    current_data = read_yaml(file_path, model_class)
+    current_data = read_yaml(str(path_obj), model_class)
 
     # Apply updates
     updated_data = update_func(current_data)
 
     # Write back atomically
-    write_yaml(file_path, updated_data)
+    write_yaml(str(path_obj), updated_data)
 
     return updated_data

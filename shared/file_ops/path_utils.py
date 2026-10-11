@@ -3,9 +3,13 @@ Path utilities for the Scientific Home Cluster.
 Provides helper functions for working with file paths in a cross-platform way.
 """
 
+import logging
 import os
 from pathlib import Path
 from typing import Union, Optional
+
+
+logger = logging.getLogger(__name__)
 
 
 def normalize_path(path: Union[str, Path]) -> Path:
@@ -20,12 +24,8 @@ def normalize_path(path: Union[str, Path]) -> Path:
     """
     path_obj = Path(path)
 
-    # Expand user home directory (~)
-    if path_obj == Path("~"):
-        path_obj = Path.home()
-    elif str(path_obj).startswith("~/"):
-        path_str = str(path_obj)
-        path_obj = Path.home() / path_str[2:]
+    # Expand user home directory (~) — handles ~, ~/..., ~user/... cross-platform
+    path_obj = path_obj.expanduser()
 
     # Make absolute if it's not already
     if not path_obj.is_absolute():
@@ -153,5 +153,12 @@ def is_within_syncthing_root(path: Union[str, Path]) -> bool:
     try:
         path_obj = normalize_path(path)
         return syncthing_root in path_obj.parents or path_obj == syncthing_root
-    except Exception:
+    except (OSError, ValueError) as e:
+        # Log the error for debugging but return False for expected filesystem errors
+        logger.debug(
+            "Error checking path %s against Syncthing root %s: %s",
+            path,
+            syncthing_root,
+            e,
+        )
         return False

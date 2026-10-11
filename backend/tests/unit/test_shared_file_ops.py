@@ -7,9 +7,21 @@ import tempfile
 import os
 import sys
 import yaml
+from pathlib import Path
 from pydantic import ValidationError
 from shared.file_ops.locking import file_lock, shared_lock
 from shared.file_ops.yaml_utils import read_yaml, write_yaml, update_yaml
+from shared.file_ops.path_utils import (
+    normalize_path,
+    ensure_directory,
+    get_syncthing_root,
+    get_jobs_directory,
+    get_nodes_directory,
+    get_job_directory,
+    get_job_state_file,
+    get_node_state_file,
+    is_within_syncthing_root,
+)
 from shared.schemas.job_spec import JobSpec
 from shared.schemas.job_resources import JobResources
 from shared.schemas.job_paths import JobPaths
@@ -277,3 +289,247 @@ def test_portalocker_retry_on_contention():
         assert end_time - start_time <= 2.0  # Should not take much longer
 
         thread.join()
+
+
+# =============================================================================
+# Tests for shared.file_ops.path_utils
+# =============================================================================
+
+
+class TestNormalizePath:
+    """Tests for normalize_path() function."""
+
+    def test_expands_tilde_home(self, monkeypatch, tmp_path):
+        home = tmp_path / "home"
+        home.mkdir()
+        monkeypatch.setenv("HOME", str(home))
+        monkeypatch.setenv("USERPROFILE", str(home))
+
+        result = normalize_path("~/syncthing")
+        assert result == home / "syncthing"
+        assert result.is_absolute()
+
+    def test_expands_tilde_alone(self, monkeypatch, tmp_path):
+        home = tmp_path / "home"
+        home.mkdir()
+        monkeypatch.setenv("HOME", str(home))
+        monkeypatch.setenv("USERPROFILE", str(home))
+
+        result = normalize_path("~")
+        assert result == home
+        assert result.is_absolute()
+
+    def test_expands_tilde_nested(self, monkeypatch, tmp_path):
+        home = tmp_path / "home"
+        home.mkdir()
+        monkeypatch.setenv("HOME", str(home))
+        monkeypatch.setenv("USERPROFILE", str(home))
+
+        result = normalize_path("~/sub/dir")
+        assert result == home / "sub" / "dir"
+        assert result.is_absolute()
+
+    def test_preserves_absolute(self, tmp_path):
+        # On Windows, /absolute/path resolves to current drive's root
+        # Just verify it returns an absolute path and doesn't change
+        result = normalize_path("/absolute/path")
+        assert result.is_absolute()
+        # The path should be normalized (resolve symlinks, etc.)
+        # On Windows, it becomes E:/absolute/path or similar
+        assert str(result).endswith("absolute/path") or str(result).endswith(
+            "\\absolute\\path"
+        )
+
+    def test_resolves_relative(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        (tmp_path / "sub").mkdir()
+
+        result = normalize_path("./sub")
+        assert result == (tmp_path / "sub").resolve()
+
+    def test_accepts_path_object(self, monkeypatch, tmp_path):
+        home = tmp_path / "home"
+        home.mkdir()
+        monkeypatch.setenv("HOME", str(home))
+        monkeypatch.setenv("USERPROFILE", str(home))
+
+        result = normalize_path(Path("~/syncthing"))
+        assert result == home / "syncthing"
+
+    def test_idempotent(self, monkeypatch, tmp_path):
+        home = tmp_path / "home"
+        home.mkdir()
+        monkeypatch.setenv("HOME", str(home))
+        monkeypatch.setenv("USERPROFILE", str(home))
+
+        once = normalize_path("~/syncthing")
+        twice = normalize_path(once)
+        assert once == twice
+
+    @pytest.mark.skipif(
+        sys.platform != "win32", reason="Windows-specific path behavior"
+    )
+    def test_windows_tilde(self, monkeypatch, tmp_path):
+        """On Windows, Path('~/x') string representation may differ."""
+        home = tmp_path / "home"
+        home.mkdir()
+        monkeypatch.setenv("HOME", str(home))
+        monkeypatch.setenv("USERPROFILE", str(home))
+
+        # These should all work on Windows
+        assert normalize_path("~/syncthing") == home / "syncthing"
+        assert normalize_path("~\\syncthing") == home / "syncthing"  # backslash variant
+        assert normalize_path("~") == home
+
+
+class TestIsWithinSyncthingRoot:
+    """Tests for is_within_syncthing_root() function."""
+
+    def test_true_with_tilde(self, monkeypatch, tmp_path):
+        home = tmp_path / "home"
+        home.mkdir()
+        syncthing = home / "syncthing"
+        syncthing.mkdir()
+        (syncthing / "jobs").mkdir()
+        monkeypatch.setenv("HOME", str(home))
+        monkeypatch.setenv("USERPROFILE", str(home))
+        monkeypatch.setenv("SYNCTHING_ROOT", "~/syncthing")
+
+        assert is_within_syncthing_root("~/syncthing/jobs/job-1") is True
+        assert is_within_syncthing_root(syncthing / "jobs" / "job-1") is True
+        assert is_within_syncthing_root(syncthing) is True
+
+    def test_false_outside_root(self, monkeypatch, tmp_path):
+        home = tmp_path / "home"
+        home.mkdir()
+        syncthing = home / "syncthing"
+        syncthing.mkdir()
+        other = home / "other"
+        other.mkdir()
+        monkeypatch.setenv("HOME", str(home))
+        monkeypatch.setenv("USERPROFILE", str(home))
+        monkeypatch.setenv("SYNCTHING_ROOT", "~/syncthing")
+
+        assert is_within_syncthing_root("~/other/path") is False
+        assert is_within_syncthing_root(other / "path") is False
+
+    def test_false_no_env(self, monkeypatch):
+        monkeypatch.delenv("SYNCTHING_ROOT", raising=False)
+
+        assert is_within_syncthing_root("/any/path") is False
+
+    def test_propagates_unexpected_error(self, monkeypatch, tmp_path):
+        """Ensure unexpected errors (not OSError/ValueError) propagate."""
+        monkeypatch.setenv("SYNCTHING_ROOT", str(tmp_path))
+
+        # On Windows, pathlib may not raise ValueError for null bytes
+        # Use a different approach: pass an object that causes TypeError
+        # when passed to Path()
+        class BadPath:
+            def __str__(self):
+                raise TypeError("Cannot convert to string")
+
+        with pytest.raises(TypeError):
+            is_within_syncthing_root(BadPath())
+
+
+class TestDownstreamFunctions:
+    """Integration tests for downstream functions that use normalize_path()."""
+
+    def test_get_syncthing_root_expands_tilde(self, monkeypatch, tmp_path):
+        home = tmp_path / "home"
+        home.mkdir()
+        monkeypatch.setenv("HOME", str(home))
+        monkeypatch.setenv("USERPROFILE", str(home))
+        monkeypatch.setenv("SYNCTHING_ROOT", "~/syncthing")
+
+        result = get_syncthing_root()
+        assert result == home / "syncthing"
+        assert result.is_absolute()
+
+    def test_get_jobs_directory_with_tilde(self, monkeypatch, tmp_path):
+        home = tmp_path / "home"
+        home.mkdir()
+        monkeypatch.setenv("HOME", str(home))
+        monkeypatch.setenv("USERPROFILE", str(home))
+        monkeypatch.setenv("SYNCTHING_ROOT", "~/syncthing")
+
+        result = get_jobs_directory()
+        assert result == home / "syncthing" / "jobs"
+
+    def test_get_nodes_directory_with_tilde(self, monkeypatch, tmp_path):
+        home = tmp_path / "home"
+        home.mkdir()
+        monkeypatch.setenv("HOME", str(home))
+        monkeypatch.setenv("USERPROFILE", str(home))
+        monkeypatch.setenv("SYNCTHING_ROOT", "~/syncthing")
+
+        result = get_nodes_directory()
+        assert result == home / "syncthing" / "nodes"
+
+    def test_get_job_directory_with_tilde(self, monkeypatch, tmp_path):
+        home = tmp_path / "home"
+        home.mkdir()
+        monkeypatch.setenv("HOME", str(home))
+        monkeypatch.setenv("USERPROFILE", str(home))
+        monkeypatch.setenv("SYNCTHING_ROOT", "~/syncthing")
+
+        result = get_job_directory("job-123")
+        assert result == home / "syncthing" / "jobs" / "job-123"
+
+    def test_get_job_state_file_with_tilde(self, monkeypatch, tmp_path):
+        home = tmp_path / "home"
+        home.mkdir()
+        monkeypatch.setenv("HOME", str(home))
+        monkeypatch.setenv("USERPROFILE", str(home))
+        monkeypatch.setenv("SYNCTHING_ROOT", "~/syncthing")
+
+        result = get_job_state_file("job-123")
+        assert result == home / "syncthing" / "jobs" / "job-123" / "state.yaml"
+
+    def test_get_node_state_file_with_tilde(self, monkeypatch, tmp_path):
+        home = tmp_path / "home"
+        home.mkdir()
+        monkeypatch.setenv("HOME", str(home))
+        monkeypatch.setenv("USERPROFILE", str(home))
+        monkeypatch.setenv("SYNCTHING_ROOT", "~/syncthing")
+
+        result = get_node_state_file("node-01")
+        assert result == home / "syncthing" / "nodes" / "node-01.yaml"
+
+    def test_ensure_directory_creates_tilde_path(self, monkeypatch, tmp_path):
+        home = tmp_path / "home"
+        home.mkdir()
+        monkeypatch.setenv("HOME", str(home))
+        monkeypatch.setenv("USERPROFILE", str(home))
+
+        result = ensure_directory("~/syncthing/jobs/new-job")
+        assert result == home / "syncthing" / "jobs" / "new-job"
+        assert result.exists()
+        assert result.is_dir()
+
+    def test_read_write_yaml_with_tilde(self, monkeypatch, tmp_path):
+        """Test that read_yaml and write_yaml work with tilde paths."""
+        home = tmp_path / "home"
+        home.mkdir()
+        monkeypatch.setenv("HOME", str(home))
+        monkeypatch.setenv("USERPROFILE", str(home))
+
+        from shared.file_ops.yaml_utils import read_yaml, write_yaml
+        from pydantic import BaseModel
+
+        class TestModel(BaseModel):
+            key: str
+            number: int
+
+        test_data = TestModel(key="value", number=42)
+        yaml_path = "~/test.yaml"
+
+        # Write
+        write_yaml(yaml_path, test_data)
+
+        # Read back
+        loaded = read_yaml(yaml_path, TestModel)
+        assert loaded.key == test_data.key
+        assert loaded.number == test_data.number
+        assert (home / "test.yaml").exists()
