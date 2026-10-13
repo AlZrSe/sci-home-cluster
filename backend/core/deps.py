@@ -1,6 +1,6 @@
 from typing import Optional
 
-from fastapi import Depends, Request, WebSocket
+from fastapi import Depends, Request, WebSocket, WebSocketException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from backend.core.config import settings
 from backend.core.errors import auth_token_expired, auth_token_missing
@@ -78,16 +78,21 @@ async def get_ws_token_payload(
         token = _token_from_subprotocol(websocket)
 
     if not token:
-        raise auth_token_missing(
-            "Authentication required. Please provide a valid bearer token."
+        raise WebSocketException(
+            code=status.WS_1008_POLICY_VIOLATION,
+            reason="Authentication required. Please provide a valid bearer token.",
         )
 
     try:
         payload = decode_access_token(token)
         return payload
     except Exception:
-        raise auth_token_expired(
-            "Invalid or expired token. Please log in again to get a new access token."
+        raise WebSocketException(
+            code=status.WS_1008_POLICY_VIOLATION,
+            reason=(
+                "Invalid or expired token. Please log in again "
+                "to get a new access token."
+            ),
         )
 
 

@@ -140,7 +140,18 @@ def _digest_secret_key(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
 
-def _resolve_secret_key() -> str:
+# Sentinel to distinguish "not passed" from "passed as None/str"
+class _Unset:
+    """Sentinel for 'parameter not passed'."""
+
+    def __repr__(self) -> str:
+        return "<UNSET>"
+
+
+_UNSET = _Unset()
+
+
+def _resolve_secret_key(shc_state_dir: Union[Optional[str], _Unset] = _UNSET) -> str:
     """
     Resolve the JWT signing key.
 
@@ -160,29 +171,53 @@ def _resolve_secret_key() -> str:
     replaced, not merely reported, because the code that starts the process runs
     on every deployment while a README warning reaches nobody. An explicit
     SECRET_KEY is never rotated - it is not persisted, so it cannot be a
-    published key, and an operator who set it owns it (issue #56).
+    published key, and an operator who sets it owns it (issue #56).
+
+    Non-UTF-8 or corrupt key files are treated as absent and replaced with
+    a newly generated key (issue #67). The write is atomic via a temp file
+    and os.replace to avoid leaving a partially written key.
     """
     configured = os.environ.get("SECRET_KEY")
     if configured:
         return configured
 
-    state_path = Path(_state_dir()) / "secret_key"
+    state_path = Path(_state_dir(shc_state_dir)) / "secret_key"
     try:
-        existing = state_path.read_text(encoding="utf-8").strip()
+        # Read as bytes first to catch UnicodeDecodeError explicitly.
+        raw = state_path.read_bytes()
+        existing = raw.decode("utf-8").strip()
         if existing and _digest_secret_key(existing) not in PUBLISHED_KEY_SHA256:
             # Steady state: a normal restart reads the key back silently. A log
             # line here would be noise on every boot.
             return existing
         published = bool(existing)
-    except OSError:
+    except (OSError, UnicodeDecodeError) as e:
+        if isinstance(e, UnicodeDecodeError):
+            logger.warning(
+                "The JWT signing key at %s contains invalid UTF-8; "
+                "it will be replaced with a newly generated key.",
+                state_path,
+            )
         published = False
 
     generated = secrets.token_urlsafe(32)
     try:
         state_path.parent.mkdir(parents=True, exist_ok=True)
-        state_path.write_text(generated, encoding="utf-8")
-        # Restrict to the owner: this file signs every access token.
-        state_path.chmod(0o600)
+        # Atomic write: temp file -> fsync (via close) -> rename.
+        # os.replace is atomic on POSIX and Windows (since Python 3.3).
+        tmp_path = state_path.with_suffix(".tmp")
+        tmp_path.write_text(generated, encoding="utf-8")
+        # Restrict to the owner before the rename so the final file has 0o600.
+        try:
+            tmp_path.chmod(0o600)
+        except OSError:
+            # chmod may fail on some filesystems (FAT, network mounts); log
+            # at debug and continue - the key in memory is still usable.
+            logger.debug(
+                "Could not set 0o600 permissions on %s; continuing anyway.",
+                tmp_path,
+            )
+        os.replace(tmp_path, state_path)
     except OSError:
         logger.warning(
             "Could not persist the generated SECRET_KEY to %s; "
@@ -221,19 +256,37 @@ def _resolve_secret_key() -> str:
     return generated
 
 
-def _state_dir() -> str:
+def _state_dir(shc_state_dir: Union[Optional[str], _Unset] = _UNSET) -> str:
     """
     Directory for locally persisted server state.
 
-    SHC_STATE_DIR still wins, and is used verbatim so a relative value stays
-    relative (it is the user's explicit choice). Unset, the directory is
+    SHC_STATE_DIR (from Settings, via .env or environment) wins, and is used
+    verbatim so a relative value stays relative. Unset, the directory is
     absolute and anchored on the package location: the previous default was the
     literal ".shc", which meant the directory - and the signing key written into
     it - moved with the working directory (issue #34).
+
+    The optional `shc_state_dir` parameter allows callers (e.g., model_post_init)
+    to pass the value directly, avoiding a circular reference to the global
+    `settings` instance during initialization. When called without the parameter
+    (after initialization), it reads from the global `settings` instance.
     """
-    configured = os.environ.get("SHC_STATE_DIR")
-    if configured:
-        return configured
+    # Explicit string override: use it verbatim (relative stays relative)
+    if isinstance(shc_state_dir, str):
+        return shc_state_dir
+
+    # Omitted (sentinel): read from global settings if available
+    if shc_state_dir is _UNSET:
+        try:
+            configured = settings.SHC_STATE_DIR
+        except NameError:
+            # During model_post_init, the global `settings` is not yet assigned.
+            configured = None
+        if configured:
+            return configured
+        return str(DEFAULT_STATE_DIR)
+
+    # Explicit None: no configured value, fall back to default
     return str(DEFAULT_STATE_DIR)
 
 
@@ -249,6 +302,9 @@ class Settings(BaseSettings):
 
     # Syncthing configuration
     SYNCTHING_ROOT: str = "/tmp/syncthing"
+
+    # Local server state directory (holds JWT signing key)
+    SHC_STATE_DIR: Optional[str] = None
 
     # Database configuration.
     #
@@ -325,6 +381,31 @@ class Settings(BaseSettings):
             return v
         raise ValueError(v)
 
+    # Lovable preview CORS opt-in
+    ENABLE_LOVABLE_PREVIEW_CORS: bool = False
+
+    @property
+    def effective_cors_origins(self) -> list[str]:
+        """
+        Returns the effective CORS origins list, optionally including
+        Lovable preview origins.
+
+        When ENABLE_LOVABLE_PREVIEW_CORS is True, adds known Lovable preview
+        origins to the base BACKEND_CORS_ORIGINS list. This is opt-in to avoid
+        exposing authenticated responses to arbitrary Lovable previews in
+        development.
+        """
+        origins = [str(origin) for origin in self.BACKEND_CORS_ORIGINS]
+        if self.ENABLE_LOVABLE_PREVIEW_CORS:
+            origins.extend(
+                [
+                    "https://preview.lovableproject.com",
+                    # Additional specific preview URLs can be added via
+                    # BACKEND_CORS_ORIGINS env var
+                ]
+            )
+        return origins
+
     # Logging
     LOG_LEVEL: str = "INFO"
 
@@ -341,7 +422,7 @@ class Settings(BaseSettings):
         # SECRET_KEY defaults to empty so that pydantic does not shadow the
         # environment variable; fill it in from the persisted key.
         if not self.SECRET_KEY:
-            self.SECRET_KEY = _resolve_secret_key()
+            self.SECRET_KEY = _resolve_secret_key(self.SHC_STATE_DIR)
 
 
 settings = Settings()

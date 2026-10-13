@@ -14,6 +14,7 @@ from backend.core.config import (
     DEFAULT_DATABASE_URL,
     DEFAULT_STATE_DIR,
     Settings,
+    _resolve_secret_key,
     _state_dir,
     absolute_sqlite_path,
     sqlite_path_from_url,
@@ -254,7 +255,9 @@ def test_explicit_database_url_env_var_wins(monkeypatch):
 
 def test_state_dir_independent_of_cwd(tmp_path, monkeypatch):
     """T6 / AC-5: the state dir is absolute and SHC_STATE_DIR still wins."""
-    monkeypatch.delenv("SHC_STATE_DIR", raising=False)
+    # Patch the global settings to ensure ambient SHC_STATE_DIR doesn't affect test.
+    default_settings = Settings(_env_file=None, SECRET_KEY="test", SHC_STATE_DIR=None)
+    monkeypatch.setattr("backend.core.config.settings", default_settings)
 
     first = tmp_path / "cwd-one"
     second = tmp_path / "cwd-two"
@@ -273,8 +276,246 @@ def test_state_dir_independent_of_cwd(tmp_path, monkeypatch):
 
     # An explicit override is used verbatim, relative or not: it is the user's
     # deliberate choice, so it is not made absolute behind their back.
-    monkeypatch.setenv("SHC_STATE_DIR", "somewhere-relative")
+    # Create a new Settings instance with the override and patch the global.
+    override_settings = Settings(
+        _env_file=None, SECRET_KEY="test", SHC_STATE_DIR="somewhere-relative"
+    )
+    monkeypatch.setattr("backend.core.config.settings", override_settings)
     assert _state_dir() == "somewhere-relative"
+
+
+# ---------------------------------------------------------------------------
+# Issue #65: SHC_STATE_DIR as a Settings field.
+# ---------------------------------------------------------------------------
+
+
+def test_shc_state_dir_is_settings_field():
+    """AC-7: Settings declares SHC_STATE_DIR as Optional[str] = None."""
+    from backend.core.config import Settings
+
+    # Check the field exists in model_fields and has the right default
+    assert "SHC_STATE_DIR" in Settings.model_fields
+    field = Settings.model_fields["SHC_STATE_DIR"]
+    # Pydantic v2 stores Union[str, None] as the annotation for Optional[str]
+    assert field.annotation is not None
+    assert field.default is None
+
+
+def test_shc_state_dir_in_env_file(tmp_path, monkeypatch):
+    """AC-1, AC-2: SHC_STATE_DIR in .env is loaded and respected by _state_dir()."""
+    # Clear ambient SHC_STATE_DIR so the .env is what gets tested.
+    monkeypatch.delenv("SHC_STATE_DIR", raising=False)
+
+    # Create a .env file with SHC_STATE_DIR
+    env_file = tmp_path / ".env"
+    custom_dir = tmp_path / "custom-shc"
+    env_file.write_text(f"SHC_STATE_DIR={custom_dir}\n")
+
+    monkeypatch.chdir(tmp_path)
+    settings = Settings(_env_file=str(env_file), SECRET_KEY="test")
+    monkeypatch.setattr("backend.core.config.settings", settings)
+
+    assert settings.SHC_STATE_DIR == str(custom_dir)
+    assert _state_dir() == str(custom_dir)
+
+
+def test_shc_state_dir_env_overrides_dotenv(tmp_path, monkeypatch):
+    """AC-4: Process environment wins over .env (pydantic precedence)."""
+    env_file = tmp_path / ".env"
+    env_file.write_text("SHC_STATE_DIR=/from-dotenv\n")
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("SHC_STATE_DIR", "/from-env")
+
+    settings = Settings(_env_file=str(env_file), SECRET_KEY="test")
+    monkeypatch.setattr("backend.core.config.settings", settings)
+
+    assert settings.SHC_STATE_DIR == "/from-env"
+    assert _state_dir() == "/from-env"
+
+
+def test_shc_state_dir_relative_path_preserved(tmp_path, monkeypatch):
+    """AC-5: Relative paths in SHC_STATE_DIR are used verbatim."""
+    monkeypatch.delenv("SHC_STATE_DIR", raising=False)
+
+    env_file = tmp_path / ".env"
+    env_file.write_text("SHC_STATE_DIR=./relative-shc\n")
+
+    monkeypatch.chdir(tmp_path)
+    settings = Settings(_env_file=str(env_file), SECRET_KEY="test")
+    monkeypatch.setattr("backend.core.config.settings", settings)
+
+    assert settings.SHC_STATE_DIR == "./relative-shc"
+    assert _state_dir() == "./relative-shc"
+
+
+def test_shc_state_dir_key_persistence(tmp_path, monkeypatch):
+    """AC-6: JWT signing key is written to the configured SHC_STATE_DIR."""
+    monkeypatch.delenv("SHC_STATE_DIR", raising=False)
+
+    # Clean up any existing key
+    key_dir = tmp_path / "test-shc-key-dir"
+    if key_dir.exists():
+        import shutil
+
+        shutil.rmtree(key_dir)
+
+    env_file = tmp_path / ".env"
+    env_file.write_text(f"SHC_STATE_DIR={key_dir}\n")
+
+    monkeypatch.chdir(tmp_path)
+    settings = Settings(_env_file=str(env_file), SECRET_KEY="")
+    monkeypatch.setattr("backend.core.config.settings", settings)
+
+    # Access SECRET_KEY to trigger _resolve_secret_key() via model_post_init
+    key = settings.SECRET_KEY
+
+    assert len(key) == 43  # token_urlsafe(32) length
+    assert (key_dir / "secret_key").exists()
+    assert (key_dir / "secret_key").read_text() == key
+    # Check permissions on POSIX
+    import sys
+
+    if sys.platform != "win32":
+        assert (key_dir / "secret_key").stat().st_mode & 0o777 == 0o600
+
+
+def test_settings_singleton_same_shc_state_dir():
+    """T6: Multiple imports share same settings instance with same SHC_STATE_DIR."""
+    from backend.core.config import settings as settings1
+    from backend.core.config import settings as settings2
+
+    assert settings1 is settings2
+    assert settings1.SHC_STATE_DIR == settings2.SHC_STATE_DIR
+
+
+def test_secret_key_env_bypasses_state_dir(tmp_path, monkeypatch):
+    """T7: SECRET_KEY env var bypasses state dir entirely."""
+    ignored_dir = tmp_path / "ignored"
+    ignored_dir.mkdir()
+
+    env_file = tmp_path / ".env"
+    env_file.write_text(f"SHC_STATE_DIR={ignored_dir}\n")
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("SECRET_KEY", "explicit-secret-key-from-env")
+
+    settings = Settings(_env_file=str(env_file))
+    monkeypatch.setattr("backend.core.config.settings", settings)
+
+    assert settings.SECRET_KEY == "explicit-secret-key-from-env"
+    # No file should be created in the ignored directory
+    assert not (ignored_dir / "secret_key").exists()
+
+
+# ---------------------------------------------------------------------------
+# Issue #65: Regression tests for sentinel fix (DEFECT 1)
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_secret_key_no_arg_uses_configured_state_dir(tmp_path, monkeypatch):
+    """
+    DEFECT 1 REGRESSION: _resolve_secret_key() with no argument must resolve
+    under the CONFIGURED state dir (from global settings), not DEFAULT_STATE_DIR.
+
+    Mutation that breaks this: _resolve_secret_key defaulting to None instead of
+    the _UNSET sentinel, or _state_dir treating None as "explicit override".
+    """
+    configured_dir = tmp_path / "configured-state-dir"
+    configured_dir.mkdir()
+
+    # Create a Settings instance with SHC_STATE_DIR set
+    test_settings = Settings(
+        _env_file=None, SECRET_KEY="", SHC_STATE_DIR=str(configured_dir)
+    )
+    monkeypatch.setattr("backend.core.config.settings", test_settings)
+
+    # Call _resolve_secret_key with NO argument (uses sentinel default)
+    from backend.core.config import _resolve_secret_key
+
+    key = _resolve_secret_key()
+
+    # Key should be generated and written to configured_dir, NOT DEFAULT_STATE_DIR
+    assert len(key) == 43
+    key_file = configured_dir / "secret_key"
+    assert (
+        key_file.exists()
+    ), f"Key should be written to {configured_dir}, not DEFAULT_STATE_DIR"
+    assert key_file.read_text() == key
+    # Ensure DEFAULT_STATE_DIR was not used
+    default_key_file = DEFAULT_STATE_DIR / "secret_key"
+    assert not default_key_file.exists() or default_key_file.read_text() != key
+
+
+def test_resolve_secret_key_explicit_override(tmp_path, monkeypatch):
+    """
+    DEFECT 1 REGRESSION: An explicit shc_state_dir= must override the global setting.
+
+    Mutation that breaks this: _state_dir not respecting explicit string argument.
+    """
+    global_dir = tmp_path / "global-state-dir"
+    global_dir.mkdir()
+    override_dir = tmp_path / "override-state-dir"
+    override_dir.mkdir()
+
+    # Global settings points to global_dir, but SECRET_KEY is set to avoid
+    # key generation during Settings construction
+    test_settings = Settings(
+        _env_file=None, SECRET_KEY="test-key", SHC_STATE_DIR=str(global_dir)
+    )
+    monkeypatch.setattr("backend.core.config.settings", test_settings)
+
+    from backend.core.config import _resolve_secret_key
+
+    # Explicit override should write to override_dir
+    key = _resolve_secret_key(shc_state_dir=str(override_dir))
+
+    override_key_file = override_dir / "secret_key"
+    assert override_key_file.exists(), f"Key should be written to {override_dir}"
+    assert override_key_file.read_text() == key
+    # Global dir should not have the key (no generation occurred there)
+    global_key_file = global_dir / "secret_key"
+    assert not global_key_file.exists()
+
+
+def test_resolve_secret_key_explicit_none_uses_default(tmp_path, monkeypatch):
+    """
+    DEFECT 1 REGRESSION: _resolve_secret_key(shc_state_dir=None) explicitly passed
+    as None uses DEFAULT_STATE_DIR, NOT the global settings.
+
+    Mutation that breaks this: _state_dir treating None as "read from global settings"
+    instead of "no configured value".
+    """
+    configured_dir = tmp_path / "configured-state-dir"
+    configured_dir.mkdir()
+
+    # Redirect DEFAULT_STATE_DIR to a temp path so we never touch the real one.
+    fake_default = tmp_path / "fake-default"
+    monkeypatch.setattr("backend.core.config.DEFAULT_STATE_DIR", fake_default)
+
+    # Global settings has SHC_STATE_DIR set
+    test_settings = Settings(
+        _env_file=None, SECRET_KEY="", SHC_STATE_DIR=str(configured_dir)
+    )
+    monkeypatch.setattr("backend.core.config.settings", test_settings)
+
+    from backend.core.config import _resolve_secret_key
+
+    # Call with explicit None - should use DEFAULT_STATE_DIR (now redirected
+    # to fake_default via monkeypatch)
+    key_none = _resolve_secret_key(shc_state_dir=None)
+    fake_key_file = fake_default / "secret_key"
+    assert fake_key_file.exists(), "Explicit None should use DEFAULT_STATE_DIR"
+    assert fake_key_file.read_text().strip() == key_none
+
+    # Clean up for second call
+    fake_key_file.unlink()
+
+    # Call with no argument (sentinel) - should read from global settings
+    key_omitted = _resolve_secret_key()
+    key_omitted_file = configured_dir / "secret_key"
+    assert key_omitted_file.exists(), "Omitted should read from global settings"
+    assert key_omitted_file.read_text().strip() == key_omitted
 
 
 # ---------------------------------------------------------------------------
@@ -318,3 +559,191 @@ def test_env_file_independent_of_cwd(tmp_path, monkeypatch):
 def test_sqlite_path_from_url(url, expected):
     """The URL parser handles every shape SQLAlchemy accepts."""
     assert sqlite_path_from_url(url) == expected
+
+
+# ---------------------------------------------------------------------------
+# Issue #67: _resolve_secret_key() resilience — handle non-UTF-8 secret file.
+# ---------------------------------------------------------------------------
+
+
+class TestResolveSecretKeyUnicode:
+    """Tests for UnicodeDecodeError handling and atomic write."""
+
+    def test_corrupt_utf8_replaced(self, tmp_path, monkeypatch, caplog):
+        """T1 / AC-1, AC-2, AC-8: Corrupt UTF-8 file is replaced with valid key."""
+        state_dir = tmp_path / ".shc"
+        state_dir.mkdir()
+        # Write invalid UTF-8 bytes
+        (state_dir / "secret_key").write_bytes(b"\xff\xfe\xfd")
+
+        with caplog.at_level(logging.WARNING, logger="backend.core.config"):
+            key = _resolve_secret_key(shc_state_dir=str(state_dir))
+
+        # Key must be valid URL-safe base64 (43 chars for token_urlsafe(32))
+        assert len(key) == 43
+        # File must now contain the new key
+        assert (state_dir / "secret_key").read_text() == key
+        # Warning must be logged about the decode failure
+        assert any("invalid UTF-8" in r.getMessage() for r in caplog.records)
+
+    def test_empty_file_replaced(self, tmp_path, monkeypatch):
+        """T2 / AC-3: Empty file is treated as absent and replaced."""
+        state_dir = tmp_path / ".shc"
+        state_dir.mkdir()
+        (state_dir / "secret_key").write_text("")
+
+        key = _resolve_secret_key(shc_state_dir=str(state_dir))
+
+        assert (state_dir / "secret_key").read_text() == key
+        assert len(key) == 43
+
+    def test_valid_key_reused(self, tmp_path, monkeypatch):
+        """T3 / AC-4: Valid existing key is reused (no regression)."""
+        state_dir = tmp_path / ".shc"
+        state_dir.mkdir()
+        valid = "valid_urlsafe_base64_key_that_is_long_enough"
+        (state_dir / "secret_key").write_text(valid)
+
+        k1 = _resolve_secret_key(shc_state_dir=str(state_dir))
+        k2 = _resolve_secret_key(shc_state_dir=str(state_dir))
+
+        assert k1 == k2 == valid
+
+    def test_published_key_rotated(self, tmp_path, monkeypatch, caplog):
+        """T4 / AC-5: Published key (in PUBLISHED_KEY_SHA256) is rotated."""
+        import backend.core.config as config_module
+
+        state_dir = tmp_path / ".shc"
+        state_dir.mkdir()
+        # Use a test key and add its digest to the published set for this test
+        published = "test_published_key_that_is_long_enough_to_be_valid"
+        published_digest = config_module._digest_secret_key(published)
+        # Temporarily add to the frozenset by patching the module variable
+        original_published = config_module.PUBLISHED_KEY_SHA256
+        config_module.PUBLISHED_KEY_SHA256 = frozenset(
+            [*original_published, published_digest]
+        )
+        try:
+            (state_dir / "secret_key").write_text(published)
+
+            with caplog.at_level(logging.WARNING, logger="backend.core.config"):
+                key = _resolve_secret_key(shc_state_dir=str(state_dir))
+
+            assert key != published
+            assert len(key) == 43
+            assert "published in git history" in caplog.text
+        finally:
+            config_module.PUBLISHED_KEY_SHA256 = original_published
+
+    def test_atomic_write_no_partial_file(self, tmp_path, monkeypatch):
+        """T8 / AC-6: Write uses atomic pattern (temp file + os.replace)."""
+        state_dir = tmp_path / ".shc"
+        state_dir.mkdir()
+
+        key = _resolve_secret_key(shc_state_dir=str(state_dir))
+
+        content = (state_dir / "secret_key").read_text()
+        assert content == key
+        # Temp file should not exist after atomic rename
+        assert not (state_dir / "secret_key.tmp").exists()
+
+    def test_no_secret_in_logs(self, tmp_path, monkeypatch, caplog):
+        """T9 / AC-7: No secret key material appears in log output."""
+        state_dir = tmp_path / ".shc"
+        state_dir.mkdir()
+
+        with caplog.at_level(logging.DEBUG, logger="backend.core.config"):
+            key = _resolve_secret_key(shc_state_dir=str(state_dir))
+
+        log_text = caplog.text
+        # The generated key must not appear in logs
+        assert key not in log_text
+        # Also check for partial key material (first/last 10 chars)
+        assert key[:10] not in log_text
+        assert key[-10:] not in log_text
+        # token_urlsafe should not appear in logs
+        assert "token_urlsafe" not in log_text
+
+    def test_permissions_600(self, tmp_path, monkeypatch):
+        """AC-9: File permissions are 0o600 on new and replaced keys."""
+        import sys
+
+        state_dir = tmp_path / ".shc"
+        state_dir.mkdir()
+
+        _resolve_secret_key(shc_state_dir=str(state_dir))
+
+        # Permission check only meaningful on POSIX
+        if sys.platform != "win32":
+            mode = (state_dir / "secret_key").stat().st_mode & 0o777
+            assert mode == 0o600
+
+    def test_missing_file_generates_key(self, tmp_path, monkeypatch):
+        """T5: Missing file generates a new key."""
+        state_dir = tmp_path / ".shc"
+        state_dir.mkdir()
+        # Ensure file doesn't exist
+        key_file = state_dir / "secret_key"
+        assert not key_file.exists()
+
+        key = _resolve_secret_key(shc_state_dir=str(state_dir))
+
+        assert key_file.exists()
+        assert key_file.read_text() == key
+        assert len(key) == 43
+
+    def test_permission_denied_read_generates_new_key(
+        self, tmp_path, monkeypatch, caplog
+    ):
+        """T6: Permission denied on read generates a new key."""
+        import sys
+
+        if sys.platform == "win32":
+            pytest.skip("Permission test not reliable on Windows")
+
+        state_dir = tmp_path / ".shc"
+        state_dir.mkdir()
+        key_file = state_dir / "secret_key"
+        key_file.write_text("existing_valid_key_long_enough")
+        # Remove read permission
+        key_file.chmod(0o000)
+
+        try:
+            with caplog.at_level(logging.WARNING, logger="backend.core.config"):
+                key = _resolve_secret_key(shc_state_dir=str(state_dir))
+            # Should generate a new key (not the old one)
+            assert len(key) == 43
+            assert key != "existing_valid_key_long_enough"
+            # The file should now contain the new key (write succeeded
+            # because dir has write perm)
+            assert key_file.read_text() == key
+        finally:
+            # Restore permissions for cleanup
+            key_file.chmod(0o600)
+
+    def test_permission_denied_write_uses_in_memory_key(
+        self, tmp_path, monkeypatch, caplog
+    ):
+        """T7: Permission denied on write logs warning and uses in-memory key."""
+        import sys
+
+        if sys.platform == "win32":
+            pytest.skip("Permission test not reliable on Windows")
+
+        state_dir = tmp_path / ".shc"
+        state_dir.mkdir()
+        # Remove write permission on directory
+        state_dir.chmod(0o555)
+
+        try:
+            with caplog.at_level(logging.WARNING, logger="backend.core.config"):
+                key = _resolve_secret_key(shc_state_dir=str(state_dir))
+            # Should generate a key in memory
+            assert len(key) == 43
+            # Should log a warning about OSError during write
+            assert any("Could not persist" in r.getMessage() for r in caplog.records)
+            # File should not exist (write failed)
+            assert not (state_dir / "secret_key").exists()
+        finally:
+            # Restore permissions for cleanup
+            state_dir.chmod(0o700)

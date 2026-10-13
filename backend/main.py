@@ -267,10 +267,10 @@ async def generic_exception_handler(request: Request, exc: Exception):
 
 
 # Set up CORS middleware
-if settings.BACKEND_CORS_ORIGINS:
+if settings.effective_cors_origins:
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=[str(origin) for origin in settings.BACKEND_CORS_ORIGINS],
+        allow_origins=settings.effective_cors_origins,
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
@@ -301,7 +301,7 @@ async def health_check():
     nodes_count = len(await store.list_nodes())
     jobs_count, _ = await store.list_jobs()
 
-    store_status = "healthy" if nodes_count > 0 else "degraded"
+    store_status = "healthy"
 
     # Check config status
     config_status = "healthy"

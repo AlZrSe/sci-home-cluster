@@ -142,9 +142,9 @@ class TestSecretKeyPersists:
 
         with patch.dict("os.environ", {"SHC_STATE_DIR": str(tmp_path)}):
             os.environ.pop("SECRET_KEY", None)
-            first = _resolve_secret_key()
+            first = _resolve_secret_key(shc_state_dir=str(tmp_path))
             # A second call must read the persisted key back, not mint a new one.
-            second = _resolve_secret_key()
+            second = _resolve_secret_key(shc_state_dir=str(tmp_path))
 
         assert first == second
         assert (tmp_path / "secret_key").read_text(encoding="utf-8").strip() == first

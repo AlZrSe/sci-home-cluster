@@ -3,6 +3,7 @@ Test configuration and fixtures for the backend test suite.
 """
 
 import asyncio
+import hashlib
 import os
 import shutil
 import tempfile
@@ -81,6 +82,64 @@ def event_loop():
     # first and the engine is already closed by the time the loop goes.
     if not loop.is_closed():
         loop.close()
+
+
+# Guard: snapshot the real JWT signing key at session start and assert
+# it is unchanged at session end. This prevents tests from mutating
+# <repo-root>/.shc/secret_key (F4 regression guard).
+def _signing_key_path() -> Path:
+    return Path(__file__).resolve().parents[2] / ".shc" / "secret_key"
+
+
+def _snapshot_signing_key() -> Optional[str]:
+    """
+    Return a DIGEST of the live signing key, or None if the file is absent.
+
+    Deliberately a digest and not the bytes: this value can end up in a
+    failure message on a developer's console or in CI output, and the key is
+    exactly the thing that must not be printed. Two keys differing only in
+    mtime are reported as unchanged - rotation rewrites content, it does not
+    touch the file.
+    """
+    try:
+        return hashlib.sha256(_signing_key_path().read_bytes()).hexdigest()
+    except OSError:
+        return None
+
+
+@pytest.fixture(scope="session", autouse=True)
+def guard_signing_key():
+    """
+    Guard against tests mutating the real JWT signing key in
+    <repo-root>/.shc/secret_key.
+
+    Snapshots a digest of the key at session start and asserts it is unchanged
+    at session end. Any test that deletes, truncates, overwrites or regenerates
+    the live key fails the session.
+
+    This is the F4 regression guard: a test was silently destroying the
+    developer's signing key by unlinking DEFAULT_STATE_DIR / "secret_key",
+    which invalidated all issued tokens. This guard makes that impossible
+    to reintroduce.
+
+    This reports that the key changed, not which test changed it: the digest
+    is compared once, at session teardown, by which point pytest has discarded
+    per-test state. Bisect with `pytest -k` if it fires.
+    """
+    before = _snapshot_signing_key()
+    yield
+    after = _snapshot_signing_key()
+    if before != after:
+        raise AssertionError(
+            "The real JWT signing key (<repo-root>/.shc/secret_key) was mutated "
+            "during this test session. This invalidates all issued tokens and is "
+            "exactly the F4 defect this guard was added to prevent.\n"
+            f"key digest before: {before}\n"
+            f"key digest after:  {after}\n"
+            "(digests, not key material) Any test that touches DEFAULT_STATE_DIR "
+            "must monkeypatch it to a temporary directory instead of mutating "
+            "the real one."
+        )
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -255,7 +314,7 @@ def _rebind_session_event_loop(event_loop):
 
 
 @pytest.fixture(scope="session", autouse=True)
-def dispose_database_engine(event_loop):
+def dispose_database_engine(event_loop, isolated_database):
     """
     Dispose the global async engine once the test session ends.
 
@@ -275,6 +334,10 @@ def dispose_database_engine(event_loop):
     pytest finalises a fixture before the fixtures it depends on, so this
     runs while the loop is still open, and the loop is closed only after the
     engine has been disposed on it.
+
+    Requesting `isolated_database` ensures this fixture tears down BEFORE
+    `isolated_database`, so the engine is disposed while the temp database
+    file still exists (issue #111).
     """
     yield
     if not event_loop.is_closed():

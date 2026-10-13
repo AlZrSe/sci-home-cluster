@@ -533,3 +533,67 @@ class TestDownstreamFunctions:
         assert loaded.key == test_data.key
         assert loaded.number == test_data.number
         assert (home / "test.yaml").exists()
+
+
+class TestNormalizePathEdgeCases:
+    """Edge cases for normalize_path() from the second #108 grooming pass.
+
+    Scenarios T4, T6, T9-T11 plus the AC-9 sweep. The tilde-expansion
+    scenarios (T1-T3, T7, T8, T12) are covered by TestNormalizePath above.
+    """
+
+    @pytest.mark.skipif(
+        sys.platform == "win32", reason="~user/ expansion is Unix-specific"
+    )
+    def test_tilde_other_user_unix(self):
+        """T4: ~user/path expands to that user's home (Unix only, best effort)."""
+        # On Unix, ~root typically expands to /root
+        # If the user doesn't exist, expanduser returns the path unchanged
+        result = normalize_path("~root/foo")
+        # Should not raise; result may be expanded or unchanged
+        # depending on user existence
+        assert isinstance(result, Path)
+        assert result.is_absolute()
+
+    def test_relative_path_becomes_absolute(self):
+        """T6: Relative paths without tilde become absolute via resolve()."""
+        result = normalize_path("relative/path")
+        assert result == Path("relative/path").resolve()
+        assert result.is_absolute()
+
+    def test_empty_string_returns_cwd(self):
+        """T9: Empty string returns current working directory."""
+        result = normalize_path("")
+        assert result == Path.cwd()
+        assert result.is_absolute()
+
+    def test_dot_returns_cwd(self):
+        """T10: Dot returns current working directory."""
+        result = normalize_path(".")
+        assert result == Path.cwd()
+        assert result.is_absolute()
+
+    def test_dotdot_returns_parent(self):
+        """T11: Double dot returns parent of current working directory."""
+        result = normalize_path("..")
+        assert result == Path.cwd().parent
+        assert result.is_absolute()
+
+    def test_no_exception_for_valid_paths(self):
+        """AC-9: No TypeError, AttributeError, or other exceptions for valid paths."""
+        test_paths = [
+            "~",
+            "~/projects",
+            "~/a/b/c",
+            "/absolute/path",
+            "relative/path",
+            Path("~/test"),
+            Path("/abs"),
+            "",
+            ".",
+            "..",
+        ]
+        for p in test_paths:
+            result = normalize_path(p)
+            assert isinstance(result, Path)
+            assert result.is_absolute()

@@ -83,7 +83,7 @@ async def test_forged_token_stops_verifying_after_rotation(
 
         # Step 2: rotate, the way the first start after the upgrade does.
         with caplog.at_level(logging.DEBUG, logger="backend.core.config"):
-            rotated = _resolve_secret_key()
+            rotated = _resolve_secret_key(shc_state_dir=str(tmp_path))
         assert rotated != published_key
         monkeypatch.setattr(settings, "SECRET_KEY", rotated)
 

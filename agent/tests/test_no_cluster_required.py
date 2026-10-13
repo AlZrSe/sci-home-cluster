@@ -19,6 +19,7 @@ PYPROJECT = REPO_ROOT / "pyproject.toml"
 
 SHIPPED_MODULES = [
     "config",
+    "hardware",
     "logging_config",
     "loop",
     "paths",
@@ -46,7 +47,21 @@ NETWORK_MODULES = {
     "xmlrpc",
 }
 
-THIRD_PARTY_ALLOWED = {"pydantic", "pydantic_settings", "watchdog"}
+#: ``psutil`` and ``gputil`` arrived with hardware detection (issue #95, spec
+#: Q1): psutil for CPU and memory, gputil for GPUs behind a guarded import. Both
+#: are declared dependencies in ``pyproject.toml`` and neither can speak a
+#: protocol -- they read /proc, /sys and the NVML library. The allowlist stays
+#: pinned, so the next third-party import has to be argued for here rather than
+#: arriving unnoticed.
+THIRD_PARTY_ALLOWED = {"pydantic", "pydantic_settings", "watchdog", "psutil", "gputil"}
+
+#: The subset of that which may be imported at **module scope**. ``psutil`` is a
+#: hard dependency that is always installed and does nothing at import;
+#: ``gputil`` is declared but not installed everywhere, so it stays behind the
+#: guarded lazy import in ``agent/hardware.py`` -- see
+#: ``test_a_third_party_module_is_imported_at_module_scope_only_if_allowed``.
+THIRD_PARTY_AT_MODULE_SCOPE = {"pydantic", "pydantic_settings", "watchdog", "psutil"}
+
 PROJECT_MODULES = {"agent", "shared", "backend", "cli"}
 
 
@@ -109,6 +124,28 @@ def test_agent_imports_no_network_module() -> None:
     assert offenders == {}, f"the agent is file-only by decision (#92): {offenders}"
 
 
+def third_party_roots(roots: set[str]) -> set[str]:
+    return roots - set(sys.stdlib_module_names) - PROJECT_MODULES
+
+
+def module_scope_imports(path: Path) -> set[str]:
+    """Third-party roots imported at module scope only, ignoring function bodies.
+
+    ``ast.walk`` (what :func:`imported_roots` uses) cannot tell "imported when
+    the module is loaded" from "imported when a function is called", and the
+    difference is load-bearing: a third-party import at module scope runs on
+    every ``import agent.<anything>``, while one inside a function runs only when
+    that function is reached.
+    """
+    found: set[str] = set()
+    for node in ast.parse(path.read_text(encoding="utf-8")).body:
+        if isinstance(node, ast.Import):
+            found.update(alias.name.split(".")[0] for alias in node.names)
+        elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
+            found.add(node.module.split(".")[0])
+    return third_party_roots(found)
+
+
 def test_every_third_party_import_is_expected() -> None:
     """The whole third-party surface of the shipped package, pinned."""
     third_party: set[str] = set()
@@ -119,6 +156,33 @@ def test_every_third_party_import_is_expected() -> None:
                 continue
             third_party.add(root)
     assert third_party == THIRD_PARTY_ALLOWED
+
+
+def test_a_third_party_module_is_imported_at_module_scope_only_if_allowed() -> None:
+    """Being on the allowlist does not buy a module-scope import.
+
+    ``gputil`` is the case that matters: it is declared in ``pyproject.toml``,
+    it is **not installed** in every environment, and ``getGPUs()`` raises on a
+    machine with no NVIDIA driver (issue #95 Q1). ``agent/hardware.py`` imports
+    it inside ``_gputil()`` so its absence is a supported state rather than an
+    ``ImportError`` at agent start-up. The first test above cannot express that
+    distinction -- it accepts the import at any scope -- so the narrower
+    constraint is pinned here rather than left to good intentions.
+    """
+    at_module_scope: set[str] = set()
+    for name in SHIPPED_MODULES:
+        at_module_scope |= module_scope_imports(AGENT_DIR / f"{name}.py")
+
+    assert at_module_scope == THIRD_PARTY_AT_MODULE_SCOPE, (
+        "third-party imports at module scope run on every import of the agent; "
+        "anything else must be imported lazily inside the function that needs "
+        f"it. Module scope: {sorted(at_module_scope)}, allowed: "
+        f"{sorted(THIRD_PARTY_AT_MODULE_SCOPE)}"
+    )
+    assert "gputil" in THIRD_PARTY_ALLOWED, (
+        "gputil is still an expected dependency; it is only its import that is "
+        "confined to a lazy call"
+    )
 
 
 def test_shipped_modules_are_the_documented_set() -> None:

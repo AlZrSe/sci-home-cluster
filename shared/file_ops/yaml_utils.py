@@ -120,7 +120,7 @@ def write_yaml(file_path: str, data: PydanticBaseModel) -> None:
 def update_yaml(
     file_path: str,
     model_class: Type[T],
-    update_func: "Callable[[T], T]",
+    update_func: Callable[[T], T],
 ) -> T:
     """
     Read a YAML file, update its contents, and write it back atomically.

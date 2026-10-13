@@ -6,6 +6,11 @@ publication that ``build_settings`` performs, and ``preserve_root_logging``
 restores the root logger's handlers around the tests that call
 ``configure_logging``. Without them every test after the first would inherit the
 first test's state (issue #93 US-5, R2).
+
+A third exists because a test failure is not the worst thing this suite can do
+to itself: the agent half of it used to signal *pytest*, and a signal delivered
+at ``SIG_DFL`` kills the interpreter mid-file with no traceback and no summary
+(issue #114). ``SignalSafetyGuard`` turns that back into a red test.
 """
 
 from __future__ import annotations
@@ -23,6 +28,13 @@ from watchdog.observers import Observer
 from agent.config import build_settings
 from agent.paths import AgentPaths, resolve_paths
 from agent.watcher import FolderEvent, FolderWatcher
+
+from shared.testing.signal_guard import (
+    GUARDED_SIGNALS,
+    SIGNAL_GUARD,
+    SignalSafetyGuard,
+    signal_name,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -77,6 +89,19 @@ def _NOW() -> Any:
     from datetime import datetime, timezone
 
     return datetime.now(timezone.utc)
+
+
+@pytest.fixture(autouse=True)
+def signal_safety_guard() -> Iterator[SignalSafetyGuard]:
+    """Re-arm the signal safety guard for every test (issue #114 D4).
+
+    ``Agent.run()`` installs its own SIGTERM/SIGINT handlers mid-test and never
+    removes them, so a guard armed once at session start would be gone by the
+    time the second signal test finished. Re-arming per test means a stray
+    signal is recorded again from the next boundary on.
+    """
+    SIGNAL_GUARD.install()
+    yield SIGNAL_GUARD
 
 
 @pytest.fixture(autouse=True)
@@ -218,11 +243,15 @@ def real_watch_supported() -> bool:
 REAL_WATCH_SUPPORTED = real_watch_supported()
 
 __all__ = [
+    "GUARDED_SIGNALS",
     "REPO_ROOT",
+    "SIGNAL_GUARD",
     "WAIT_UNTIL_TIMEOUT_S",
     "FakeObserver",
     "RecordingWatcher",
     "REAL_WATCH_SUPPORTED",
+    "SignalSafetyGuard",
+    "signal_name",
     "wait_for",
     "wait_until",
     "sys",
