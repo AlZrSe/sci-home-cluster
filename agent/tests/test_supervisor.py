@@ -4,12 +4,22 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from pathlib import Path
 from typing import Any
 
 import pytest
 
+from agent.config import build_settings
+from agent.loop import (
+    EVENT_DRAIN_TASK,
+    FOLDER_WATCH_TASK,
+    NODE_SPEC_TASK,
+    WATCHER_LIVENESS_TASK,
+    Agent,
+)
+from agent.paths import resolve_paths
 from agent.supervisor import TaskFailure, TaskSupervisor, SupervisorTask
-from agent.tests.conftest import wait_until
+from agent.tests.conftest import RecordingWatcher, wait_until
 
 pytestmark = pytest.mark.unit
 
@@ -131,20 +141,53 @@ async def test_non_critical_failure_does_not_call_on_fatal() -> None:
     assert len(supervisor.failures) >= 2
 
 
-async def test_liveness_task_is_the_only_critical_one() -> None:
-    from agent.loop import (
-        EVENT_DRAIN_TASK,
-        FOLDER_WATCH_TASK,
-        WATCHER_LIVENESS_TASK,
-    )
+async def test_liveness_task_is_the_only_critical_one(tmp_path: Path) -> None:
+    """Read the agent's **real** registered tasks, not a list written here.
 
-    critical = {
-        FOLDER_WATCH_TASK: False,
-        WATCHER_LIVENESS_TASK: True,
-        EVENT_DRAIN_TASK: False,
-    }
-    assert critical[WATCHER_LIVENESS_TASK] is True
-    assert [name for name, flag in critical.items() if flag] == [WATCHER_LIVENESS_TASK]
+    This test used to build a dict of the task names, annotate it by hand and
+    assert against itself -- which is why flipping the registration task to
+    ``critical=True`` in ``agent/loop.py`` left the whole suite green. That flag
+    is what AC-10 rests on: a node that fails to register must cost a heartbeat,
+    not the process, and nothing was looking at it.
+
+    ``TaskSupervisor`` exposes task *names* and nothing else, so its specs are
+    the only place the flag can be read. ``_specs`` is private because no
+    consumer needs it; a test whose job is pinning production wiring reads it
+    anyway.
+    """
+    settings = build_settings(
+        ["--node-id", "node-01", "--syncthing-root", str(tmp_path)],
+        environ={},
+    )
+    paths = resolve_paths(settings.SYNCTHING_ROOT, settings.NODE_ID)
+    agent = Agent(settings, watcher=RecordingWatcher(paths))
+
+    running = asyncio.ensure_future(agent.run())
+    try:
+        await wait_until(
+            lambda: agent.supervisor is not None
+            and len(agent.supervisor.task_names) == 4,
+            "the agent never registered all four tasks",
+        )
+        assert agent.supervisor is not None
+        specs = dict(agent.supervisor._specs)
+    finally:
+        supervisor = agent.supervisor
+        assert supervisor is not None
+        supervisor.stop_event.set()
+        await asyncio.wait_for(running, 5.0)
+
+    critical = {name for name, task in specs.items() if task.critical}
+    assert critical == {WATCHER_LIVENESS_TASK}, (
+        f"only the liveness probe may be critical; got {critical} out of "
+        f"{sorted(specs)}"
+    )
+    assert specs[NODE_SPEC_TASK].critical is False, (
+        "a node that fails to register must cost a heartbeat, not the process "
+        "(issue #95 AC-10)"
+    )
+    for name in (FOLDER_WATCH_TASK, EVENT_DRAIN_TASK):
+        assert specs[name].critical is False, f"{name} must stay non-critical"
 
 
 async def test_base_exception_in_task_is_isolated() -> None:

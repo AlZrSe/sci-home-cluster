@@ -23,6 +23,7 @@ from agent.config import (
 from agent.loop import (
     EVENT_DRAIN_TASK,
     FOLDER_WATCH_TASK,
+    NODE_SPEC_TASK,
     WATCHER_LIVENESS_TASK,
     Agent,
 )
@@ -584,8 +585,13 @@ async def test_watcher_start_failure_is_not_fatal(syncthing_root: Path) -> None:
     )
     assert attempts >= 2, "folder-watch retries on its next tick"
     assert agent.supervisor is not None
+    # Registration does not depend on the watcher: the folder is what the node
+    # file goes into, and the watcher only ever observes it. So the watcher
+    # failing removes the liveness probe and the drain, and leaves the
+    # registration task (issue #95).
     assert agent.supervisor.task_names == [
-        FOLDER_WATCH_TASK
+        NODE_SPEC_TASK,
+        FOLDER_WATCH_TASK,
     ], "no watcher means no liveness probe to fail"
     assert any(f.task_name == FOLDER_WATCH_TASK for f in agent.supervisor.failures)
 
@@ -609,16 +615,20 @@ async def test_no_liveness_task_without_a_folder(tmp_path: Path) -> None:
     assert await asyncio.wait_for(running, 5.0) == EXIT_OK
 
 
-async def test_all_three_tasks_are_registered_when_ready(
+async def test_all_tasks_are_registered_when_ready(
     syncthing_root: Path,
 ) -> None:
     agent = await make_agent(syncthing_root)
     running = asyncio.ensure_future(agent.run())
     assert await wait_for(
-        lambda: agent.supervisor is not None and len(agent.supervisor.task_names) == 3
+        lambda: agent.supervisor is not None and len(agent.supervisor.task_names) == 4
     )
     assert agent.supervisor is not None
+    # Four since #95: registration joined folder-watch, watcher-liveness and
+    # event-drain on the same seam, and the node file is what makes the node
+    # exist at all.
     assert set(agent.supervisor.task_names) == {
+        NODE_SPEC_TASK,
         FOLDER_WATCH_TASK,
         WATCHER_LIVENESS_TASK,
         EVENT_DRAIN_TASK,

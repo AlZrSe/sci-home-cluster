@@ -1,12 +1,12 @@
 """
 The supervised agent loop and its ordered shutdown.
 
-``Agent.run`` is wiring: wait for the folder, start the watcher lazily, register
-supervised tasks, wait for the stop event, then shut down in a fixed order. The
-two seams in that order -- ``_hand_back_in_flight_job`` and
-``_write_final_state`` -- are deliberate no-ops in #93: #103 fills the first and
-# #100 the second, and having them exist now is what stops either from
-*rewriting* the shutdown sequence later (issue #93 Q4).
+``Agent.run`` is wiring: wait for the folder, register this node, start the
+watcher lazily, register the supervised tasks, wait for the stop event, then
+shut down in a fixed order. The two seams in that order --
+``_hand_back_in_flight_job`` and ``_write_final_state`` -- are deliberate no-ops
+in #93: #103 fills the first and #100 the second, and having them exist now is
+what stops either from *rewriting* the shutdown sequence later (issue #93 Q4).
 """
 
 from __future__ import annotations
@@ -26,6 +26,7 @@ from agent.config import (
     FOLDER_RETRY_INTERVAL_S,
     AgentSettings,
 )
+from agent.hardware import collect_node_spec, write_node_spec
 from agent.paths import AgentPaths, resolve_paths
 from agent.supervisor import TaskSupervisor, SupervisorTask
 from agent.watcher import FolderWatcher
@@ -36,6 +37,16 @@ EVENT_DRAIN_INTERVAL_S: Final[float] = 0.5
 FOLDER_WATCH_TASK: Final[str] = "folder-watch"
 WATCHER_LIVENESS_TASK: Final[str] = "watcher-liveness"
 EVENT_DRAIN_TASK: Final[str] = "event-drain"
+NODE_SPEC_TASK: Final[str] = "node-registration"
+
+#: How often ``nodes/<node_id>.yaml`` is rewritten, and therefore how often the
+#: backend's heartbeat monitor sees a fresh ``last_heartbeat``. The monitor flips
+#: a node ``OFFLINE`` once the heartbeat is older than a hardcoded ``delta > 90``
+#: (``backend/services/syncthing_service.py``), so 30 s leaves room for two
+#: missed writes plus watcher latency; #96 makes that threshold configurable and
+#: is a separate change. It also matches the monitor's own 30 s tick, so a healthy
+#: node is never more than one tick stale in the monitor's eyes.
+HEARTBEAT_INTERVAL_S: Final[float] = 30.0
 
 
 class Agent:
@@ -86,6 +97,12 @@ class Agent:
         )
 
         ready = await self._ensure_folder()
+        if ready:
+            # Before the watcher, and only once the folder is usable: the node
+            # file is the only way this node enters the cluster, and it goes
+            # into the directory that just became writable. Registering before
+            # the folder exists would write nothing useful (issue #95).
+            self._register_node_spec_task()
         # Start the watcher before registering tasks that probe it. A liveness
         # task registered against a watcher that has not started yet reports a
         # false "dead watcher" and takes the agent down for a condition it can
@@ -151,6 +168,62 @@ class Agent:
             coro_factory=lambda _stop: self._check_folder(),
             interval_s=self._settings.FOLDER_WATCH_INTERVAL_S,
         )
+
+    def _register_node_spec_task(self) -> None:
+        """Register the periodic node-registration task.
+
+        One more ``SupervisorTask`` rather than bespoke asyncio plumbing, so
+        registration inherits the shutdown grace, the tick containment and the
+        retry cadence every other periodic task already has -- and so that
+        stopping the agent stops registration with everything else.
+
+        Non-critical on purpose: a node that fails to register must cost a
+        heartbeat, not the agent (issue #95 AC-10).
+        """
+        assert self._supervisor is not None
+        self._supervisor.add_task(
+            SupervisorTask(
+                name=NODE_SPEC_TASK,
+                coro_factory=lambda _stop: self._registration_tick(),
+                interval_s=HEARTBEAT_INTERVAL_S,
+            )
+        )
+
+    async def _registration_tick(self) -> None:
+        """One registration tick: probe this machine, rewrite the node file.
+
+        The first tick runs as soon as the supervisor starts, which is why no
+        separate "write once at startup" call site exists: the file lands right
+        after ``_ensure_folder`` returned, and the ``run_forever`` contract is
+        one tick then one sleep.
+
+        Best-effort by design. A failed write is an ``OSError`` -- a Syncthing
+        conflict, a read-only mount, a full disk -- and the agent's job is
+        running jobs, so it logs a warning and lets the next tick retry. The
+        supervisor would contain the failure either way, but it records it and
+        logs a traceback, which is the wrong weight for a lost heartbeat. An
+        exception that is *not* an ``OSError`` is a bug rather than a transient
+        filesystem condition, so it is left to the supervisor's containment to be
+        recorded and noticed.
+        """
+        try:
+            written = write_node_spec(
+                self._paths, collect_node_spec(self._settings.NODE_ID)
+            )
+        except OSError as exc:
+            logger.warning(
+                "could not write the node file %s (%s); this heartbeat is lost "
+                "and the next tick retries",
+                self._paths.node_file,
+                exc,
+            )
+            return
+        if self._watcher is not None:
+            # The agent watches the folder it just wrote into. Recording the
+            # path keeps its own registration out of the observed event stream,
+            # which is what SelfWriteLedger exists for; without it every 30 s
+            # tick produces a "observed modified nodes/node-01.yaml" line.
+            self._watcher.ledger.record(written)
 
     def _register_watcher_tasks(self) -> None:
         assert self._supervisor is not None
