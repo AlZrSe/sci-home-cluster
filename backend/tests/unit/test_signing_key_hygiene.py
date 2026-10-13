@@ -142,8 +142,11 @@ def _digest_of_stripped_text(value: str) -> str:
 
 @pytest.fixture
 def state_dir(tmp_path, monkeypatch):
-    """Point the resolver at a throwaway state directory with no SECRET_KEY."""
-    monkeypatch.setenv("SHC_STATE_DIR", str(tmp_path))
+    """Provide a throwaway state directory with no SECRET_KEY.
+
+    Tests pass this directory explicitly via ``shc_state_dir`` to
+    ``_resolve_secret_key``; the ambient ``SHC_STATE_DIR`` is not used.
+    """
     monkeypatch.delenv("SECRET_KEY", raising=False)
     return tmp_path
 
@@ -457,7 +460,7 @@ def test_published_key_is_replaced_and_warns(state_dir, monkeypatch, caplog):
     )
 
     with caplog.at_level(logging.DEBUG, logger="backend.core.config"):
-        resolved = _resolve_secret_key()
+        resolved = _resolve_secret_key(shc_state_dir=str(state_dir))
 
     # A *different* key is returned, and the one on disk is the new one.
     assert resolved != key
@@ -512,7 +515,7 @@ def test_unrecognised_key_is_not_rotated_and_logs_nothing(
     monkeypatch.setattr(config, "PUBLISHED_KEY_SHA256", frozenset({"0" * 64}))
 
     with caplog.at_level(logging.DEBUG, logger="backend.core.config"):
-        resolved = _resolve_secret_key()
+        resolved = _resolve_secret_key(shc_state_dir=str(state_dir))
 
     assert resolved == key
     assert path.read_bytes() == before_bytes
@@ -553,7 +556,7 @@ def test_explicit_secret_key_is_neither_persisted_nor_rotated(
     )
 
     with caplog.at_level(logging.DEBUG, logger="backend.core.config"):
-        resolved = _resolve_secret_key()
+        resolved = _resolve_secret_key(shc_state_dir=str(state_dir))
 
     assert resolved == configured
     assert list(state_dir.iterdir()) == [], "an explicit key must not be persisted"
@@ -584,7 +587,7 @@ def test_generation_logs_info_with_the_absolute_path(state_dir, caplog):
     key_path = state_dir / "secret_key"
 
     with caplog.at_level(logging.INFO, logger="backend.core.config"):
-        generated = _resolve_secret_key()
+        generated = _resolve_secret_key(shc_state_dir=str(state_dir))
 
     assert generated
     assert key_path.read_text(encoding="utf-8").strip() == generated
@@ -606,7 +609,7 @@ def test_generation_logs_info_with_the_absolute_path(state_dir, caplog):
     # Second resolution is the steady state: same key, no new line.
     caplog.clear()
     with caplog.at_level(logging.INFO, logger="backend.core.config"):
-        again = _resolve_secret_key()
+        again = _resolve_secret_key(shc_state_dir=str(state_dir))
 
     assert again == generated
     assert caplog.records == [], [r.getMessage() for r in caplog.records]

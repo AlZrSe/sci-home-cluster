@@ -140,7 +140,18 @@ def _digest_secret_key(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
 
-def _resolve_secret_key() -> str:
+# Sentinel to distinguish "not passed" from "passed as None/str"
+class _Unset:
+    """Sentinel for 'parameter not passed'."""
+
+    def __repr__(self) -> str:
+        return "<UNSET>"
+
+
+_UNSET = _Unset()
+
+
+def _resolve_secret_key(shc_state_dir: Union[Optional[str], _Unset] = _UNSET) -> str:
     """
     Resolve the JWT signing key.
 
@@ -170,7 +181,7 @@ def _resolve_secret_key() -> str:
     if configured:
         return configured
 
-    state_path = Path(_state_dir()) / "secret_key"
+    state_path = Path(_state_dir(shc_state_dir)) / "secret_key"
     try:
         # Read as bytes first to catch UnicodeDecodeError explicitly.
         raw = state_path.read_bytes()
@@ -245,19 +256,37 @@ def _resolve_secret_key() -> str:
     return generated
 
 
-def _state_dir() -> str:
+def _state_dir(shc_state_dir: Union[Optional[str], _Unset] = _UNSET) -> str:
     """
     Directory for locally persisted server state.
 
-    SHC_STATE_DIR still wins, and is used verbatim so a relative value stays
-    relative (it is the user's explicit choice). Unset, the directory is
+    SHC_STATE_DIR (from Settings, via .env or environment) wins, and is used
+    verbatim so a relative value stays relative. Unset, the directory is
     absolute and anchored on the package location: the previous default was the
     literal ".shc", which meant the directory - and the signing key written into
     it - moved with the working directory (issue #34).
+
+    The optional `shc_state_dir` parameter allows callers (e.g., model_post_init)
+    to pass the value directly, avoiding a circular reference to the global
+    `settings` instance during initialization. When called without the parameter
+    (after initialization), it reads from the global `settings` instance.
     """
-    configured = os.environ.get("SHC_STATE_DIR")
-    if configured:
-        return configured
+    # Explicit string override: use it verbatim (relative stays relative)
+    if isinstance(shc_state_dir, str):
+        return shc_state_dir
+
+    # Omitted (sentinel): read from global settings if available
+    if shc_state_dir is _UNSET:
+        try:
+            configured = settings.SHC_STATE_DIR
+        except NameError:
+            # During model_post_init, the global `settings` is not yet assigned.
+            configured = None
+        if configured:
+            return configured
+        return str(DEFAULT_STATE_DIR)
+
+    # Explicit None: no configured value, fall back to default
     return str(DEFAULT_STATE_DIR)
 
 
@@ -273,6 +302,9 @@ class Settings(BaseSettings):
 
     # Syncthing configuration
     SYNCTHING_ROOT: str = "/tmp/syncthing"
+
+    # Local server state directory (holds JWT signing key)
+    SHC_STATE_DIR: Optional[str] = None
 
     # Database configuration.
     #
@@ -390,7 +422,7 @@ class Settings(BaseSettings):
         # SECRET_KEY defaults to empty so that pydantic does not shadow the
         # environment variable; fill it in from the persisted key.
         if not self.SECRET_KEY:
-            self.SECRET_KEY = _resolve_secret_key()
+            self.SECRET_KEY = _resolve_secret_key(self.SHC_STATE_DIR)
 
 
 settings = Settings()

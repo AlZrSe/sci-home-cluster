@@ -277,7 +277,7 @@ sci-run logs <job-id> --follow
 |----------|-------------|---------|
 | `SYNCTHING_ROOT` | Path to Syncthing shared folder | `/tmp/syncthing` |
 | `DATABASE_URL` | SQLite database path. **Absolute** - see [Which database am I using?](#which-database-am-i-using) | `<repo-root>/data/scientific_home_cluster.db` |
-| `SHC_STATE_DIR` | Where the generated JWT signing key is persisted | `<repo-root>/.shc` |
+| `SHC_STATE_DIR` | Where the generated JWT signing key is persisted (configurable via `.env` or environment) | `<repo-root>/.shc` |
 | `DB_POOL` | Connection pool strategy: `pooled` or `null` | `pooled` |
 | `SEED_DEMO_DATA` | Demo mode: seed the 10 demo jobs / 4 demo nodes on first use, **and** allow metrics and logs to be generated on read when nothing is stored | `false` |
 | `SHARED_TOKEN` | Shared bearer token for API. **Not generated** - unset by default, so `POST /api/v1/auth/token` answers `SHARED_TOKEN_NOT_CONFIGURED` until you set it | none (unset) |
@@ -414,11 +414,8 @@ published key was replaced, and **nothing at all** on an ordinary restart.
 >    is unset by default and is **not** auto-generated.
 > 2. Delete `<repo-root>/.shc/secret_key` and start the backend, if you use the
 >    localhost bypass and are happy to lose existing sessions.
-> 3. Point `SHC_STATE_DIR` at an empty directory. `SHC_STATE_DIR` is an
->    **environment** variable, so set it in the process environment
->    (`SHC_STATE_DIR=/tmp/empty uvicorn backend.main:app`). Putting it in `.env`
->    is rejected: it is not a `Settings` field and the extra-field check fails
->    every process at import ([issue #65]).
+> 3. Point `SHC_STATE_DIR` at an empty directory. `SHC_STATE_DIR` can be set in
+>    `.env` or the environment (`SHC_STATE_DIR=/tmp/empty uvicorn backend.main:app`).
 
 History is **not** rewritten ([issue #56], decision D1). Erasing the object does
 not erase the copy, and a rotated key signs nothing - so rotation is the
