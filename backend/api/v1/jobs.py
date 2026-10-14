@@ -22,10 +22,12 @@ from backend.core.errors import (
     logs_not_found,
     metrics_not_found,
 )
+from typing import List
 from shared.schemas.job_state import JobState
 from shared.schemas.job_list_result import JobListResult
 from shared.schemas.job_spec import JobSpec
 from shared.schemas.job_metrics import JobMetrics
+from shared.schemas.log_entry import LogEntry
 from shared.schemas.error_response import ErrorResponse
 from backend.services.job_service import JobService
 
@@ -152,7 +154,7 @@ async def get_job_metrics(
     return metrics
 
 
-@router.get("/{job_id}/logs", responses=LOGS_404)
+@router.get("/{job_id}/logs", response_model=List[LogEntry], responses=LOGS_404)
 async def get_job_logs(job_id: str, payload: dict = Depends(get_current_token_payload)):
     """
     Get job logs (HTTP fallback).
@@ -164,7 +166,7 @@ async def get_job_logs(job_id: str, payload: dict = Depends(get_current_token_pa
     return logs
 
 
-@router.get("/{job_id}/logs/history", responses=LOGS_404)
+@router.get("/{job_id}/logs/history", response_model=List[LogEntry], responses=LOGS_404)
 async def get_job_logs_history(
     job_id: str, payload: dict = Depends(get_current_token_payload)
 ):

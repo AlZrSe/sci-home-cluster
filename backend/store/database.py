@@ -100,8 +100,14 @@ class GPUMetricModel(Base):
     memory_total_mb = Column(Integer, nullable=False)
     utilization_percent = Column(Integer, nullable=False)
     temperature_c = Column(Integer, nullable=False)
+    origin = Column(
+        String(16), nullable=False, default="synthetic", server_default="synthetic"
+    )
 
-    __table_args__ = (Index("ix_gpu_metrics_job_timestamp", "job_id", "timestamp"),)
+    __table_args__ = (
+        Index("ix_gpu_metrics_job_timestamp", "job_id", "timestamp"),
+        Index("ix_gpu_metrics_origin", "origin"),
+    )
 
 
 class CPUMetricModel(Base):
@@ -116,8 +122,14 @@ class CPUMetricModel(Base):
     memory_percent = Column(Integer, nullable=False)
     temperature_c = Column(Integer, nullable=False, server_default="0")
     memory_used_gb = Column(Float, nullable=False, server_default="0.0")
+    origin = Column(
+        String(16), nullable=False, default="synthetic", server_default="synthetic"
+    )
 
-    __table_args__ = (Index("ix_cpu_metrics_job_timestamp", "job_id", "timestamp"),)
+    __table_args__ = (
+        Index("ix_cpu_metrics_job_timestamp", "job_id", "timestamp"),
+        Index("ix_cpu_metrics_origin", "origin"),
+    )
 
 
 class LogEntryModel(Base):
@@ -129,5 +141,11 @@ class LogEntryModel(Base):
     job_id = Column(String(50), ForeignKey("jobs.job_id"), nullable=False, index=True)
     timestamp = Column(DateTime, nullable=False)
     line = Column(Text, nullable=False)
+    origin = Column(
+        String(16), nullable=False, default="synthetic", server_default="synthetic"
+    )
 
-    __table_args__ = (Index("ix_log_entries_job_timestamp", "job_id", "timestamp"),)
+    __table_args__ = (
+        Index("ix_log_entries_job_timestamp", "job_id", "timestamp"),
+        Index("ix_log_entries_origin", "origin"),
+    )

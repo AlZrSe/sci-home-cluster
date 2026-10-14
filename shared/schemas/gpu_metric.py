@@ -3,6 +3,7 @@ GPU metric models.
 """
 
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -25,5 +26,6 @@ class GPUMetric(BaseModel):
     memory_total_mb: int = Field(..., ge=0)
     utilization_percent: int = Field(..., ge=0, le=100)
     temperature_c: int = Field(..., ge=-50, le=150)
+    origin: Literal["synthetic", "real"] = Field(default="synthetic")
 
     model_config = {"from_attributes": True}

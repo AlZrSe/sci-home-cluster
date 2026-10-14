@@ -130,6 +130,7 @@ class TestResponseTypes:
             "memory_percent",
             "temperature_c",
             "memory_used_gb",
+            "origin",
         }
         with pytest.raises(ValidationError):
             CPUMetric(timestamp=datetime.now(), cpu_percent=45, memory_percent=60)

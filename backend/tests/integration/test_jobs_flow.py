@@ -226,10 +226,14 @@ class TestJobLifecycle:
         data = response.json()
         assert isinstance(data, list)
         assert len(data) > 0
-        # Check log structure
-        for log_line in data:
-            assert isinstance(log_line, str)
-            assert len(log_line) > 0
+        # Check log structure - now returns LogEntry objects
+        for log_entry in data:
+            assert isinstance(log_entry, dict)
+            assert "timestamp" in log_entry
+            assert "line" in log_entry
+            assert "origin" in log_entry
+            assert log_entry["origin"] in ("synthetic", "real")
+            assert len(log_entry["line"]) > 0
 
     @pytest.mark.asyncio
     async def test_get_job_logs_not_found(self, async_client):

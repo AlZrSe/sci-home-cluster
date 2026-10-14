@@ -16,6 +16,7 @@ from shared.schemas.job_state import JobState
 from shared.schemas.job_spec import JobSpec
 from shared.schemas.job_status import JobStatus
 from shared.schemas.job_metrics import JobMetrics
+from shared.schemas.log_entry import LogEntry
 from backend.core.config import settings
 from backend.core.errors import (
     job_id_collision,
@@ -235,7 +236,7 @@ class JobService:
         """Get job GPU/CPU metrics."""
         return await self._store.get_job_metrics(job_id)
 
-    async def get_job_logs(self, job_id: str) -> Optional[List[str]]:
+    async def get_job_logs(self, job_id: str) -> Optional[List[LogEntry]]:
         """Get job logs."""
         return await self._store.get_job_logs(job_id)
 

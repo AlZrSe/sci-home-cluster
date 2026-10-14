@@ -15,6 +15,7 @@ from .job_query import JobQuery
 from .job_spec import JobSpec
 from .job_state import JobState
 from .job_status import JobStatus
+from .log_entry import LogEntry
 from .node_spec import NodeSpec
 from .paths import Paths
 from .paths import Paths as JobPaths
@@ -46,6 +47,7 @@ __all__ = [
     "JobSpec",
     "JobState",
     "JobStatus",
+    "LogEntry",
     "NodeSpec",
     "Paths",
     "Resources",

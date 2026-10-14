@@ -7,6 +7,7 @@ import asyncio
 import pytest
 from backend.store import DatabaseStore
 from shared.schemas.job_status import JobStatus
+from shared.schemas.log_entry import LogEntry
 from backend.tests.factories import (
     JobSpecFactory,
     NodeSpecFactory,
@@ -537,11 +538,12 @@ class TestLogs:
         created_job = await store.create_job(sample_job_spec)
         logs = await store.get_job_logs(created_job.job_id)
 
-        for log_line in logs:
-            assert isinstance(log_line, str)
-            assert len(log_line) > 0
+        for log_entry in logs:
+            assert isinstance(log_entry, LogEntry)
+            assert len(log_entry.line) > 0
+            assert log_entry.origin in ("synthetic", "real")
             # Should start with timestamp
-            parts = log_line.split(" ", 2)
+            parts = log_entry.line.split(" ", 2)
             assert len(parts) >= 3
 
     @pytest.mark.asyncio
