@@ -5,7 +5,7 @@ Unit tests for Syncthing service.
 import tempfile
 import pytest
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timezone
 
 from backend.services.syncthing_service import SyncthingService
 from shared.schemas.job_state import JobState
@@ -138,7 +138,7 @@ class TestSyncthingService:
             memory_gb=64,
             os="Ubuntu 24.04",
             status="ONLINE",
-            last_heartbeat=datetime.now(),
+            last_heartbeat=datetime.now(timezone.utc),
             current_job_id=None,
         )
 

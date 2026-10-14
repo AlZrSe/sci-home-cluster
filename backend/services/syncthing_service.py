@@ -9,7 +9,7 @@ import logging
 import time
 from pathlib import Path
 from typing import Dict, Optional, Set, Any
-from datetime import datetime
+from datetime import datetime, timezone
 from watchdog.observers import Observer as ObserverType
 from watchdog.events import FileSystemEventHandler
 
@@ -350,17 +350,15 @@ class SyncthingService:
                 await asyncio.sleep(30)  # Check every 30 seconds
                 store = get_store()
                 nodes = await store.list_nodes()
-                now = datetime.now()
+                now = datetime.now(timezone.utc)
 
                 for node in nodes:
                     # Calculate time since last heartbeat
                     if node.last_heartbeat:
-                        # Ensure timezone-aware comparison
-                        if node.last_heartbeat.tzinfo is None:
-                            last_hb = node.last_heartbeat.replace(tzinfo=now.tzinfo)
-                        else:
-                            last_hb = node.last_heartbeat
-
+                        # Both now and node.last_heartbeat are aware UTC
+                        # (column is timezone=True). No coercion needed —
+                        # comparing aware-to-aware UTC.
+                        last_hb = node.last_heartbeat
                         delta = (now - last_hb).total_seconds()
                         if delta > 90 and node.status == "ONLINE":
                             await store.update_node(node.node_id, status="OFFLINE")

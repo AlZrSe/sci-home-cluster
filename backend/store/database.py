@@ -72,7 +72,10 @@ class NodeModel(Base):
         nullable=False,
         default="OFFLINE",
     )
-    last_heartbeat = Column(DateTime, nullable=False)
+    # Stored as UTC; writer must emit aware UTC. The monitor
+    # (syncthing_service.py:_heartbeat_monitor) compares against
+    # datetime.now(timezone.utc).
+    last_heartbeat = Column(DateTime(timezone=True), nullable=False)
     current_job_id = Column(String(50), ForeignKey("jobs.job_id"), nullable=True)
 
     # Relationship to jobs

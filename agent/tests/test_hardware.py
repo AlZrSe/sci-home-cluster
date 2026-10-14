@@ -20,7 +20,7 @@ import logging
 import platform
 import sys
 import threading
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
 from typing import Any, Sequence
@@ -53,10 +53,11 @@ pytestmark = pytest.mark.unit
 
 HARDWARE_SOURCE = Path(__file__).resolve().parents[1] / "hardware.py"
 
-#: A fixed instant, so a test can assert a whole ``NodeSpec`` exactly. Naive
-#: local, because that is the convention the agent writes and the one the store
-#: keeps -- see ``test_the_heartbeat_is_naive_local_because_the_store_is``.
-NOW = datetime(2026, 10, 13, 12, 0)
+#: A fixed instant, so a test can assert a whole ``NodeSpec`` exactly. Aware
+#: UTC (fixed for test determinism), because the agent now writes aware UTC
+#: and the store preserves it -- see
+#: ``test_the_heartbeat_is_aware_utc_because_the_store_is_now_tz_aware``.
+NOW = datetime(2026, 10, 13, 12, 0, tzinfo=timezone.utc)
 LATER = NOW + timedelta(seconds=30)
 
 
@@ -365,9 +366,12 @@ def test_a_real_probe_populates_every_field() -> None:
 
     assert spec.cpus >= 1 and spec.memory_gb >= 1
     assert spec.status == "ONLINE" and spec.current_job_id is None
-    assert spec.last_heartbeat.tzinfo is None, (
-        "naive local, like every other writer in this repository -- see "
-        "test_the_heartbeat_is_naive_local_because_the_store_is"
+    assert (
+        spec.last_heartbeat.tzinfo is not None
+        and spec.last_heartbeat.tzinfo == timezone.utc
+    ), (
+        "aware UTC, because the store's column is DateTime(timezone=True) -- see "
+        "test_the_heartbeat_is_aware_utc_because_the_store_is_now_tz_aware"
     )
     assert spec.node_id == "node-01"
     assert spec.hostname == platform.node()
@@ -376,32 +380,28 @@ def test_a_real_probe_populates_every_field() -> None:
     assert spec.memory_gb == max(psutil.virtual_memory().total // BYTES_PER_GIB, 1)
 
 
-def test_the_heartbeat_is_naive_local_because_the_store_is() -> None:
+def test_the_heartbeat_is_aware_utc_because_the_store_is_now_tz_aware() -> None:
     """The convention, asserted directly instead of inferred from a symptom.
 
     Two separate claims, and both matter:
 
-    *naive* -- ``last_heartbeat`` is a SQLite ``DateTime`` column, so the store
-    hands the value back without a timezone no matter what the agent writes.
-    An aware value is therefore not extra information, it is information that
-    gets dropped and then misread as local time.
+    *aware* -- ``last_heartbeat`` is a SQLite ``DateTime(timezone=True)`` column,
+    so the store preserves the offset on write and returns an aware value on
+    read. An aware UTC value round-trips correctly.
 
-    *local* -- the monitor subtracts it from a naive ``datetime.now()``, i.e.
-    local. An aware-UTC value round-trips as naive **UTC**, so on any node whose
-    clock is not UTC the delta is inflated by that node's offset and a healthy
-    node is marked ``OFFLINE`` forever (#121).
-
-    The first assertion holds everywhere; the second is what fails on the
-    machines that are actually broken, which is why both are here rather than
-    only the end-to-end symptom.
+    *UTC* -- the monitor subtracts it from ``datetime.now(timezone.utc)``, i.e.
+    aware UTC. Both sides are aware UTC, so the delta is correct on any host
+    timezone. The previous naive-local convention caused a healthy node to be
+    marked ``OFFLINE`` on non-UTC hosts (#121).
     """
     value = collect_node_spec("node-01").last_heartbeat
 
-    assert value.tzinfo is None, "the store's column cannot keep an offset"
+    assert value.tzinfo is not None, "the store's column preserves the offset"
+    assert value.tzinfo == timezone.utc, "the writer must emit aware UTC"
 
-    drift = abs((datetime.now() - value).total_seconds())
+    drift = abs((datetime.now(timezone.utc) - value).total_seconds())
     assert drift < 5, (
-        f"the heartbeat is {drift:.0f}s away from naive local now; the agent is "
+        f"the heartbeat is {drift:.0f}s away from aware UTC now; the agent is "
         "writing a clock that is not the one the monitor compares against"
     )
 
@@ -439,9 +439,12 @@ def test_the_written_file_round_trips_through_read_yaml(tmp_path: Path) -> None:
     assert reloaded.status == "ONLINE"
     assert reloaded.current_job_id is None
     assert (
-        reloaded.last_heartbeat.tzinfo is None
-    ), "the value on disk is naive; YAML must not smuggle an offset back in"
-    assert abs((datetime.now() - reloaded.last_heartbeat).total_seconds()) < 5
+        reloaded.last_heartbeat.tzinfo is not None
+        and reloaded.last_heartbeat.tzinfo == timezone.utc
+    ), "the value on disk is aware UTC; YAML must preserve the offset"
+    assert (
+        abs((datetime.now(timezone.utc) - reloaded.last_heartbeat).total_seconds()) < 5
+    )
 
 
 def test_a_gpu_node_round_trips_through_read_yaml(
@@ -614,8 +617,10 @@ async def test_registration_is_not_registered_when_the_folder_never_appears(
     running = asyncio.ensure_future(agent.run())
     try:
         await wait_until(
-            lambda: agent.supervisor is not None
-            and agent.supervisor.task_names == [FOLDER_WATCH_TASK],
+            lambda: (
+                agent.supervisor is not None
+                and agent.supervisor.task_names == [FOLDER_WATCH_TASK]
+            ),
             "the agent never settled into watching for a folder that is not there",
         )
         assert agent.supervisor is not None
@@ -637,14 +642,9 @@ class FakeStore:
     purpose -- an agent test that opened the real store would be one refactor
     away from writing into the repository's ``.shc/``.
 
-    One behaviour is reproduced exactly because the monitor depends on it:
-    ``last_heartbeat`` goes into a SQLite ``DateTime`` column, which carries no
-    timezone, so it comes back **naive** and the offset the writer supplied is
-    simply gone. That loss is not a detail -- it is the whole reason the agent
-    writes naive local time, and it is why a test that hands the monitor a
-    hand-written ``datetime.now()`` proves nothing: that value already assumes
-    away the bug. The monitor tests below therefore seed from what
-    ``collect_node_spec`` actually produces.
+    The store now preserves timezone-aware UTC values (via #121). The real
+    store's column is ``DateTime(timezone=True)``, which returns aware UTC on
+    read. This fake mirrors that behaviour by storing the value as-is.
     """
 
     def __init__(self) -> None:
@@ -658,7 +658,7 @@ class FakeStore:
     async def create_node(self, node_spec: NodeSpec) -> NodeSpec:
         if node_spec.node_id in self.nodes:
             raise ValueError(f"Node with ID {node_spec.node_id} already exists")
-        self.nodes[node_spec.node_id] = _as_stored(node_spec)
+        self.nodes[node_spec.node_id] = node_spec
         self.created.append(node_spec.node_id)
         return node_spec
 
@@ -667,23 +667,11 @@ class FakeStore:
             return None
         self.updated.append((node_id, kwargs))
         current = self.nodes[node_id]
-        if "last_heartbeat" in kwargs:
-            kwargs["last_heartbeat"] = _as_naive(kwargs["last_heartbeat"])
         self.nodes[node_id] = current.model_copy(update=kwargs)
         return self.nodes[node_id]
 
     async def list_nodes(self) -> list[NodeSpec]:
         return list(self.nodes.values())
-
-
-def _as_naive(value: datetime) -> datetime:
-    return value.replace(tzinfo=None) if value.tzinfo is not None else value
-
-
-def _as_stored(node_spec: NodeSpec) -> NodeSpec:
-    return node_spec.model_copy(
-        update={"last_heartbeat": _as_naive(node_spec.last_heartbeat)}
-    )
 
 
 @pytest.fixture
@@ -756,13 +744,10 @@ async def drive_monitor(
 def heartbeat_as_the_agent_writes_it(age_s: float) -> datetime:
     """A heartbeat ``age_s`` old, built from what the agent actually produces.
 
-    Every monitor test seeds through here. Hand-writing ``datetime.now()`` would
-    assume the very thing under test: it is naive local, so it survives the
-    store's timezone loss unscathed and the monitor reads it correctly whether or
-    not the agent ever writes the right clock. Taking the value from
-    ``collect_node_spec`` means a regression to an aware UTC heartbeat shows up
-    as the symptom it causes in production -- a node marked ``OFFLINE`` on a box
-    that is not on UTC -- instead of hiding behind a convenient fixture.
+    Every monitor test seeds through here. The value from ``collect_node_spec``
+    is now aware UTC (via #121), and subtracting a ``timedelta`` preserves
+    awareness. This matches the real store's behaviour: the column is
+    ``DateTime(timezone=True)`` and returns aware UTC on read.
     """
     return collect_node_spec("node-01").last_heartbeat - timedelta(seconds=age_s)
 
@@ -770,12 +755,8 @@ def heartbeat_as_the_agent_writes_it(age_s: float) -> datetime:
 async def seed_node(store: FakeStore, age_s: float) -> None:
     """Put a node in the store the way the real store would hold it.
 
-    Through ``create_node``, never by assigning into ``store.nodes``: the SQLite
-    ``DateTime`` column drops the offset on the way in, and a seed that skips that
-    step hands the monitor a value the production database could not contain. An
-    aware heartbeat then reaches the monitor's arithmetic intact, which raises
-    ``TypeError`` inside its own ``except`` -- and the node stays ``ONLINE``
-    because the monitor did nothing at all, rather than because it is healthy.
+    The real store now preserves aware UTC (via #121), so we can pass the
+    aware value directly. The fake store mirrors this by storing as-is.
     """
     await store.create_node(
         a_node_spec("node-01", last_heartbeat=heartbeat_as_the_agent_writes_it(age_s))
@@ -790,10 +771,9 @@ async def test_a_fresh_node_is_never_flipped_offline(
 ) -> None:
     """AC-9: a 10 s heartbeat is well inside the monitor's 90 s threshold.
 
-    The value under test is the agent's own, seeded through the store, so this
-    goes red if ``collect_node_spec`` ever starts writing a tz-aware heartbeat
-    again: the store drops the offset, the monitor reads UTC as local, and on a
-    non-UTC node the delta is hours rather than seconds (#121).
+    The value under test is the agent's own (aware UTC), seeded through the
+    store (which now preserves aware UTC via #121). The monitor compares
+    aware-to-aware UTC, so the delta is correct on any host timezone.
     """
     await seed_node(backend_store, 10.0)
     service = SyncthingService(fresh_paths(tmp_path).root)
@@ -850,7 +830,7 @@ async def test_the_node_file_is_rewritten_on_every_tick(
     def counting(node_id: str, *, now: datetime | None = None) -> NodeSpec:
         nonlocal probes
         probes += 1
-        return a_node_spec(node_id, last_heartbeat=datetime.now())
+        return a_node_spec(node_id, last_heartbeat=datetime.now(timezone.utc))
 
     monkeypatch.setattr(agent_loop, "collect_node_spec", counting)
 
@@ -895,8 +875,12 @@ async def test_a_bug_in_a_tick_does_not_stop_the_agent_either(
     running = asyncio.ensure_future(agent.run())
     try:
         await wait_until(
-            lambda: agent.supervisor is not None
-            and any(f.task_name == NODE_SPEC_TASK for f in agent.supervisor.failures),
+            lambda: (
+                agent.supervisor is not None
+                and any(
+                    f.task_name == NODE_SPEC_TASK for f in agent.supervisor.failures
+                )
+            ),
             "the failing tick was never recorded by the supervisor",
         )
         assert not running.done(), "a bug in a tick must not stop the agent"
