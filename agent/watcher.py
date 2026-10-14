@@ -110,7 +110,9 @@ class _EventHandler(FileSystemEventHandler):
     def _handle(self, kind: str, event: FileSystemEvent) -> None:
         if event.is_directory:
             return
-        path = Path(str(event.src_path))
+        self._handle_path(kind, Path(str(event.src_path)))
+
+    def _handle_path(self, kind: str, path: Path) -> None:
         if not self._is_relevant_file(str(path)):
             return
         if self._ledger.is_self_write(path):
@@ -127,6 +129,41 @@ class _EventHandler(FileSystemEventHandler):
 
     def on_deleted(self, event: FileSystemEvent) -> None:
         self._handle(EVENT_DELETED, event)
+
+    def on_moved(self, event: FileSystemEvent) -> None:
+        """A file renamed INTO the folder is a delivery, and this is it.
+
+        Nothing here used to implement this, and that made the watcher blind
+        to the one way files actually arrive. ``shared.file_ops.write_yaml``
+        publishes atomically - temp file, then ``os.replace`` - and so does
+        Syncthing. Linux inotify reports a rename-in as ``IN_MOVED_TO``, which
+        watchdog surfaces as ``FileMovedEvent`` and dispatches to
+        ``on_moved``.
+
+        Measured on this platform: submitting one job through
+        ``POST /api/v1/jobs/`` and watching the folder with a real
+        ``FolderWatcher`` produced **no event at all** in 7 of 20 runs. The
+        other 13 produced a ``created`` event only as a side effect of
+        watchdog synthesising events for a directory that had just been
+        created - never because the file itself was created. So the submitted
+        job was written and the agent usually did not see it (issue #105).
+
+        Classified as ``created`` rather than ``modified``: from the folder's
+        point of view a file that arrives is new, which is also what watchdog
+        synthesises for a file appearing inside a new directory, and what
+        discovery (#97) will want to be told. A rewrite of a file the agent
+        owns is still suppressed, because the ledger records the
+        *destination* path and the destination is what is checked.
+
+        Directories are refused here for the same reason ``_handle`` refuses
+        them: a directory that happens to be named ``state.yaml`` passes the
+        suffix filter, and one that reaches the queue is one the consumer has
+        to learn to ignore. The backend's handler makes the same check.
+        """
+        destination = getattr(event, "dest_path", None)
+        if destination is None or event.is_directory:
+            return
+        self._handle_path(EVENT_CREATED, Path(str(destination)))
 
     def cancel_pending(self) -> None:
         """Drop events observed but not yet handed to the event loop.

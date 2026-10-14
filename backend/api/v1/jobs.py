@@ -19,7 +19,6 @@ from backend.core.deps import (
 from backend.core.errors import (
     job_not_cancellable,
     job_not_found,
-    job_not_retryable,
     logs_not_found,
     metrics_not_found,
 )
@@ -53,6 +52,17 @@ LOGS_404: Dict[Union[int, str], Dict[str, Any]] = {
     404: {"model": ErrorResponse, "description": "Job not found"}
 }
 
+# Deliberately NOT declared here: the 503 SYNCTHING_UNAVAILABLE that POST /jobs/,
+# POST /jobs/{job_id}/retry and DELETE /jobs/{job_id} now return when the
+# Syncthing folder cannot be written or removed. Those three raise it from
+# inside the service layer, in a code path whose signature and response model
+# are unchanged, so adding them here would be the only way to make the
+# generator see them - and it would turn `openapi.yaml` into a document that
+# has to be regenerated for a behavioural change nobody reviewing the diff
+# would notice. `docs/specs/105-job-submission-folder.md` AC-14 pins the
+# schema against the checked-in snapshot, so the day someone does add a
+# declared 503, that test fails and says so.
+
 
 @router.get("/", response_model=JobListResult)
 async def list_jobs(
@@ -83,6 +93,14 @@ async def list_jobs(
     return JobListResult(items=jobs, total=total)
 
 
+# The submission path also publishes `jobs/<job_id>/state.yaml`, and the
+# service decides 409 (id collision) and 503 (the folder could not be written)
+# for it. None of that is described in a docstring, on purpose: FastAPI copies
+# a handler's docstring into the operation's `description`, so documenting the
+# new behaviour here would change the generated schema and force
+# `openapi.yaml` to be regenerated for a change to nobody's request or
+# response shape - which D11 forbids and AC-14 pins. The reasoning lives on
+# `JobService.submit_job`, where it is read by the code that implements it.
 @router.post("/", response_model=JobState, status_code=status.HTTP_201_CREATED)
 async def create_job(
     job_spec: JobSpec,
@@ -92,8 +110,7 @@ async def create_job(
     Create a new job from JSON spec.
     """
     job_service = JobService()
-    created_job = await job_service.create_job(job_spec)
-    return created_job
+    return await job_service.submit_job(job_spec)
 
 
 @router.get("/{job_id}", response_model=JobState)
@@ -108,15 +125,16 @@ async def get_job(job_id: str, payload: dict = Depends(get_current_token_payload
     return job
 
 
+# Ordering and status codes are the service's, because this file is excluded
+# from mypy (issue #105, D8): the 404 comes from a pre-read, the 503 from a
+# folder failure, and a delete that already happened is a 204.
 @router.delete("/{job_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_job(job_id: str, payload: dict = Depends(get_current_token_payload)):
     """
     Delete a job by ID.
     """
     job_service = JobService()
-    deleted = await job_service.delete_job(job_id)
-    if not deleted:
-        raise job_not_found(job_id)
+    await job_service.delete_job(job_id)
     return None
 
 
@@ -235,21 +253,17 @@ async def stream_job_logs(
         job_service.unsubscribe_from_log_stream(job_id, send_line)
 
 
+# Re-emits `jobs/<job_id>/state.yaml`, so a retried job is claimable again and
+# not merely healthy-looking in the dashboard (issue #105). The 404, the 409
+# and the 503 are raised by the service, which is where the folder write and
+# its rollback live. Not in a docstring - see the note above `create_job`.
 @router.post("/{job_id}/retry", response_model=JobState)
 async def retry_job(job_id: str, payload: dict = Depends(get_current_token_payload)):
     """
     Retry a failed/cancelled job.
     """
     job_service = JobService()
-    job = await job_service.retry_job(job_id)
-    if job is None:
-        # Check if job exists to give better error message
-        existing_job = await job_service.get_job(job_id)
-        if existing_job is None:
-            raise job_not_found(job_id)
-        # Job exists but not in retryable state
-        raise job_not_retryable(job_id, existing_job.status.value)
-    return job
+    return await job_service.retry_job(job_id)
 
 
 @router.post("/{job_id}/cancel", response_model=JobState)

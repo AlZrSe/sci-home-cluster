@@ -50,6 +50,30 @@ class SyncthingEventHandler(FileSystemEventHandler):
         if not event.is_directory and self._is_relevant_file(event.src_path):
             self._schedule_delete(event.src_path)
 
+    def on_moved(self, event):
+        """
+        A file renamed INTO the folder is a delivery, and this is it.
+
+        The sibling of ``agent/watcher.py``'s ``on_moved``, added for the same
+        reason and kept in step with it on purpose: neither handler implemented
+        it, and without it every atomically published file is invisible.
+        ``write_yaml`` (``shared/file_ops/yaml_utils.py``) publishes by
+        writing a temp file and ``os.replace``-ing it into place, and Syncthing
+        does the same when it delivers a file from another node. Linux inotify
+        reports a rename-in as IN_MOVED_TO, watchdog surfaces that as
+        FileMovedEvent, and ``FileSystemEventHandler.dispatch`` routes it to
+        this method - which, absent, silently dropped it.
+
+        The destination is the path that matters: on a FileMovedEvent
+        ``src_path`` is the *old* name (the temp file the filter rejects) and
+        ``dest_path`` is the state file.
+        """
+        destination = getattr(event, "dest_path", None)
+        if destination is None or event.is_directory:
+            return
+        if self._is_relevant_file(destination):
+            self._schedule_process(destination)
+
     def _is_relevant_file(self, path: str) -> bool:
         """Check if the file is a relevant YAML state file."""
         path_obj = Path(path)
