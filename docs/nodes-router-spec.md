@@ -42,6 +42,7 @@ class GPUInfo(BaseModel):
     name: str
     memory_gb: int
 
+
 class NodeSpec(BaseModel):
     node_id: str
     hostname: str
@@ -160,10 +161,7 @@ class NodeSpec(BaseModel):
 
 ```python
 @router.get("/{node_id}", response_model=NodeSpec)
-async def get_node(
-    node_id: str,
-    payload: dict = Depends(get_current_token_payload)
-):
+async def get_node(node_id: str, payload: dict = Depends(get_current_token_payload)):
     """
     Get node details.
     """
@@ -171,8 +169,7 @@ async def get_node(
     node = await node_service.get_node(node_id)
     if node is None:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Node {node_id} not found"
+            status_code=status.HTTP_404_NOT_FOUND, detail=f"Node {node_id} not found"
         )
     return node
 ```

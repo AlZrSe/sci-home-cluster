@@ -198,14 +198,17 @@ Add a new setting `ENABLE_LOVABLE_PREVIEW_CORS: bool = False` that, when true, a
 # In Settings class
 ENABLE_LOVABLE_PREVIEW_CORS: bool = False
 
+
 @property
 def effective_cors_origins(self) -> List[str]:
     origins = list(self.BACKEND_CORS_ORIGINS)
     if self.ENABLE_LOVABLE_PREVIEW_CORS:
-        origins.extend([
-            "https://preview.lovableproject.com",
-            # Add more as needed; could also read from a comma-separated env var
-        ])
+        origins.extend(
+            [
+                "https://preview.lovableproject.com",
+                # Add more as needed; could also read from a comma-separated env var
+            ]
+        )
     return origins
 ```
 

@@ -646,8 +646,10 @@ async def test_late_appearing_folder_activates_the_rest(tmp_path: Path) -> None:
     agent = Agent(quick_settings(blocker))
     running = asyncio.ensure_future(agent.run())
     assert await wait_for(
-        lambda: agent.supervisor is not None
-        and agent.supervisor.task_names == [FOLDER_WATCH_TASK]
+        lambda: (
+            agent.supervisor is not None
+            and agent.supervisor.task_names == [FOLDER_WATCH_TASK]
+        )
     )
 
     blocker.unlink()
@@ -655,8 +657,10 @@ async def test_late_appearing_folder_activates_the_rest(tmp_path: Path) -> None:
     (root / "nodes").mkdir(parents=True)
 
     assert await wait_for(
-        lambda: agent.supervisor is not None
-        and WATCHER_LIVENESS_TASK in agent.supervisor.task_names
+        lambda: (
+            agent.supervisor is not None
+            and WATCHER_LIVENESS_TASK in agent.supervisor.task_names
+        )
     ), "the liveness task must be spawned once the folder appears"
 
     assert agent.supervisor is not None

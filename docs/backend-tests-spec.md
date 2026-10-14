@@ -199,9 +199,12 @@
 from httpx import AsyncClient, ASGITransport
 from backend.main import app
 
+
 @pytest.fixture(scope="session")
 async def client():
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as ac:
         yield ac
 ```
 
@@ -212,9 +215,11 @@ async def client():
 async def auth_client(client, settings):
     # Get shared token or create one
     shared_token = settings.SHARED_TOKEN or "test-shared-token"
-    response = await client.post("/api/v1/auth/token", json={"shared_token": shared_token})
+    response = await client.post(
+        "/api/v1/auth/token", json={"shared_token": shared_token}
+    )
     access_token = response.json()["access_token"]
-    
+
     # Create authenticated client
     client.headers["Authorization"] = f"Bearer {access_token}"
     return client
@@ -226,10 +231,11 @@ async def auth_client(client, settings):
 import factory
 from backend.models.job_spec import JobSpec, JobResources, JobPaths, JobRetry
 
+
 class JobSpecFactory(factory.Factory):
     class Meta:
         model = JobSpec
-    
+
     name = factory.Sequence(lambda n: f"test-job-{n}")
     command = "python train.py"
     working_dir = "/sync/projects/test"
@@ -245,11 +251,15 @@ class JobSpecFactory(factory.Factory):
 async def test_websocket_log_streaming(auth_client):
     # Create a job first
     job_spec = JobSpecFactory()
-    response = await auth_client.post("/api/v1/jobs", files={"job.yaml": job_spec.model_dump_yaml()})
+    response = await auth_client.post(
+        "/api/v1/jobs", files={"job.yaml": job_spec.model_dump_yaml()}
+    )
     job_id = response.json()["job_id"]
-    
+
     # Connect to WebSocket
-    async with auth_client.websocket_connect(f"/api/v1/jobs/{job_id}/logs/stream") as ws:
+    async with auth_client.websocket_connect(
+        f"/api/v1/jobs/{job_id}/logs/stream"
+    ) as ws:
         # Receive messages
         message = await ws.receive_json()
         assert message["type"] == "log"
@@ -262,16 +272,17 @@ async def test_websocket_log_streaming(auth_client):
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker
 
+
 @pytest.fixture
 async def db_session():
     engine = create_async_engine("sqlite+aiosqlite:///:memory:")
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-    
+
     async_session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
     async with async_session() as session:
         yield session
-    
+
     await engine.dispose()
 ```
 

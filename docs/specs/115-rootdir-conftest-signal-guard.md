@@ -52,7 +52,14 @@ Contains the complete guard implementation extracted from `agent/tests/conftest.
 ### New File: `conftest.py` (rootdir)
 ```python
 """Rootdir conftest: arms the shared signal safety guard at session start."""
-from shared.testing.signal_guard import pytest_configure, pytest_unconfigure, pytest_runtest_logreport, pytest_runtest_protocol, pytest_sessionfinish
+
+from shared.testing.signal_guard import (
+    pytest_configure,
+    pytest_unconfigure,
+    pytest_runtest_logreport,
+    pytest_runtest_protocol,
+    pytest_sessionfinish,
+)
 
 # Re-export the hooks so pytest discovers them at rootdir level
 __all__ = [

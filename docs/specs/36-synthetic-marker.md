@@ -89,12 +89,17 @@ Create a new migration `backend/alembic/versions/<rev>_add_origin_to_metrics_and
 ```python
 def upgrade() -> None:
     for table in ("gpu_metrics", "cpu_metrics", "log_entries"):
-        op.add_column(table, sa.Column("origin", sa.String(16), nullable=False,
-            server_default="synthetic"))
+        op.add_column(
+            table,
+            sa.Column(
+                "origin", sa.String(16), nullable=False, server_default="synthetic"
+            ),
+        )
         op.create_check_constraint(
             f"ck_{table}_origin", table, "origin IN ('synthetic','real')"
         )
         op.create_index(f"ix_{table}_origin", table, ["origin"])
+
 
 def downgrade() -> None:
     for table in ("gpu_metrics", "cpu_metrics", "log_entries"):
@@ -110,7 +115,9 @@ def downgrade() -> None:
 
 Add to each model:
 ```python
-origin = Column(String(16), nullable=False, default="synthetic", server_default="synthetic")
+origin = Column(
+    String(16), nullable=False, default="synthetic", server_default="synthetic"
+)
 ```
 The Python `default` covers programmatic inserts; `server_default` covers the migration backfill.
 
@@ -132,8 +139,10 @@ from datetime import datetime
 from pydantic import BaseModel, Field
 from typing import Literal
 
+
 class LogEntry(BaseModel):
     """A single log line with its origin marker."""
+
     timestamp: datetime
     line: str
     origin: Literal["synthetic", "real"] = Field(default="synthetic")

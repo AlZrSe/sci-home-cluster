@@ -262,13 +262,14 @@ import os
 from pathlib import Path
 from backend.core.config import _resolve_secret_key, _state_dir
 
+
 class TestResolveSecretKeyUnicode:
     def test_corrupt_utf8_replaced(self, tmp_path, monkeypatch):
         state_dir = tmp_path / ".shc"
         state_dir.mkdir()
         monkeypatch.setenv("SHC_STATE_DIR", str(state_dir))
         (state_dir / "secret_key").write_bytes(b"\xff\xfe\xfd")
-        
+
         key = _resolve_secret_key()
         assert len(key) == 43  # token_urlsafe(32) length
         assert (state_dir / "secret_key").read_text() == key
@@ -278,7 +279,7 @@ class TestResolveSecretKeyUnicode:
         state_dir.mkdir()
         monkeypatch.setenv("SHC_STATE_DIR", str(state_dir))
         (state_dir / "secret_key").write_text("")
-        
+
         key = _resolve_secret_key()
         assert (state_dir / "secret_key").read_text() == key
 
@@ -288,7 +289,7 @@ class TestResolveSecretKeyUnicode:
         monkeypatch.setenv("SHC_STATE_DIR", str(state_dir))
         valid = "valid_urlsafe_base64_key_that_is_long_enough"
         (state_dir / "secret_key").write_text(valid)
-        
+
         k1 = _resolve_secret_key()
         k2 = _resolve_secret_key()
         assert k1 == k2 == valid
@@ -300,7 +301,7 @@ class TestResolveSecretKeyUnicode:
         # Published key from PUBLISHED_KEY_SHA256
         published = "lF8zQJqG_V6AqMI4Fv3REgQA9n5iPXzQn7u6f9G9eVI="
         (state_dir / "secret_key").write_text(published)
-        
+
         with caplog.at_level(logging.WARNING):
             key = _resolve_secret_key()
         assert key != published
@@ -311,7 +312,7 @@ class TestResolveSecretKeyUnicode:
         state_dir = tmp_path / ".shc"
         state_dir.mkdir()
         monkeypatch.setenv("SHC_STATE_DIR", str(state_dir))
-        
+
         # This test validates the implementation pattern, not runtime atomicity
         # (which would require a concurrent reader). We verify the code uses
         # os.replace on a same-filesystem temp file.
@@ -324,10 +325,10 @@ class TestResolveSecretKeyUnicode:
         state_dir = tmp_path / ".shc"
         state_dir.mkdir()
         monkeypatch.setenv("SHC_STATE_DIR", str(state_dir))
-        
+
         with caplog.at_level(logging.DEBUG):
             key = _resolve_secret_key()
-        
+
         log_text = caplog.text
         assert key not in log_text
         assert "secret" not in log_text.lower() or "secret_key" not in log_text.lower()
@@ -336,7 +337,7 @@ class TestResolveSecretKeyUnicode:
         state_dir = tmp_path / ".shc"
         state_dir.mkdir()
         monkeypatch.setenv("SHC_STATE_DIR", str(state_dir))
-        
+
         _resolve_secret_key()
         mode = (state_dir / "secret_key").stat().st_mode & 0o777
         assert mode == 0o600

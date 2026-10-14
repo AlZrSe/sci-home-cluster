@@ -17,8 +17,10 @@ import os
 import random
 import signal
 import time
-from typing import Final
+from pathlib import Path
+from typing import Final, Optional
 
+from agent.claim import claim_job
 from agent.config import (
     EXIT_INTERNAL_ERROR,
     EXIT_OK,
@@ -66,6 +68,8 @@ class Agent:
         self._tick_count: int = 0
         # Last monotonic time for resume detection (issue #96)
         self._last_tick_monotonic: float | None = None
+        # Currently claimed job ID (issue #97)
+        self._current_job_id: Optional[str] = None
 
     @property
     def paths(self) -> AgentPaths:
@@ -75,6 +79,11 @@ class Agent:
     def supervisor(self) -> TaskSupervisor | None:
         """The task supervisor, once :meth:`run` has created it."""
         return self._supervisor
+
+    @property
+    def current_job_id(self) -> Optional[str]:
+        """The currently claimed job ID, or None if no job is in-flight."""
+        return self._current_job_id
 
     async def run(self) -> int:
         """Run until stopped, then return the process exit code."""
@@ -228,9 +237,9 @@ class Agent:
         self._last_tick_monotonic = now_mono
 
         try:
-            written = write_node_spec(
-                self._paths, collect_node_spec(self._settings.NODE_ID)
-            )
+            node_spec = collect_node_spec(self._settings.NODE_ID)
+            node_spec.current_job_id = self._current_job_id
+            written = write_node_spec(self._paths, node_spec)
         except OSError as exc:
             logger.warning(
                 "could not write the node file %s (%s); this heartbeat is lost "
@@ -401,11 +410,20 @@ class Agent:
         await self._ensure_watcher_started()
         await self._activate_watcher_tasks()
 
-    async def _drain_events(self) -> None:
-        """Log every queued event, and nothing more.
+    def _is_job_state_file(self, path: Path | str) -> bool:
+        """Check if a path is a jobs/<job_id>/state.yaml file."""
+        path = Path(path)
+        return (
+            path.name == "state.yaml"
+            and path.parent.name.startswith("job-")
+            and path.parent.parent.name == "jobs"
+        )
 
-        This is the #97 boundary: the watcher observes, this logs, and parsing
-        or routing a job file does not exist yet.
+    async def _drain_events(self) -> None:
+        """Drain the event queue and route job events to the claim handler.
+
+        This is the #97 boundary: the watcher observes, this logs, and job
+        discovery/claiming is implemented here.
         """
         queue = self._watcher.events()
         while True:
@@ -414,14 +432,91 @@ class Agent:
             except asyncio.QueueEmpty:
                 return
             logger.info("observed %s %s", event.kind, event.path)
+            # Route job state file creation events to claim handler
+            if event.kind == "created" and self._is_job_state_file(event.path):
+                await self._maybe_claim_job(event.path)
+
+    async def _maybe_claim_job(self, state_file_path) -> None:
+        """Attempt to claim a job from a state.yaml file event.
+
+        Checks:
+        - Job status is PENDING
+        - Job has no node_id (unclaimed)
+        - This node can fit the job's resources
+        - This agent is not already running a job
+        - Advisory marker creation succeeds (O_EXCL)
+        """
+        if self._current_job_id is not None:
+            logger.debug(
+                "ignoring job event for %s: already running %s",
+                state_file_path,
+                self._current_job_id,
+            )
+            return
+
+        # Collect current node spec for resource check
+        node_spec = collect_node_spec(self._settings.NODE_ID)
+
+        success, reason = await claim_job(
+            self._paths,
+            state_file_path,
+            self._settings.NODE_ID,
+            node_spec,
+        )
+        if success:
+            job_id = state_file_path.parent.name
+            self._current_job_id = job_id
+            logger.info("claimed job %s", job_id)
+            # Immediately write node spec with current_job_id set
+            node_spec.current_job_id = job_id
+            try:
+                written = write_node_spec(self._paths, node_spec)
+                if self._watcher is not None:
+                    self._watcher.ledger.record(written)
+            except OSError as exc:
+                logger.warning(
+                    "could not write node file with current_job_id %s: %s",
+                    job_id,
+                    exc,
+                )
+        else:
+            logger.debug("did not claim job from %s: %s", state_file_path, reason)
 
     async def _hand_back_in_flight_job(self) -> None:
-        """Shutdown seam for #103. The agent starts no child process in #93."""
-        logger.debug("no in-flight job to hand back")
+        """Shutdown seam for #103. Hand back the in-flight job if any.
+
+        Clears current_job_id and writes the node spec to reflect the handoff.
+        """
+        if self._current_job_id is not None:
+            logger.info("handing back in-flight job %s", self._current_job_id)
+            self._current_job_id = None
+            # Update node spec to clear current_job_id
+            node_spec = collect_node_spec(self._settings.NODE_ID)
+            node_spec.current_job_id = None
+            try:
+                written = write_node_spec(self._paths, node_spec)
+                if self._watcher is not None:
+                    self._watcher.ledger.record(written)
+            except OSError as exc:
+                logger.warning("could not write node file after handoff: %s", exc)
 
     async def _write_final_state(self) -> None:
-        """Shutdown seam for #100. Nothing durable is written in #93."""
-        logger.debug("no durable state to write")
+        """Shutdown seam for #100. Write final job state on completion.
+
+        Clears current_job_id and writes the node spec.
+        """
+        if self._current_job_id is not None:
+            logger.info("clearing current_job_id %s on shutdown", self._current_job_id)
+            self._current_job_id = None
+            # Update node spec to clear current_job_id
+            node_spec = collect_node_spec(self._settings.NODE_ID)
+            node_spec.current_job_id = None
+            try:
+                written = write_node_spec(self._paths, node_spec)
+                if self._watcher is not None:
+                    self._watcher.ledger.record(written)
+            except OSError as exc:
+                logger.warning("could not write node file after final state: %s", exc)
 
     def _on_fatal(self, task_name: str, exc: BaseException) -> None:
         logger.error("critical task %r failed", task_name, exc_info=exc)

@@ -106,8 +106,7 @@ class DatabaseStore:
             return JobSpec(
                 name=name,
                 command=(
-                    f"python -u scripts/{script_name}.py "
-                    f"--config configs/{name}.yaml"
+                    f"python -u scripts/{script_name}.py --config configs/{name}.yaml"
                 ),
                 working_dir=f"/sync/projects/{name}",
                 env={"PYTHONUNBUFFERED": "1", "CUDA_VISIBLE_DEVICES": "0"},
@@ -1110,10 +1109,12 @@ class DatabaseStore:
 
         log_templates = [
             lambda s: f"INFO  step={s} loss={(2.4 - s * 0.0007):.4f} lr=3.0e-4",
-            lambda s: f"INFO  step={s} throughput="
-            f"{(180 + rnd.random() * 40):.1f} samples/s",
-            lambda s: "DEBUG allocator: "
-            f"reserved={(8 + rnd.random() * 6):.2f} GiB step={s}",
+            lambda s: (
+                f"INFO  step={s} throughput={(180 + rnd.random() * 40):.1f} samples/s"
+            ),
+            lambda s: (
+                f"DEBUG allocator: reserved={(8 + rnd.random() * 6):.2f} GiB step={s}"
+            ),
             lambda s: f"INFO  checkpoint written to data/out/ckpt-{s}.pt",
             lambda _: "WARN  syncthing folder scan delayed by 1.4s",
         ]
@@ -1218,7 +1219,7 @@ class DatabaseStore:
                                 f"reserved={(8 + rnd.random() * 6):.2f} GiB step={s}"
                             ),
                             lambda s: (
-                                f"INFO  checkpoint written to " f"data/out/ckpt-{s}.pt"
+                                f"INFO  checkpoint written to data/out/ckpt-{s}.pt"
                             ),
                             lambda _: "WARN  syncthing folder scan delayed by 1.4s",
                         ]

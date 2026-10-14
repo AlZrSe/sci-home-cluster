@@ -165,8 +165,9 @@ async def test_liveness_task_is_the_only_critical_one(tmp_path: Path) -> None:
     running = asyncio.ensure_future(agent.run())
     try:
         await wait_until(
-            lambda: agent.supervisor is not None
-            and len(agent.supervisor.task_names) == 4,
+            lambda: (
+                agent.supervisor is not None and len(agent.supervisor.task_names) == 4
+            ),
             "the agent never registered all four tasks",
         )
         assert agent.supervisor is not None

@@ -56,12 +56,19 @@ Reproduced against the real API with a real, writable, empty `SYNCTHING_ROOT`:
 # scratch test, run against backend/tests/conftest.py, then deleted
 async def test_submission_never_enters_the_folder(syncthing_root, monkeypatch):
     monkeypatch.setenv("SYNCTHING_ROOT", syncthing_root)
-    async with AsyncClient(transport=ASGITransport(app=app),
-                           base_url="http://testserver") as ac:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://testserver"
+    ) as ac:
         ac.headers["Authorization"] = "Bearer localhost-no-auth"
-        r = await ac.post("/api/v1/jobs/", json=create_job_spec().model_dump(mode="json"))
+        r = await ac.post(
+            "/api/v1/jobs/", json=create_job_spec().model_dump(mode="json")
+        )
     print(r.status_code, r.json()["job_id"])
-    print(sorted(str(p.relative_to(syncthing_root)) for p in Path(syncthing_root).rglob("*")))
+    print(
+        sorted(
+            str(p.relative_to(syncthing_root)) for p in Path(syncthing_root).rglob("*")
+        )
+    )
 ```
 
 ```text
@@ -354,7 +361,7 @@ problem and is owned by **#100**, not here. §5.5 cross-references it.
 **(a) `write_yaml` must serialise in json mode.** `yaml_utils.py:77`:
 
 ```python
-yaml_data = data.model_dump()          # current: python mode
+yaml_data = data.model_dump()  # current: python mode
 ```
 
 becomes `data.model_dump(mode="json")`. Verified consequences:
@@ -378,8 +385,10 @@ backend must not go through `get_job_state_file`. A new small module — `backen
 or `backend/core/syncthing_paths.py`, SWE's choice — exposing pure functions over an explicit root:
 
 ```python
-def job_dir(root: str | Path, job_id: str) -> Path: ...          # <root>/jobs/<job_id>
-def job_state_file(root: str | Path, job_id: str) -> Path: ...    # <root>/jobs/<job_id>/state.yaml
+def job_dir(root: str | Path, job_id: str) -> Path: ...  # <root>/jobs/<job_id>
+def job_state_file(
+    root: str | Path, job_id: str
+) -> Path: ...  # <root>/jobs/<job_id>/state.yaml
 ```
 
 modelled on `agent/paths.py:49-71`, for the same stated reason (`agent/paths.py:1-8`). AC-10

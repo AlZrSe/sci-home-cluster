@@ -77,10 +77,10 @@ def signal_handlers_supported(sig: Any = signal.SIGTERM) -> bool:
     except RuntimeError:
         return False
     try:
-        loop.add_signal_handler(sig, lambda: None)   # line 93: installs a NO-OP
+        loop.add_signal_handler(sig, lambda: None)  # line 93: installs a NO-OP
     except (NotImplementedError, RuntimeError, ValueError, OSError, AttributeError):
         return False
-    loop.remove_signal_handler(sig)                  # line 96: restores SIG_DFL
+    loop.remove_signal_handler(sig)  # line 96: restores SIG_DFL
     return True
 ```
 
@@ -96,8 +96,8 @@ after remove        : 0    is SIG_DFL: True
 **The delivery site** — `agent/tests/test_loop.py:139-140`, inside `drive()`:
 
 ```python
-if sig is not None and signal_handlers_supported(sig):   # line 139
-    os.kill(os.getpid(), sig)                            # line 140
+if sig is not None and signal_handlers_supported(sig):  # line 139
+    os.kill(os.getpid(), sig)  # line 140
 ```
 
 `drive()` starts `agent.run()` on line 131. `Agent.run()` calls `_install_signal_handlers()`
@@ -136,10 +136,11 @@ disposition in a process that also runs real signal tests — and §6 D2 address
 def refuse(*_a: Any, **_k: Any) -> None:
     raise NotImplementedError("add_signal_handler is not supported here")
 
-monkeypatch.setattr(asyncio.AbstractEventLoop, "add_signal_handler", refuse)   # line 206
+
+monkeypatch.setattr(asyncio.AbstractEventLoop, "add_signal_handler", refuse)  # line 206
 ...
 warnings = [r for r in caplog.records if "signal handlers" in r.getMessage()]
-assert len(warnings) == 1, "the fallback warns once, not once per signal"      # line 213
+assert len(warnings) == 1, "the fallback warns once, not once per signal"  # line 213
 ```
 
 Measured on this platform:

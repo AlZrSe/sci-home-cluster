@@ -61,8 +61,12 @@ process, no loop, no configuration handling, no logging, and no shutdown path.
 ```python
 def main():
     parser = argparse.ArgumentParser(description="Scientific Home Cluster Worker Agent")
-    parser.add_argument("--node-id", required=True, help="Unique identifier for this node")
-    parser.add_argument("--syncthing-root", required=True, help="Path to Syncthing shared folder")
+    parser.add_argument(
+        "--node-id", required=True, help="Unique identifier for this node"
+    )
+    parser.add_argument(
+        "--syncthing-root", required=True, help="Path to Syncthing shared folder"
+    )
     args = parser.parse_args()
 
     print(f"Starting agent for node {args.node_id}")
@@ -356,8 +360,8 @@ passes the result down. **There is exactly one construction site.**
 def build_settings(
     argv: Sequence[str] | None = None,
     *,
-    environ: Mapping[str, str] | None = None,   # defaults to os.environ; injectable
-    toml_path: Path | None = None,              # None → derive from the RESOLVED root
+    environ: Mapping[str, str] | None = None,  # defaults to os.environ; injectable
+    toml_path: Path | None = None,  # None → derive from the RESOLVED root
 ) -> AgentSettings: ...
 ```
 
@@ -414,10 +418,12 @@ environment**, exactly inverting the documented order, with no error and no warn
 must merge the layers itself into one flat dict and pass that as the single init-kwargs source:
 
 ```python
-merged = {**from_toml,
-          **{f: environ[f] for f in AgentSettings.model_fields if f in environ},
-          **from_cli}
-settings = AgentSettings(**merged)          # the ONLY construction site
+merged = {
+    **from_toml,
+    **{f: environ[f] for f in AgentSettings.model_fields if f in environ},
+    **from_cli,
+}
+settings = AgentSettings(**merged)  # the ONLY construction site
 ```
 
 To stop pydantic-settings re-reading the process environment behind the injected mapping, override
@@ -428,7 +434,7 @@ To stop pydantic-settings re-reading the process environment behind the injected
 **Then, and only then, publish the resolved root (§3.2):**
 
 ```python
-os.environ["SYNCTHING_ROOT"] = str(resolved_root)   # deliberate, documented, one-way
+os.environ["SYNCTHING_ROOT"] = str(resolved_root)  # deliberate, documented, one-way
 ```
 
 `os.environ` is **mutated from** the resolved value and **never read back in**. Exactly one write
@@ -860,10 +866,10 @@ except where marked *gate*. Named tests are enumerated in §9.
 The lost implementation derived the path before resolution:
 
 ```python
-path = config_file_path(Path(str(root)))   # root is RAW — "~" or a relative path
-from_toml = toml_layer(path)               # is_file() fails → {} — SILENTLY
+path = config_file_path(Path(str(root)))  # root is RAW — "~" or a relative path
+from_toml = toml_layer(path)  # is_file() fails → {} — SILENTLY
 ...
-settings = AgentSettings(**merged)          # expansion/absolute happens in here
+settings = AgentSettings(**merged)  # expansion/absolute happens in here
 ```
 
 `root = from_cli.get("SYNCTHING_ROOT") or env.get("SYNCTHING_ROOT")` is the unexpanded string.

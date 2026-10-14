@@ -168,12 +168,13 @@ Two viable approaches; choose one:
 # In backend/core/deps.py
 from fastapi import WebSocketException, status
 
+
 async def get_ws_token_payload(websocket: WebSocket) -> dict:
     ...
     if not token:
         raise WebSocketException(
             code=status.WS_1008_POLICY_VIOLATION,
-            reason="Authentication required. Please provide a valid bearer token."
+            reason="Authentication required. Please provide a valid bearer token.",
         )
     ...
 ```
@@ -186,11 +187,16 @@ async def get_ws_token_payload(websocket: WebSocket) -> dict:
 from fastapi import WebSocket
 from starlette.exceptions import WebSocketException as StarletteWebSocketException
 
+
 @app.exception_handler(HTTPException)
-async def http_exception_handler(request_or_ws: Request | WebSocket, exc: HTTPException):
+async def http_exception_handler(
+    request_or_ws: Request | WebSocket, exc: HTTPException
+):
     if isinstance(request_or_ws, WebSocket):
         # On websocket scope, send close frame instead of JSONResponse
-        await request_or_ws.close(code=status.WS_1008_POLICY_VIOLATION, reason=str(exc.detail))
+        await request_or_ws.close(
+            code=status.WS_1008_POLICY_VIOLATION, reason=str(exc.detail)
+        )
         return  # No return value needed
     # HTTP scope: existing JSONResponse logic
     return JSONResponse(...)

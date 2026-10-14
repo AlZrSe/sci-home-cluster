@@ -55,14 +55,18 @@ public wrappers that keep their existing signatures, docstrings and error
 messages:
 
 ```python
-def _portalocker_flags(shared: bool) -> int: ...      # LOCK_SH or LOCK_EX | LOCK_NB
-def _acquire(f, shared, timeout) -> bool: ...          # the retry loop, platform branches
-def _release(f) -> None: ...                          # the release branches
-def _lock(file_path, mode, timeout, *, shared, label) -> Generator: ...   # the core
+def _portalocker_flags(shared: bool) -> int: ...  # LOCK_SH or LOCK_EX | LOCK_NB
+def _acquire(f, shared, timeout) -> bool: ...  # the retry loop, platform branches
+def _release(f) -> None: ...  # the release branches
+def _lock(file_path, mode, timeout, *, shared, label) -> Generator: ...  # the core
 @contextmanager
-def file_lock(file_path, mode="r", timeout=10.0) -> Generator: ...        # calls _lock(shared=False)
+def file_lock(
+    file_path, mode="r", timeout=10.0
+) -> Generator: ...  # calls _lock(shared=False)
 @contextmanager
-def shared_lock(file_path, mode="r", timeout=10.0) -> Generator: ...      # calls _lock(shared=True)
+def shared_lock(
+    file_path, mode="r", timeout=10.0
+) -> Generator: ...  # calls _lock(shared=True)
 ```
 
 `label` carries `"shared lock"` vs `"lock"` so both existing `TimeoutError`
@@ -88,7 +92,7 @@ try:
     yield f
 finally:
     try:
-        if lock_acquired:      # <-- MUST remain
+        if lock_acquired:  # <-- MUST remain
             _release(f)
     except Exception as e:
         logger.warning(...)

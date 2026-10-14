@@ -124,17 +124,25 @@ Generate a migration that alters the column to `DateTime(timezone=True)`. On SQL
 from alembic import op
 import sqlalchemy as sa
 
+
 def upgrade():
-    op.alter_column('nodes', 'last_heartbeat',
-                    existing_type=sa.DateTime(),
-                    type_=sa.DateTime(timezone=True),
-                    existing_nullable=False)
+    op.alter_column(
+        "nodes",
+        "last_heartbeat",
+        existing_type=sa.DateTime(),
+        type_=sa.DateTime(timezone=True),
+        existing_nullable=False,
+    )
+
 
 def downgrade():
-    op.alter_column('nodes', 'last_heartbeat',
-                    existing_type=sa.DateTime(timezone=True),
-                    type_=sa.DateTime(),
-                    existing_nullable=False)
+    op.alter_column(
+        "nodes",
+        "last_heartbeat",
+        existing_type=sa.DateTime(timezone=True),
+        type_=sa.DateTime(),
+        existing_nullable=False,
+    )
 ```
 
 ### 5.3 Heartbeat monitor — `backend/services/syncthing_service.py:346-378`
@@ -150,6 +158,7 @@ else:
 
 # After
 from datetime import datetime, timezone
+
 ...
 now = datetime.now(timezone.utc)
 ...
@@ -166,12 +175,13 @@ The `if node.last_heartbeat.tzinfo is None:` block (lines 359-362) is **removed 
 ```python
 # collect_node_spec (line 164)
 # Before
-now=datetime.now() if now is None else now,
+now = (datetime.now() if now is None else now,)
 
 # After
 from datetime import datetime, timezone
+
 ...
-now=datetime.now(timezone.utc) if now is None else now,
+now = (datetime.now(timezone.utc) if now is None else now,)
 ```
 
 The module docstring (lines 28-39) and the comment at line 151-155 must be updated to reflect the new convention: the agent now writes aware UTC, the store preserves it, and the monitor compares aware-to-aware.

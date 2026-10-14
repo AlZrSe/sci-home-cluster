@@ -132,6 +132,7 @@ Add two fields to `Settings`:
 HEARTBEAT_TIMEOUT_SECONDS: int = 90
 HEARTBEAT_CHECK_INTERVAL_SECONDS: int = 30
 
+
 @field_validator("HEARTBEAT_CHECK_INTERVAL_SECONDS")
 @classmethod
 def _check_heartbeat_interval_vs_timeout(cls, v: int, info) -> int:
@@ -288,11 +289,17 @@ If errors remain, fix them in this issue rather than keeping the override.
   # In agent test
   from agent.config import build_settings
   from backend.core.config import settings as backend_settings
-  
+
   agent_settings = build_settings(...)
-  assert agent_settings.AGENT_HEARTBEAT_INTERVAL_S < backend_settings.HEARTBEAT_TIMEOUT_SECONDS
+  assert (
+      agent_settings.AGENT_HEARTBEAT_INTERVAL_S
+      < backend_settings.HEARTBEAT_TIMEOUT_SECONDS
+  )
   # Margin: at least 2x the interval fits in timeout
-  assert agent_settings.AGENT_HEARTBEAT_INTERVAL_S * 2 <= backend_settings.HEARTBEAT_TIMEOUT_SECONDS
+  assert (
+      agent_settings.AGENT_HEARTBEAT_INTERVAL_S * 2
+      <= backend_settings.HEARTBEAT_TIMEOUT_SECONDS
+  )
   ```
 
 - **AC-5** — Agent heartbeat writes are jittered; jitter is seeded/tested.
