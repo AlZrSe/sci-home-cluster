@@ -229,7 +229,8 @@ Flags: `--node-id` (required, also readable from `$NODE_ID`), `--syncthing-root`
 **Configuration file.** The agent reads `<SYNCTHING_ROOT>/nodes/agent.toml`, so one edit configures
 the whole fleet — the file replicates with the folder. Keys are flat: `AGENT_LOG_LEVEL`,
 `AGENT_SHUTDOWN_GRACE_S`, `AGENT_FOLDER_WATCH_INTERVAL_S`, `AGENT_FOLDER_RETRY_MAX_S`,
-`AGENT_WATCHER_LIVENESS_INTERVAL_S`, `AGENT_STATE_DIR`. Unknown keys are rejected loudly.
+`AGENT_WATCHER_LIVENESS_INTERVAL_S`, `AGENT_HEARTBEAT_INTERVAL_S`, `AGENT_HEARTBEAT_JITTER_S`,
+`AGENT_STATE_DIR`. Unknown keys are rejected loudly.
 
 Precedence is **CLI flag > environment variable > `nodes/agent.toml` > default**.
 
@@ -240,6 +241,18 @@ Precedence is **CLI flag > environment variable > `nodes/agent.toml` > default**
 `NODE_ID` and `SYNCTHING_ROOT` are deliberately **not** settable in `agent.toml`: every node reads
 the same replicated file, so a `NODE_ID` there would make every agent claim the same identity, and
 the root is what locates the file in the first place. Both are errors, not silent ignores.
+
+**Heartbeat Contract** (issue #96): The agent writes a heartbeat every
+`AGENT_HEARTBEAT_INTERVAL_S` seconds (default 22s, recommended `timeout/4`).
+A uniform jitter of `±AGENT_HEARTBEAT_JITTER_S` (default ±2s) is applied to
+prevent synchronized fleet wake-ups from overwhelming the watcher debounce.
+The jitter is seeded from `(node_id, tick_count)` for deterministic test
+behaviour. On startup and on resume from suspend (detected via monotonic
+clock jump > `2 * interval`), the agent writes an immediate heartbeat.
+The backend monitor checks every `HEARTBEAT_CHECK_INTERVAL_SECONDS` (default
+30s) and marks a node OFFLINE if its heartbeat is older than
+`HEARTBEAT_TIMEOUT_SECONDS` (default 90s). The invariant
+`check_interval < timeout` is enforced at startup on both sides.
 
 Every log line carries the node id (`[node=node-01]`), so four nodes writing into one journal stay
 separable. Exit codes: `0` clean shutdown, `1` configuration error, `2` unexpected internal error,

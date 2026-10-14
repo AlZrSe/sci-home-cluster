@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import random
 import signal
 import time
 from typing import Final
@@ -39,15 +40,6 @@ WATCHER_LIVENESS_TASK: Final[str] = "watcher-liveness"
 EVENT_DRAIN_TASK: Final[str] = "event-drain"
 NODE_SPEC_TASK: Final[str] = "node-registration"
 
-#: How often ``nodes/<node_id>.yaml`` is rewritten, and therefore how often the
-#: backend's heartbeat monitor sees a fresh ``last_heartbeat``. The monitor flips
-#: a node ``OFFLINE`` once the heartbeat is older than a hardcoded ``delta > 90``
-#: (``backend/services/syncthing_service.py``), so 30 s leaves room for two
-#: missed writes plus watcher latency; #96 makes that threshold configurable and
-#: is a separate change. It also matches the monitor's own 30 s tick, so a healthy
-#: node is never more than one tick stale in the monitor's eyes.
-HEARTBEAT_INTERVAL_S: Final[float] = 30.0
-
 
 class Agent:
     """One worker agent, on one node."""
@@ -70,6 +62,10 @@ class Agent:
         self._supervisor: TaskSupervisor | None = None
         self._watcher_started = False
         self._exit_code = EXIT_OK
+        # Heartbeat tick counter for jitter seeding (issue #96)
+        self._tick_count: int = 0
+        # Last monotonic time for resume detection (issue #96)
+        self._last_tick_monotonic: float | None = None
 
     @property
     def paths(self) -> AgentPaths:
@@ -179,17 +175,20 @@ class Agent:
 
         Non-critical on purpose: a node that fails to register must cost a
         heartbeat, not the agent (issue #95 AC-10).
+
+        The interval is set to a small value; the actual heartbeat cadence with
+        jitter is managed inside ``_registration_tick`` itself (issue #96).
         """
         assert self._supervisor is not None
         self._supervisor.add_task(
             SupervisorTask(
                 name=NODE_SPEC_TASK,
-                coro_factory=lambda _stop: self._registration_tick(),
-                interval_s=HEARTBEAT_INTERVAL_S,
+                coro_factory=self._registration_tick,
+                interval_s=0.1,  # Actual cadence managed by _registration_tick
             )
         )
 
-    async def _registration_tick(self) -> None:
+    async def _registration_tick(self, stop_event: asyncio.Event) -> None:
         """One registration tick: probe this machine, rewrite the node file.
 
         The first tick runs as soon as the supervisor starts, which is why no
@@ -205,7 +204,29 @@ class Agent:
         exception that is *not* an ``OSError`` is a bug rather than a transient
         filesystem condition, so it is left to the supervisor's containment to be
         recorded and noticed.
+
+        Heartbeat cadence with jitter and resume detection (issue #96):
+        - Interval and jitter come from settings.
+        - Jitter is seeded from (node_id, tick_count) for test determinism.
+        - On resume from suspend (monotonic clock jump > 2 * interval), write
+          immediately and log the event.
         """
+        # Resume detection: if monotonic clock jumped forward by more than
+        # 2 * interval, we likely woke from suspend. The current tick writes
+        # immediately (which is the desired "immediate write on resume" behaviour).
+        now_mono = time.monotonic()
+        interval = self._settings.HEARTBEAT_INTERVAL_S
+        if self._last_tick_monotonic is not None:
+            delta_mono = now_mono - self._last_tick_monotonic
+            if delta_mono > 2 * interval:
+                logger.info(
+                    "resume detected (monotonic gap %.1fs > 2*interval %.1fs), "
+                    "writing immediate heartbeat",
+                    delta_mono,
+                    2 * interval,
+                )
+        self._last_tick_monotonic = now_mono
+
         try:
             written = write_node_spec(
                 self._paths, collect_node_spec(self._settings.NODE_ID)
@@ -224,6 +245,20 @@ class Agent:
             # which is what SelfWriteLedger exists for; without it every 30 s
             # tick produces a "observed modified nodes/node-01.yaml" line.
             self._watcher.ledger.record(written)
+
+        # Schedule next tick with jitter (issue #96)
+        self._tick_count += 1
+        jitter = self._settings.HEARTBEAT_JITTER_S
+        if jitter > 0:
+            # Seeded PRNG: hash(node_id + tick_count) -> uniform [-jitter, +jitter]
+            seed = hash((self._settings.NODE_ID, self._tick_count))
+            rng = random.Random(seed)
+            interval += rng.uniform(-jitter, jitter)
+        # Sleep with stop event awareness for clean shutdown
+        try:
+            await asyncio.wait_for(stop_event.wait(), timeout=max(0.1, interval))
+        except (asyncio.TimeoutError, TimeoutError):
+            return
 
     def _register_watcher_tasks(self) -> None:
         assert self._supervisor is not None

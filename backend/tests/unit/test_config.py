@@ -747,3 +747,46 @@ class TestResolveSecretKeyUnicode:
         finally:
             # Restore permissions for cleanup
             state_dir.chmod(0o700)
+
+
+# ---------------------------------------------------------------------------
+# Issue #96: Heartbeat contract settings validation
+# ---------------------------------------------------------------------------
+
+
+def test_heartbeat_check_interval_less_than_timeout():
+    """AC-2: Startup validation fails if check_interval >= timeout."""
+    # check_interval == timeout should fail
+    with pytest.raises(ValueError, match="must be <"):
+        Settings(
+            _env_file=None,
+            SECRET_KEY="test",
+            HEARTBEAT_TIMEOUT_SECONDS=90,
+            HEARTBEAT_CHECK_INTERVAL_SECONDS=90,
+        )
+
+    # check_interval > timeout should fail
+    with pytest.raises(ValueError, match="must be <"):
+        Settings(
+            _env_file=None,
+            SECRET_KEY="test",
+            HEARTBEAT_TIMEOUT_SECONDS=90,
+            HEARTBEAT_CHECK_INTERVAL_SECONDS=120,
+        )
+
+    # check_interval < timeout should succeed
+    settings = Settings(
+        _env_file=None,
+        SECRET_KEY="test",
+        HEARTBEAT_TIMEOUT_SECONDS=90,
+        HEARTBEAT_CHECK_INTERVAL_SECONDS=30,
+    )
+    assert settings.HEARTBEAT_TIMEOUT_SECONDS == 90
+    assert settings.HEARTBEAT_CHECK_INTERVAL_SECONDS == 30
+
+
+def test_heartbeat_defaults():
+    """AC-1: Default heartbeat settings are 90 and 30."""
+    settings = Settings(_env_file=None, SECRET_KEY="test")
+    assert settings.HEARTBEAT_TIMEOUT_SECONDS == 90
+    assert settings.HEARTBEAT_CHECK_INTERVAL_SECONDS == 30

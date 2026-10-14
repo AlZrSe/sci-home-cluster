@@ -812,6 +812,194 @@ def _unused(_coro: Coroutine[Any, Any, None]) -> None:
     return None
 
 
+# --- Issue #96: Heartbeat contract agent loop tests --------------------------
+
+
+async def test_heartbeat_jitter_is_seeded_and_deterministic(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """AC-5: Jitter seeded by (node_id, tick_count) produces deterministic values."""
+    from agent.config import build_settings
+
+    settings = build_settings(
+        ["--node-id", "node-01", "--syncthing-root", str(tmp_path)],
+        environ={
+            "SYNCTHING_ROOT": str(tmp_path),
+            "AGENT_HEARTBEAT_INTERVAL_S": "1.0",
+            "AGENT_HEARTBEAT_JITTER_S": "0.5",
+            "AGENT_SHUTDOWN_GRACE_S": "0.2",
+            "AGENT_FOLDER_WATCH_INTERVAL_S": "0.05",
+            "AGENT_WATCHER_LIVENESS_INTERVAL_S": "0.05",
+            "AGENT_FOLDER_RETRY_MAX_S": "0.3",
+        },
+    )
+
+    # Access the internal RNG seeding logic directly
+    import random
+
+    seed1 = hash((settings.NODE_ID, 1))
+    rng1 = random.Random(seed1)
+    jitter1 = rng1.uniform(-0.5, 0.5)
+
+    seed2 = hash((settings.NODE_ID, 1))
+    rng2 = random.Random(seed2)
+    jitter2 = rng2.uniform(-0.5, 0.5)
+
+    assert jitter1 == jitter2, "Same seed should produce same jitter"
+
+    # Different node_id should produce different jitter
+    seed3 = hash(("node-02", 1))
+    rng3 = random.Random(seed3)
+    jitter3 = rng3.uniform(-0.5, 0.5)
+
+    # Very unlikely to be equal by chance
+    assert (
+        jitter1 != jitter3 or abs(jitter1 - jitter3) > 1e-10
+    ), "Different node_id should produce different jitter"
+
+
+async def test_heartbeat_jitter_range(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """AC-5: Jitter stays within [-jitter, +jitter] range."""
+    import random
+
+    interval = 1.0
+    jitter = 0.3
+    settings = build_settings(
+        ["--node-id", "node-01", "--syncthing-root", str(tmp_path)],
+        environ={
+            "SYNCTHING_ROOT": str(tmp_path),
+            "AGENT_HEARTBEAT_INTERVAL_S": str(interval),
+            "AGENT_HEARTBEAT_JITTER_S": str(jitter),
+            "AGENT_SHUTDOWN_GRACE_S": "0.2",
+            "AGENT_FOLDER_WATCH_INTERVAL_S": "0.05",
+            "AGENT_WATCHER_LIVENESS_INTERVAL_S": "0.05",
+            "AGENT_FOLDER_RETRY_MAX_S": "0.3",
+        },
+    )
+
+    # Simulate 100 ticks with different tick counts
+    for tick_count in range(1, 101):
+        seed = hash((settings.NODE_ID, tick_count))
+        rng = random.Random(seed)
+        actual_jitter = rng.uniform(-jitter, jitter)
+        total_interval = interval + actual_jitter
+        assert interval - jitter <= total_interval <= interval + jitter, (
+            f"Tick {tick_count}: interval {total_interval} outside expected range "
+            f"[{interval - jitter}, {interval + jitter}]"
+        )
+
+    # Not all intervals should be identical (jitter should vary)
+    intervals = [
+        interval + random.Random(hash((settings.NODE_ID, i))).uniform(-jitter, jitter)
+        for i in range(1, 101)
+    ]
+    assert (
+        len(set(round(i, 10) for i in intervals)) > 1
+    ), "Jitter should produce varying intervals"
+
+
+async def test_agent_writes_heartbeat_immediately_on_startup(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """AC-6: Agent writes heartbeat immediately on startup."""
+    from agent.config import build_settings
+    from agent.watcher import FolderWatcher
+    from agent.loop import Agent
+
+    settings = build_settings(
+        ["--node-id", "node-01", "--syncthing-root", str(tmp_path)],
+        environ={
+            "SYNCTHING_ROOT": str(tmp_path),
+            "AGENT_HEARTBEAT_INTERVAL_S": "10.0",
+            "AGENT_HEARTBEAT_JITTER_S": "0.0",
+            "AGENT_SHUTDOWN_GRACE_S": "0.2",
+            "AGENT_FOLDER_WATCH_INTERVAL_S": "0.05",
+            "AGENT_WATCHER_LIVENESS_INTERVAL_S": "0.05",
+            "AGENT_FOLDER_RETRY_MAX_S": "0.3",
+        },
+    )
+    paths = resolve_paths(
+        settings.SYNCTHING_ROOT, settings.NODE_ID, settings.AGENT_STATE_DIR
+    )
+    (tmp_path / "jobs").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "nodes").mkdir(parents=True, exist_ok=True)
+
+    agent = Agent(settings, watcher=FolderWatcher(paths))
+    running = asyncio.ensure_future(agent.run())
+
+    from agent.tests.conftest import wait_until
+
+    await wait_until(
+        lambda: paths.node_file.exists(),
+        "the agent never wrote its node file on startup",
+    )
+
+    assert paths.node_file.exists()
+
+    agent.supervisor.stop_event.set()
+    await asyncio.wait_for(running, 5.0)
+
+
+async def test_agent_writes_heartbeat_immediately_on_resume(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """AC-6: Agent writes heartbeat immediately on resume (monotonic clock jump)."""
+    from agent.config import build_settings
+    from agent.watcher import FolderWatcher
+    from agent.loop import Agent
+    import time
+
+    settings = build_settings(
+        ["--node-id", "node-01", "--syncthing-root", str(tmp_path)],
+        environ={
+            "SYNCTHING_ROOT": str(tmp_path),
+            "AGENT_HEARTBEAT_INTERVAL_S": "1.0",
+            "AGENT_HEARTBEAT_JITTER_S": "0.0",
+            "AGENT_SHUTDOWN_GRACE_S": "0.2",
+            "AGENT_FOLDER_WATCH_INTERVAL_S": "0.05",
+            "AGENT_WATCHER_LIVENESS_INTERVAL_S": "0.05",
+            "AGENT_FOLDER_RETRY_MAX_S": "0.3",
+        },
+    )
+    paths = resolve_paths(
+        settings.SYNCTHING_ROOT, settings.NODE_ID, settings.AGENT_STATE_DIR
+    )
+    (tmp_path / "jobs").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "nodes").mkdir(parents=True, exist_ok=True)
+
+    agent = Agent(settings, watcher=FolderWatcher(paths))
+    running = asyncio.ensure_future(agent.run())
+
+    from agent.tests.conftest import wait_until
+
+    await wait_until(
+        lambda: paths.node_file.exists(), "the agent never wrote its node file"
+    )
+
+    first_content = paths.node_file.read_text()
+    assert "last_heartbeat" in first_content
+
+    agent._tick_count = 0
+    agent._last_tick_monotonic = time.monotonic() - 3.0
+
+    stop_event = asyncio.Event()
+
+    with caplog.at_level(logging.INFO, logger="agent.loop"):
+        await agent._registration_tick(stop_event)
+
+    resume_logs = [r for r in caplog.records if "resume detected" in r.getMessage()]
+    assert len(resume_logs) == 1, f"Expected resume log: {caplog.records}"
+    assert "writing immediate heartbeat" in resume_logs[0].getMessage()
+
+    second_content = paths.node_file.read_text()
+    assert second_content != first_content, "New heartbeat should be written"
+
+    agent.supervisor.stop_event.set()
+    await asyncio.wait_for(running, 5.0)
+
+
 def test_folder_event_shape(tmp_path: Path) -> None:
     event = FolderEvent(kind="created", path=tmp_path / "a.yaml", observed_at=None)  # type: ignore[arg-type]
     assert event.kind == "created"

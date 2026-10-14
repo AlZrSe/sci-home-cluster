@@ -17,6 +17,7 @@ from shared.schemas.job_state import JobState
 from shared.schemas.node_spec import NodeSpec
 from backend.store import get_store
 from shared.file_ops import read_yaml
+from backend.core.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -344,36 +345,59 @@ class SyncthingService:
         logger.info(f"Deleted node from store: {node_id}")
 
     async def _heartbeat_monitor(self):
-        """Monitor node heartbeats and mark offline nodes."""
+        """Monitor node heartbeats and mark offline nodes.
+
+        Uses HEARTBEAT_CHECK_INTERVAL_SECONDS for the check cadence and
+        HEARTBEAT_TIMEOUT_SECONDS for the offline threshold. The validator in
+        Settings ensures check_interval < timeout so a healthy node is observed
+        at least twice within the timeout window.
+        """
         while self._running:
             try:
-                await asyncio.sleep(30)  # Check every 30 seconds
-                store = get_store()
-                nodes = await store.list_nodes()
-                now = datetime.now(timezone.utc)
-
-                for node in nodes:
-                    # Calculate time since last heartbeat
-                    if node.last_heartbeat:
-                        # Both now and node.last_heartbeat are aware UTC
-                        # (column is timezone=True). No coercion needed —
-                        # comparing aware-to-aware UTC.
-                        last_hb = node.last_heartbeat
-                        delta = (now - last_hb).total_seconds()
-                        if delta > 90 and node.status == "ONLINE":
-                            await store.update_node(node.node_id, status="OFFLINE")
-                            logger.info(
-                                f"Node {node.node_id} marked OFFLINE "
-                                f"(last heartbeat {delta:.0f}s ago)"
-                            )
-                        elif delta <= 90 and node.status == "OFFLINE":
-                            await store.update_node(node.node_id, status="ONLINE")
-                            logger.info(f"Node {node.node_id} marked ONLINE")
+                await asyncio.sleep(settings.HEARTBEAT_CHECK_INTERVAL_SECONDS)
+                await self._heartbeat_monitor_iteration()
 
             except asyncio.CancelledError:
                 break
             except Exception as e:
                 logger.error(f"Error in heartbeat monitor: {e}")
+
+    async def _heartbeat_monitor_iteration(self, now: datetime | None = None):
+        """Run one iteration of the heartbeat monitor.
+
+        This method is factored out for testability. It uses the current time
+        by default but accepts a fixed `now` for deterministic testing.
+
+        Args:
+            now: The reference time to compare heartbeats against. Defaults to
+                ``datetime.now(timezone.utc)``.
+        """
+        store = get_store()
+        nodes = await store.list_nodes()
+        if now is None:
+            now = datetime.now(timezone.utc)
+        timeout = settings.HEARTBEAT_TIMEOUT_SECONDS
+
+        for node in nodes:
+            # Calculate time since last heartbeat
+            if node.last_heartbeat:
+                # Both now and node.last_heartbeat are aware UTC
+                # (column is timezone=True). No coercion needed —
+                # comparing aware-to-aware UTC.
+                last_hb = node.last_heartbeat
+                delta = (now - last_hb).total_seconds()
+                if delta > timeout and node.status == "ONLINE":
+                    await store.update_node(node.node_id, status="OFFLINE")
+                    logger.info(
+                        f"Node {node.node_id} marked OFFLINE "
+                        f"(last heartbeat {delta:.0f}s ago, timeout={timeout}s)"
+                    )
+                elif delta <= timeout and node.status == "OFFLINE":
+                    await store.update_node(node.node_id, status="ONLINE")
+                    logger.info(
+                        f"Node {node.node_id} marked ONLINE "
+                        f"(last heartbeat {delta:.0f}s ago, timeout={timeout}s)"
+                    )
 
     async def manual_scan(self) -> Dict[str, int]:
         """Manually trigger a full scan of the Syncthing folder."""

@@ -31,7 +31,7 @@ import yaml
 from pydantic import ValidationError
 
 from agent import loop as agent_loop
-from agent.config import EXIT_OK, build_settings
+from agent.config import EXIT_OK, AGENT_HEARTBEAT_INTERVAL_S, build_settings
 from agent.hardware import (
     BYTES_PER_GIB,
     MINIMUM_CPUS,
@@ -40,7 +40,7 @@ from agent.hardware import (
     probe_hardware,
     write_node_spec,
 )
-from agent.loop import FOLDER_WATCH_TASK, HEARTBEAT_INTERVAL_S, NODE_SPEC_TASK, Agent
+from agent.loop import FOLDER_WATCH_TASK, NODE_SPEC_TASK, Agent
 from agent.paths import AgentPaths, resolve_paths
 from agent.tests.conftest import RecordingWatcher, wait_until
 from backend.services import syncthing_service
@@ -562,9 +562,21 @@ def test_the_only_path_written_is_the_one_the_paths_resolved() -> None:
 # --- AC-7: the agent registers itself in a folder that does not exist yet ---
 
 
-def agent_for(root: Path, node_id: str = "node-01", **env: str) -> Agent:
+def agent_for(
+    root: Path,
+    node_id: str = "node-01",
+    *,
+    heartbeat_interval_s: float | None = None,
+    heartbeat_jitter_s: float | None = None,
+    **env: str,
+) -> Agent:
+    settings_env = {**env}
+    if heartbeat_interval_s is not None:
+        settings_env["AGENT_HEARTBEAT_INTERVAL_S"] = str(heartbeat_interval_s)
+    if heartbeat_jitter_s is not None:
+        settings_env["AGENT_HEARTBEAT_JITTER_S"] = str(heartbeat_jitter_s)
     settings = build_settings(
-        ["--node-id", node_id, "--syncthing-root", str(root)], environ={**env}
+        ["--node-id", node_id, "--syncthing-root", str(root)], environ=settings_env
     )
     paths = resolve_paths(
         settings.SYNCTHING_ROOT, settings.NODE_ID, settings.AGENT_STATE_DIR
@@ -810,12 +822,12 @@ async def test_the_same_monitor_does_flip_a_stale_node_offline(
 def test_the_heartbeat_cadence_leaves_room_under_the_offline_threshold() -> None:
     """The coupling recorded in the spec's §4, asserted rather than assumed.
 
-    ``SyncthingService._heartbeat_monitor`` hardcodes ``delta > 90``; #96 makes
-    that configurable. 30 s buys two missed writes plus watcher latency before a
-    healthy node is at risk.
+    ``SyncthingService._heartbeat_monitor`` uses HEARTBEAT_TIMEOUT_SECONDS (default 90);
+    #96 makes that configurable. The default agent interval (22 s) buys two missed
+    writes plus watcher latency before a healthy node is at risk.
     """
-    assert HEARTBEAT_INTERVAL_S == 30.0
-    assert 2 * HEARTBEAT_INTERVAL_S < 90, "one missed write must not be fatal"
+    assert AGENT_HEARTBEAT_INTERVAL_S == 22.0
+    assert 2 * AGENT_HEARTBEAT_INTERVAL_S < 90, "one missed write must not be fatal"
 
 
 # --- AC-10 and the cadence, through the running agent -----------------------
@@ -824,7 +836,6 @@ def test_the_heartbeat_cadence_leaves_room_under_the_offline_threshold() -> None
 async def test_the_node_file_is_rewritten_on_every_tick(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(agent_loop, "HEARTBEAT_INTERVAL_S", 0.02)
     probes = 0
 
     def counting(node_id: str, *, now: datetime | None = None) -> NodeSpec:
@@ -834,7 +845,11 @@ async def test_the_node_file_is_rewritten_on_every_tick(
 
     monkeypatch.setattr(agent_loop, "collect_node_spec", counting)
 
-    agent = agent_for(tmp_path / "sync")
+    agent = agent_for(
+        tmp_path / "sync",
+        heartbeat_interval_s=0.02,
+        heartbeat_jitter_s=0.0,
+    )
     running = asyncio.ensure_future(agent.run())
     try:
         await wait_until(
@@ -864,14 +879,17 @@ async def test_a_bug_in_a_tick_does_not_stop_the_agent_either(
     Asserting the consequence as well as the configuration is deliberate: the
     flag is data in a ``NamedTuple``, and this is what it buys.
     """
-    monkeypatch.setattr(agent_loop, "HEARTBEAT_INTERVAL_S", 0.02)
 
     def explode(*_args: Any, **_kwargs: Any) -> NodeSpec:
         raise RuntimeError("the probe returned something impossible")
 
     monkeypatch.setattr(agent_loop, "collect_node_spec", explode)
 
-    agent = agent_for(tmp_path / "sync")
+    agent = agent_for(
+        tmp_path / "sync",
+        heartbeat_interval_s=0.02,
+        heartbeat_jitter_s=0.0,
+    )
     running = asyncio.ensure_future(agent.run())
     try:
         await wait_until(
@@ -901,7 +919,6 @@ async def test_a_failed_write_warns_and_the_agent_survives_it(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     """AC-10: a lost heartbeat costs a warning, never the process."""
-    monkeypatch.setattr(agent_loop, "HEARTBEAT_INTERVAL_S", 0.02)
     real_write = write_node_spec
     attempts = 0
 
@@ -914,7 +931,11 @@ async def test_a_failed_write_warns_and_the_agent_survives_it(
 
     monkeypatch.setattr(agent_loop, "write_node_spec", flaky)
 
-    agent = agent_for(tmp_path / "sync")
+    agent = agent_for(
+        tmp_path / "sync",
+        heartbeat_interval_s=0.02,
+        heartbeat_jitter_s=0.0,
+    )
     running = asyncio.ensure_future(agent.run())
     try:
         await wait_until(

@@ -5,7 +5,8 @@ Unit tests for Syncthing service.
 import tempfile
 import pytest
 from pathlib import Path
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+from unittest.mock import patch
 
 from backend.services.syncthing_service import SyncthingService
 from shared.schemas.job_state import JobState
@@ -13,6 +14,7 @@ from shared.schemas.job_spec import JobSpec
 from shared.schemas.job_status import JobStatus
 from shared.schemas.node_spec import NodeSpec, GPUInfo
 from backend.store import get_store
+from backend.core.config import settings
 
 
 @pytest.fixture
@@ -258,3 +260,133 @@ class TestSyncthingAPI:
         assert "message" in data
         assert "scanned" in data
         assert "total_processed" in data
+
+
+class TestHeartbeatMonitor:
+    """Tests for the heartbeat monitor (issue #96)."""
+
+    @pytest.fixture
+    def fake_store(self):
+        """Create a fake store for testing the monitor in isolation."""
+
+        class FakeStore:
+            def __init__(self):
+                self.nodes: dict[str, NodeSpec] = {}
+                self.update_calls: list[tuple[str, dict]] = []
+
+            async def list_nodes(self) -> list[NodeSpec]:
+                return list(self.nodes.values())
+
+            async def update_node(self, node_id: str, **kwargs) -> NodeSpec | None:
+                if node_id not in self.nodes:
+                    return None
+                self.update_calls.append((node_id, kwargs))
+                current = self.nodes[node_id]
+                self.nodes[node_id] = current.model_copy(update=kwargs)
+                return self.nodes[node_id]
+
+            async def create_node(self, node_spec: NodeSpec) -> NodeSpec:
+                if node_spec.node_id in self.nodes:
+                    raise ValueError(f"Node with ID {node_spec.node_id} already exists")
+                self.nodes[node_spec.node_id] = node_spec
+                return node_spec
+
+            async def get_node(self, node_id: str) -> NodeSpec | None:
+                return self.nodes.get(node_id)
+
+        store = FakeStore()
+        # Patch get_store to return our fake store
+        with patch("backend.services.syncthing_service.get_store", return_value=store):
+            yield store
+
+    def _make_node(
+        self,
+        node_id: str,
+        last_heartbeat: datetime,
+        status: str = "ONLINE",
+    ) -> NodeSpec:
+        """Create a NodeSpec with the given heartbeat and status."""
+        gpu = GPUInfo(name="NVIDIA RTX 4090", memory_gb=24)
+        return NodeSpec(
+            node_id=node_id,
+            hostname="test.lan",
+            gpus=[gpu],
+            cpus=16,
+            memory_gb=64,
+            os="Ubuntu 24.04",
+            status=status,
+            last_heartbeat=last_heartbeat,
+            current_job_id=None,
+        )
+
+    @pytest.mark.asyncio
+    async def test_stale_node_marked_offline(self, fake_store):
+        """Stale → OFFLINE: heartbeat 120s old → status becomes OFFLINE."""
+        now = datetime.now(timezone.utc)
+        stale_hb = now - timedelta(seconds=120)
+        node = self._make_node("node-stale", stale_hb, status="ONLINE")
+        await fake_store.create_node(node)
+
+        service = SyncthingService(Path("/tmp/fake"))
+        await service._heartbeat_monitor_iteration(now=now)
+
+        assert fake_store.nodes["node-stale"].status == "OFFLINE"
+        assert len(fake_store.update_calls) == 1
+        assert fake_store.update_calls[0][1]["status"] == "OFFLINE"
+
+    @pytest.mark.asyncio
+    async def test_fresh_node_marked_online(self, fake_store):
+        """Fresh → ONLINE: heartbeat 10s old, status OFFLINE → becomes ONLINE."""
+        now = datetime.now(timezone.utc)
+        fresh_hb = now - timedelta(seconds=10)
+        node = self._make_node("node-fresh", fresh_hb, status="OFFLINE")
+        await fake_store.create_node(node)
+
+        service = SyncthingService(Path("/tmp/fake"))
+        await service._heartbeat_monitor_iteration(now=now)
+
+        assert fake_store.nodes["node-fresh"].status == "ONLINE"
+        assert len(fake_store.update_calls) == 1
+        assert fake_store.update_calls[0][1]["status"] == "ONLINE"
+
+    @pytest.mark.asyncio
+    async def test_boundary_delta_equals_timeout_stays_online(self, fake_store):
+        """Boundary delta == timeout → stays ONLINE (condition is delta > timeout)."""
+        now = datetime.now(timezone.utc)
+        boundary_hb = now - timedelta(seconds=settings.HEARTBEAT_TIMEOUT_SECONDS)
+        node = self._make_node("node-boundary", boundary_hb, status="ONLINE")
+        await fake_store.create_node(node)
+
+        service = SyncthingService(Path("/tmp/fake"))
+        await service._heartbeat_monitor_iteration(now=now)
+
+        assert fake_store.nodes["node-boundary"].status == "ONLINE"
+        assert fake_store.update_calls == [], "No update at boundary"
+
+    @pytest.mark.asyncio
+    async def test_no_redundant_write_when_already_online(self, fake_store):
+        """Already ONLINE with fresh heartbeat → no update_node call."""
+        now = datetime.now(timezone.utc)
+        fresh_hb = now - timedelta(seconds=10)
+        node = self._make_node("node-online", fresh_hb, status="ONLINE")
+        await fake_store.create_node(node)
+
+        service = SyncthingService(Path("/tmp/fake"))
+        await service._heartbeat_monitor_iteration(now=now)
+
+        assert fake_store.nodes["node-online"].status == "ONLINE"
+        assert fake_store.update_calls == [], "No update for already ONLINE"
+
+    @pytest.mark.asyncio
+    async def test_no_redundant_write_when_already_offline(self, fake_store):
+        """Already OFFLINE with stale heartbeat → no update_node call."""
+        now = datetime.now(timezone.utc)
+        stale_hb = now - timedelta(seconds=120)
+        node = self._make_node("node-offline", stale_hb, status="OFFLINE")
+        await fake_store.create_node(node)
+
+        service = SyncthingService(Path("/tmp/fake"))
+        await service._heartbeat_monitor_iteration(now=now)
+
+        assert fake_store.nodes["node-offline"].status == "OFFLINE"
+        assert fake_store.update_calls == [], "No update for already OFFLINE"

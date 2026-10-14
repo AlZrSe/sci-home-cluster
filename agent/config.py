@@ -64,6 +64,14 @@ _NODE_ID_RE: Final[re.Pattern[str]] = re.compile(NODE_ID_PATTERN)
 #: Interval used while waiting for the Syncthing folder to appear at startup.
 FOLDER_RETRY_INTERVAL_S: Final[float] = 1.0
 
+#: Default agent heartbeat interval and jitter (issue #96).
+#: The interval is timeout/4 (90/4 ≈ 22) to leave room for two missed writes
+#: plus watcher latency before the monitor's tick could observe a stale heartbeat.
+#: Jitter of ±2 seconds prevents synchronized fleet wake-ups from overwhelming
+#: the watcher debounce. Both are configurable via the shared config file.
+AGENT_HEARTBEAT_INTERVAL_S: Final[float] = 22.0
+AGENT_HEARTBEAT_JITTER_S: Final[float] = 2.0
+
 STATE_DIR_NAME: Final[str] = ".agent"
 
 #: Env var name and TOML key -> settings field. The two are deliberately the
@@ -80,6 +88,8 @@ _SOURCE_NAMES: Final[dict[str, str]] = {
     "AGENT_FOLDER_WATCH_INTERVAL_S": "FOLDER_WATCH_INTERVAL_S",
     "AGENT_FOLDER_RETRY_MAX_S": "FOLDER_RETRY_MAX_S",
     "AGENT_WATCHER_LIVENESS_INTERVAL_S": "WATCHER_LIVENESS_INTERVAL_S",
+    "AGENT_HEARTBEAT_INTERVAL_S": "HEARTBEAT_INTERVAL_S",
+    "AGENT_HEARTBEAT_JITTER_S": "HEARTBEAT_JITTER_S",
     "AGENT_STATE_DIR": "AGENT_STATE_DIR",
 }
 
@@ -114,6 +124,9 @@ class AgentSettings(BaseSettings):
     FOLDER_WATCH_INTERVAL_S: float = 30.0
     FOLDER_RETRY_MAX_S: float = 60.0
     WATCHER_LIVENESS_INTERVAL_S: float = 60.0
+    # Heartbeat contract (issue #96)
+    HEARTBEAT_INTERVAL_S: float = AGENT_HEARTBEAT_INTERVAL_S
+    HEARTBEAT_JITTER_S: float = AGENT_HEARTBEAT_JITTER_S
     AGENT_STATE_DIR: Path
 
     @classmethod
@@ -176,6 +189,20 @@ class AgentSettings(BaseSettings):
                 f"must be an absolute path, got {value!r}; build_settings "
                 "resolves the root before this model sees it"
             )
+        return value
+
+    @field_validator("HEARTBEAT_INTERVAL_S", "HEARTBEAT_JITTER_S")
+    @classmethod
+    def _check_heartbeat_settings(cls, value: float, info) -> float:
+        field_name = info.field_name
+        if field_name == "HEARTBEAT_INTERVAL_S" and value <= 0:
+            raise ValueError(
+                f"HEARTBEAT_INTERVAL_S must be greater than 0, got {value}"
+            )
+        if field_name == "HEARTBEAT_JITTER_S" and value < 0:
+            raise ValueError(f"HEARTBEAT_JITTER_S must be >= 0, got {value}")
+        # We can't cross-validate jitter < interval here because the other field
+        # may not be set yet; the cross-check is done in build_settings after merge.
         return value
 
 
@@ -376,6 +403,13 @@ def build_settings(
         settings = AgentSettings(**merged)
     except ValueError as exc:
         raise ConfigError(str(exc)) from exc
+
+    # Cross-validate heartbeat settings: jitter must be < interval
+    if settings.HEARTBEAT_JITTER_S >= settings.HEARTBEAT_INTERVAL_S:
+        raise ConfigError(
+            f"HEARTBEAT_JITTER_S ({settings.HEARTBEAT_JITTER_S}) must be < "
+            f"HEARTBEAT_INTERVAL_S ({settings.HEARTBEAT_INTERVAL_S})"
+        )
 
     # Deliberate, one-way: `shared/file_ops/path_utils.py` and everything built
     # on it read `os.environ["SYNCTHING_ROOT"]` directly and have no injection
