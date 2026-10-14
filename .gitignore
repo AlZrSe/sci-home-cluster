@@ -121,6 +121,12 @@ data/
 # (issue #56).
 .shc/
 
+# Agent-team scratch files. AGENTS.md requires every task and bug to be
+# tracked in a GitHub Issue, and states that local task files are ignored by
+# the workflow - so anything written here is scaffolding, not a record, and
+# must not end up in the index. Unanchored so it matches at any depth.
+.opencode/agent-team/
+
 # Misc
 *.pyc
 *.pyo
