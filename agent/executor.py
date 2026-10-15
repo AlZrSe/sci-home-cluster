@@ -380,7 +380,7 @@ async def _fail_before_launch(
     )
 
 
-async def execute_job(  # noqa: C901 - complex execution logic with many validation paths
+async def execute_job(  # noqa: C901 - one function, many pre-launch validation paths
     *,
     job_id: str,
     job_spec: JobSpec,
