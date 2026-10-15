@@ -317,32 +317,115 @@ def _reader_thread(
         logger.warning("log reader thread error: %s", e)
 
 
-def stop_budget(shutdown_grace_s: float | None) -> tuple[float, float]:
-    """``(grace, verify)`` for one job stop, derived from the shutdown grace.
+#: How long the stop may spend joining the stdout/stderr reader threads, at the
+#: documented default. These are the only waits in a stop that are **not** about
+#: the tree: a reader thread returns when its stream reaches EOF, and EOF
+#: arrives when every writer to that pipe has closed it. When a rank survives to
+#: hold the pipe, no join can ever complete, so this is an allowance for
+#: *flushing buffered output on a tree that is stopping normally* and nothing
+#: else (issue #125 F1).
+READER_JOIN_S: Final[float] = 2.0
 
-    ``STOP_GRACE_S`` and ``STOP_VERIFY_TIMEOUT_S`` are the **documented
-    default**, sized for the default 30 s ``SHUTDOWN_GRACE_S``: 5 + 5 + 5 = 15,
-    half of it. They are not, however, a bound the agent may exceed -- and
-    ``AGENT_SHUTDOWN_GRACE_S`` is validated only as "greater than zero", so an
-    operator who set it to 1.0 got a shutdown that took 5.03 s: the execution
-    task's own grace is spent inside ``_stop_tree`` before ``wait_for`` around
-    the task can cancel it. Bounded and reported, so not an orphan -- but it is
-    the documented promise being exceeded 5x by one configuration
-    (issue #125 N4).
+#: The total the documented defaults come to, and the number the budget is
+#: scaled against: one graceful grace, one verification per tier, and one join
+#: allowance per reader thread. The *count* of waits is what was wrong before --
+#: the joins were outside the budget entirely, so a tree that survived, the one
+#: case that already announces ``stop_failed:tree_survived``, added a flat 4 s
+#: floor and AC-15's sentence failed again (issue #125 F1).
+DOCUMENTED_STOP_S: Final[float] = (
+    STOP_GRACE_S + 2 * STOP_VERIFY_TIMEOUT_S + 2 * READER_JOIN_S
+)
 
-    So the budget is derived rather than assumed: a stop may use at most **half**
-    the configured shutdown grace, split into the three waits it actually makes.
-    The default is unchanged -- half of 30 is the 15 the constants already
-    describe -- and every other value scales down, so a small grace produces a
-    small stop rather than an overrun.
+#: The share of the configured shutdown grace a stop may claim. Two thirds
+#: rather than all of it because ``agent/loop.py``'s ``_shutdown_sequence`` hands
+#: the execution task ``remaining()`` and the supervisor shutdown runs in the
+#: same window (issue #125 Q9). The measured cost of everything *outside* the
+#: stop is 0.000 s at every configured grace tried, so the reserved third is
+#: generous rather than tight -- it is a judgement, not a measurement, and is
+#: labelled as one so it can be argued with.
+STOP_GRACE_SHARE: Final[float] = 2 / 3
+
+
+def stop_budget(shutdown_grace_s: float | None) -> tuple[float, float, float]:
+    """``(grace, verify, join)`` for one job stop, derived from the shutdown grace.
+
+    ``STOP_GRACE_S``, ``STOP_VERIFY_TIMEOUT_S`` and ``READER_JOIN_S`` are the
+    **documented defaults**, sized for the default 30 s ``SHUTDOWN_GRACE_S``:
+    5 + 5 + 5 + 2 + 2 = 19, comfortably inside 30. They are not, however, a
+    bound the agent may exceed. ``AGENT_SHUTDOWN_GRACE_S`` is validated only as
+    "greater than zero", so a small grace is legal and a stop sized by constants
+    overruns it: measured 5.03 s at a 1.0 s grace, because the execution task's
+    own grace is spent inside ``_stop_tree`` before ``wait_for`` around the task
+    can cancel it (issue #125 N4).
+
+    Round 2 sized the first two waits and left the joins out, and the total was
+    therefore not a bound at all -- on a **surviving** tree, where the readers
+    can never see EOF, the two joins ran to their full timeout every time. Same
+    path, real ``Agent.run``, no job object, tree that refuses the polite stop:
+
+    ==================  ============  ============
+    grace               budget        measured
+    ==================  ============  ============
+    0.5 s               0.250 s       4.250 s (8.5x)
+    1.0 s               0.500 s       4.391 s (4.4x)
+    5.0 s               2.500 s       5.718 s (1.1x)
+    ==================  ============  ============
+
+    The same path with a job object, everything killed and both joins returning
+    at once, measures 0.156 s / 0.250 s / 0.906 s -- inside at every value. So
+    the overrun is the joins and only the joins, and the arithmetic is only true
+    once all five waits are inside it.
+
+    So the budget is derived from the configured grace rather than assumed from
+    the constants, and the derived value is what every wait a stop makes is
+    computed from.
+
+    So the budget is **scaled, not divided**: the three constants are the
+    documented *shape*, and a single factor multiplies all of them so their
+    total fits the share above. Proportional rather than equal thirds, because
+    equal thirds would silently shrink the documented 5 s graceful grace to 3 s
+    on the **default** -- and would *lengthen* the 2 s join allowance to 3 s,
+    which is the wrong direction for the one wait that only ever costs time.
+
+    ==================  ==============  ==============
+    grace               derived         total
+    ==================  ==============  ==============
+    0.5 s               0.088/0.088/0.035   0.333 s
+    1.0 s               0.175/0.175/0.070   0.667 s
+    5.0 s               0.877/0.877/0.351   3.333 s
+    **30.0 (default)**  **5.0/5.0/2.0**    **19.0 s -- unchanged**
+    ==================  ==============  ==============
+
+    **And a floor, because arithmetic that small is worse than no answer at
+    all** (issue #125 F7). ``stop_budget(1e-9)`` is arithmetically positive and
+    useless: a grace and a verification shorter than one ``STOP_VERIFY_POLL_S``
+    cannot make progress, so every such stop degenerates into "forced, and
+    unconfirmed", which is a *worse* report than a stop that was allowed to
+    try. So no wait is derived below ``STOP_VERIFY_POLL_S``.
+
+    The floor makes the bound honest rather than unconditional, and the
+    consequence is named rather than hidden. Above
+    ``STOP_VERIFY_POLL_S * DOCUMENTED_STOP_S /
+    (STOP_GRACE_SHARE * READER_JOIN_S)`` (**0.356 s** at the shipped poll) no
+    term is floored and the total is ``<= STOP_GRACE_SHARE * grace``; below it
+    the floor wins and the total may exceed the share. A 10 ms grace is not a
+    budget an agent can honour and pretending otherwise would only hide it.
+    Both of ``#93``'s own lifecycle graces -- 0.05 s and 0.2 s -- are below the
+    crossover, so the floored regime is not hypothetical for this suite, and the
+    clause is load-bearing rather than decorative.
 
     ``None`` means "there is no agent around this job": the constants, which is
     what every direct ``execute_job`` caller and the unit tests get.
     """
     if shutdown_grace_s is None:
-        return STOP_GRACE_S, STOP_VERIFY_TIMEOUT_S
-    total = min(STOP_GRACE_S + 2 * STOP_VERIFY_TIMEOUT_S, shutdown_grace_s / 2)
-    return total / 3, total / 3
+        return STOP_GRACE_S, STOP_VERIFY_TIMEOUT_S, READER_JOIN_S
+    scale = min(1.0, shutdown_grace_s * STOP_GRACE_SHARE / DOCUMENTED_STOP_S)
+    floor = STOP_VERIFY_POLL_S
+    return (
+        max(STOP_GRACE_S * scale, floor),
+        max(STOP_VERIFY_TIMEOUT_S * scale, floor),
+        max(READER_JOIN_S * scale, floor),
+    )
 
 
 def _log_path_if_written(path: Path) -> str:
@@ -504,7 +587,7 @@ async def execute_job(  # noqa: C901 - one function, many pre-launch validation 
     several times over (issue #125 N4). ``None`` on both means "no agent around
     this job", and the documented defaults apply.
     """
-    stop_grace, stop_verify = stop_budget(shutdown_grace_s)
+    stop_grace, stop_verify, stop_join = stop_budget(shutdown_grace_s)
     # Validate working directory
     working_dir, error = validate_and_prepare_working_dir(
         job_spec.working_dir, syncthing_root
@@ -761,8 +844,26 @@ async def execute_job(  # noqa: C901 - one function, many pre-launch validation 
         for waiter in (exit_waiter, stop_waiter):
             waiter.cancel()
         stop_readers.set()
-        stdout_thread.join(timeout=2.0)
-        stderr_thread.join(timeout=2.0)
+        # A derived allowance, inside the stop's budget, not a fixed 2 s that
+        # was not (issue #125 F1). Both threads are already running and they
+        # finish concurrently, so a tree that is stopping normally costs
+        # nothing here -- the joins return on EOF within microseconds. Only a
+        # rank that survives to hold the pipe open runs them out, and no timeout
+        # can help that: the thread is blocked in `readline` on a descriptor
+        # nobody will ever close. They are daemon threads, so the timeout is a
+        # bound on how long the agent waits rather than a leak that outlives it,
+        # and the tree is already recorded as `stop_failed:tree_survived` by the
+        # verification -- this path cannot produce a clean stop for a live tree,
+        # it can only cost time (issue #125 N1, F1).
+        #
+        # `stop_readers.set()` is checked between reads, not inside one, which
+        # is why a surviving rank defeats it. Closing the stream would unblock
+        # the reader, and is not attempted: closing a descriptor another thread
+        # is blocked reading is undefined behaviour for `BufferedReader`, and the
+        # buffered output it would discard is the output of a process that was
+        # just reported as not stopped.
+        stdout_thread.join(timeout=stop_join)
+        stderr_thread.join(timeout=stop_join)
         stdout_writer.close()
         stderr_writer.close()
         # Closed on every path, not only the tidy one: the handle is a kernel
