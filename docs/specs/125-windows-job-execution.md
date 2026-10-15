@@ -202,6 +202,10 @@ a **read-only** verification primitive — the only one that answers "is the tre
   and 13 measured runs here produced 0 escapes, so this is a **structural** residual rather than a
   reproduced failure — which is exactly why §4 Q2 pairs the job with an independent sweep instead of
   trusting one mechanism.
+  **[corrected, §12.1]** the window is real but *not* reliably missed: re-measured ten times with a
+  `uv` venv launcher, one run in ten has the redirector's child created before the assignment lands
+  and outside the job for good, and a *delayed* assignment loses the race every time. The job's
+  accounting alone is not sufficient, so `verify()` reads it **and** the enumerated tree.
 
 ### 1.7 The current Windows test baseline — 15 failures that predate this issue
 
@@ -421,17 +425,19 @@ The POSIX design from #98 is kept and the Windows design is made its exact mirro
 | tier | POSIX (unchanged) | Windows (new) |
 |---|---|---|
 | **own the tree at launch** | `start_new_session=True` → `setsid` → new process group whose pgid is `proc.pid` | `creationflags=CREATE_NEW_PROCESS_GROUP`, **and** assign `proc.pid` to a Job Object created with `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` |
-| **remember the tree** | not needed: `killpg` addresses the group by pgid and keeps working after the leader is reaped | **[corrected, §12.1]** at the start of **each** tier, enumerate the live descendants of the launcher and assign each to the job. A launcher that breaks away from its job is a property of launchers, not a window (§1.6) |
+| **remember the tree** | not needed: `killpg` addresses the group by pgid and keeps working after the leader is reaped | **[corrected, §12.1]** at the start of **each** tier, enumerate the live descendants of the launcher, assign any the job does **not** already hold, and keep the pids for the verification. A launcher can lose the assignment race — one run in ten on this host — and asking the job's count alone then reads `0` over a live process |
 | **polite request** | `os.killpg(proc.pid, SIGTERM)` | `proc.send_signal(signal.CTRL_BREAK_EVENT)` → `GenerateConsoleCtrlEvent(CTRL_BREAK_EVENT, pgid)` |
 | **forced** | `os.killpg(proc.pid, SIGKILL)` | **[corrected, §12.1]** `taskkill /T /F /PID <pid>` **first**, then `TerminateJobObject(job, 1)` — the order in the original table makes the sweep inert, because `/T` walks from the launcher and the job kills the launcher |
 | **verify** | `proc.wait()` returns within `STOP_VERIFY_TIMEOUT_S`, after the forced tier | **[corrected, §12.1]** `ActiveProcesses == 0` **and** every remembered pid gone **and** `proc.wait()` returns — and the verification runs after the **graceful** tier as well, so "the launcher exited" is never taken as "the tree stopped" |
 | **a process that ignores the polite request** | survives `SIGTERM`, dies on `SIGKILL` | survives `CTRL_BREAK_EVENT` (§1.5), dies on the forced tier |
 | **the agent itself is killed** | the session survives the agent (orphaned) | **the job kills the tree**: `KILL_ON_JOB_CLOSE` fires when the last handle closes, which the OS does when the agent dies |
 
-**Why the Job Object alone is not enough** — measured, §1.6, and then measured harder: `AssignProcessToJobObject` runs *after* `CreateProcess` returned, so a descendant created in that window is never in the job, and the job's accounting never counts it. **[corrected, §12.1]** the original reading of that measurement — that the window is milliseconds and 13 runs produced no escape — does not hold on the host this spec was written on. A `uv` venv launcher creates its child with `CREATE_BREAKAWAY_FROM_JOB`, so every descendant past it is outside the job *permanently*: `ActiveProcesses` reads 1 with four live descendants, `TerminateJobObject` kills the launcher, and the grandchild survives. **Why `taskkill` alone is not enough**: it is an external binary (the issue's own objection — a stripped `PATH` loses the forced tier, which is the "command not
+**Why the Job Object alone is not enough** — measured, §1.6, and then measured harder: `AssignProcessToJobObject` runs *after* `CreateProcess` returned, so a descendant created in that window is never in the job, and the job's accounting never counts it. **[corrected, §12.1]** the window is real — **one run in ten on this host** with a `uv` venv launcher, and *every* run if the assignment is delayed — and the old code had no defence against it: it asked the job's accounting, which reads `0` over a live grandchild on the losing run, and wrote `stopped:shutdown`. **Why `taskkill` alone is not enough**: it is an external binary (the issue's own objection — a stripped `PATH` loses the forced tier, which is the "command not
 found" failure this whole issue exists to eliminate), and `/T` walks parent/child links at kill time
-rather than being enforced by the kernel at creation time. **Two mechanisms, each covering the
-other's hole, is the answer**, and it is the one place where this spec overrides the issue's stated
+rather than being enforced by the kernel at creation time — and it only reaches
+anything while the launcher is still alive to walk from, which is why it runs
+**first** (correction C1). **Two mechanisms, each covering the other's hole, is
+the answer**, and it is the one place where this spec overrides the issue's stated
 preference (C5). It also costs one `subprocess.run` on a path that only runs during shutdown.
 
 **Verification, not assumption — the central requirement.** "We sent a signal" is not "the tree is
@@ -1384,37 +1390,56 @@ QA's verdict on the first SWE cycle adjudicated six statements in this document
 as errors and two measurements as wrong. They are recorded here so the record
 and the code agree.
 
-### 12.1 [measured] The Job Object does not necessarily hold the tree
+### 12.1 [corrected] The Job Object holds the tree *most* of the time
 
 §1.6 measured a post-`CreateProcess` assignment **window** — milliseconds wide,
-no escape in 13 runs — and built the whole Windows design on the assumption
-that a job holds the tree from the launcher down. On the same host, that
-assumption is false for one very common launcher:
+no escape in 13 runs — and the Windows design was built on the assumption that
+a job holds the tree from the launcher down.
 
-| leader | `ActiveProcesses` with 2 live descendants | after `TerminateJobObject` |
-|---|---|---|
-| `.venv\Scripts\python.exe` (a `uv` venv redirector, 47 KB) | **1** | the grandchild **survives** |
-| the real interpreter beside it (91 KB) | 2 | nothing survives |
+An earlier revision of this section over-corrected: it claimed, as measured
+fact, that a `uv` venv launcher creates its child with
+`CREATE_BREAKAWAY_FROM_JOB` and that every descendant past it is outside the
+job *for good*, with `ActiveProcesses = 1` and a surviving grandchild. **That
+claim does not reproduce with production's ordering**, and it is withdrawn.
+Re-measured, ten runs each, two leader binaries, assignment immediately after
+`Popen` returns (which is what `ProcessTree` does) versus 2.5 s later:
 
-The redirector creates its child with `CREATE_BREAKAWAY_FROM_JOB`, so every
-descendant past it is outside the job for good — not for a window, for the
-life of the job. `uv` is what `AGENTS.md` tells contributors to build the venv
-with. Consequences, all three of them in the code:
+| leader | ordering | `ActiveProcesses` (10 runs) | descendants alive | survivors after `TerminateJobObject` |
+|---|---|---|---|---|
+| `.venv\Scripts\python.exe` — a `uv` redirector, 47 KB | **immediate** | **1, 4, 4, 4, 4, 4, 4, 4, 4, 4** | 3 | **1, 0×9** |
+| the real interpreter beside it, 91 KB | immediate | 2 ×10 | 1 | 0 ×10 |
+| the `uv` redirector | delayed 2.5 s | 1 ×10 | 3 | 1 ×10 |
 
-1. **`ActiveProcesses == 0` is not "the tree is gone".** `verify()` also checks
-   every pid it recorded at stop time against a live process snapshot
-   (`CreateToolhelp32Snapshot`, stdlib, behind the Windows guard). This is the
-   fix for the orphan QA reproduced: a cooperative launcher and a grandchild
-   that refuses the break, where the old code wrote `stopped:shutdown` while
-   the grandchild went on holding its pipes and its GPUs.
-2. **The job is fed the tree explicitly.** At the start of each tier the
-   launcher is still alive, so the descendants are enumerable; each is
-   assigned to the job, which is what makes `TerminateJobObject` mean "this
-   tree" rather than "this process".
-3. **The sweep runs first.** `taskkill /T` walks parent/child links *from the
-   launcher*, and `TerminateJobObject` kills the launcher — the order in §4 Q2
-   made the sweep return "no process found" and do nothing, in 10 runs out of
-   10. This is correction C1.
+So, and this is the whole of what is actually true on this host:
+
+1. **Children do inherit the job.** The job holds the tree, `ActiveProcesses`
+   agrees with the process list, and `TerminateJobObject` leaves no survivor
+   nine times in ten.
+2. **The assignment window is real and the redirector widens it.** One run in
+   ten has the redirector's child created before the assignment lands, and
+   that child is outside the job for the life of the job. A *delayed*
+   assignment loses the race every time — which is the window §1.6 documented,
+   at a size that matters.
+3. **The old code had no defence against any of it.** It asked the job's
+   accounting, and on the losing run that read `0` over a live grandchild, and
+   wrote `stopped:shutdown`.
+
+What this changes about the design, honestly:
+
+* **The adopting leg is insurance, not the fix.** It closes the one-in-ten
+  race, and on a host that really did break away it would be the only thing
+  that worked — but on *this* host it is not what stops the orphan. The fix
+  that stops it is **verifying the graceful path**, plus the sweep-first
+  ordering (a `taskkill /T` that runs after the job has killed the launcher
+  finds nothing, 10 runs in 10).
+* **The enumeration leg is load-bearing.** If the job's own accounting is the
+  only source, a losing run reads zero and reports a clean stop. That is why
+  `verify()` checks the enumerated pids as well, and why a rank the job never
+  held is still counted.
+* **What remains genuinely unfixable** is stated in the code rather than
+  glossed: a rank created *after* the stop begins *and* outside the job is
+  tracked by neither leg (issue #125 N5). It is the conjunction of two
+  one-in-ten events.
 
 On a node with neither mechanism the agent **cannot** finish such a stop, and
 says so: `stop_failed:tree_survived` at ERROR. That is §4 Q2's "loud rather
@@ -1437,6 +1462,11 @@ after both tiers, and AC-15's bound is therefore
 verification that is going to succeed resolves in microseconds, so the second
 one only costs anything on a stop that has already gone wrong.
 
+That 15 s is the budget for the **default** grace only. **[corrected, §12.7]**
+it is now derived from whatever `SHUTDOWN_GRACE_S` actually says, because that
+setting is validated only as "greater than zero" and a 1.0 s grace used to
+produce a 5.03 s shutdown.
+
 ### 12.4 [not a defect] Two threads waiting on one `Popen`
 
 `agent/executor.py` parks a thread in `proc.wait()` and `verify()` asks a
@@ -1449,7 +1479,108 @@ CPython translates to `sts = 0` — a forcibly killed job written down as
 one real process and requires all four to agree. The floor here is 3.11, so
 every supported interpreter has the lock.
 
-### 12.5 Corrections index
+Both branches are raced, because they are both reachable and only one was
+originally pinned: the untimed `proc.wait()` the executor parks, and the
+**timed** `proc.wait(timeout=…)` that `verify()` actually uses. The lock covers
+both, and the test says so. It passes on Windows by construction (waiting is
+handle-based there), so the guard can only ever fail on a POSIX host — which is
+where the failure would land, and the reason it is worth the four threads.
+
+### 12.5 [corrected, N1] A probe that cannot read must not read as "nothing"
+
+`verify()`'s enumeration leg used to answer `{}` for "the host is empty" **and**
+for "the snapshot could not be taken", and the check it made was
+
+```python
+if snapshot is None or int(snapshot) == -1:
+```
+
+which is never true on 64-bit: with `restype = wintypes.HANDLE` a returned
+`INVALID_HANDLE_VALUE` arrives **unsigned**, as `18446744073709551615`. So the
+one probe whose answer decides whether a stop is reported clean walked straight
+through its own failure check, and the caller was handed an empty host — a
+clean stop report for a tree that was still running. The worst direction this
+code can fail in, and the same defect §12.1's enumeration leg was added to
+prevent.
+
+`{}` and "unknown" are now different answers at every level:
+
+| question | empty | unknown |
+|---|---|---|
+| `_live_processes()` | `{}` — the host is empty | `None` — could not enumerate |
+| `_JobObject.members()` | `set()` — the job holds nothing | `None` — the kernel would not say |
+| `ProcessTree._tracked` | `set()` — enumerated, nothing under the launcher | `None` — not enumerated, or the probe failed |
+| `_outstanding()` | `[]` — nothing left | `None` — cannot confirm |
+| `verify()` | `True` after the launcher is reaped | **`False`, immediately** |
+
+"Unknown" is not polled to the deadline — waiting does not make a broken probe
+readable — and it is never guessed either. It reaches `state.yaml` as
+`stop_failed:tree_survived`, which is the honest answer and the only thing
+between an operator and a job that is still holding its GPUs.
+
+### 12.6 [corrected, N2] The probe is resolved once and cannot raise
+
+Two separate costs on the same line. `WinDLL("kernel32")` and six prototypes
+were re-resolved on **every** call: measured, 560 ms across a five-second
+verification, ~11% of the stop budget for a call that is supposed to be free.
+Now resolved once, on first use, behind an `lru_cache`.
+
+And an exception escaping the probe unwound `verify()` → `_stop_tree` →
+`execute_job` with **no terminal state written at all** — worse than any answer
+the probe can give, and the module docstring promised the opposite. A missing
+or unreadable `kernel32` (`OSError: [Errno 126]`) is now contained into the
+same "cannot confirm" answer as §12.5.
+
+### 12.7 [corrected, N4] The stop is sized from the configured grace
+
+AC-15 asserted `STOP_GRACE_S + 2 * STOP_VERIFY_TIMEOUT_S` (15 s) against the
+**default** `SHUTDOWN_GRACE_S` of 30 s. But the grace is validated only as
+"greater than zero", and the 15 s of stop budget lives inside the execution
+task — where `wait_for` around the task cannot cancel it, because the
+`asyncio.wait` has already started. Driven for real: `AGENT_SHUTDOWN_GRACE_S =
+1.0`, a job in flight, and **5.03 s** of shutdown. Five times the documented
+grace, from a legal configuration.
+
+Derived rather than assumed (`executor.stop_budget`): a stop may claim at most
+**half** the configured grace, split into the three waits it actually makes.
+
+| `SHUTDOWN_GRACE_S` | stop grace | verify | worst case |
+|---|---|---|---|
+| 0.5 | 0.167 | 0.167 | 0.50 |
+| 1.0 | 0.167 | 0.167 | 0.50 |
+| 5.0 | 0.83 | 0.83 | 2.50 |
+| 10.0 | 1.67 | 1.67 | 5.00 |
+| **30.0 (default)** | **5.0** | **5.0** | **15.0 — unchanged** |
+| 300.0 | 5.0 | 5.0 | 15.00 |
+
+The default is exactly what the constants already describe, so this is not a
+behaviour change for anyone on the default — it is the promise being kept for
+everyone else. The alternative — *refuse* a grace too small to hold 15 s — was
+rejected: `#93`'s lifecycle tests configure 0.05 s and 0.2 s on purpose, and a
+refusal would either break them or need an escape hatch worse than the defect.
+A tree that refuses the polite stop, at graces of 0.5 and 1.0, is the case
+that actually bites; a cooperative tree exits inside the first wait and never
+reaches it, which is why the test refuses on purpose.
+
+### 12.8 [noted, N5/N6] The two legs of `verify()`, and their one gap
+
+`_outstanding()` used to ask the job for a **count** and compare the enumerated
+tree against a **list** of live processes, so the two legs covered different
+things and only one of them was exercised per platform. One query
+(`JobObjectBasicProcessIdList`) answers "which", so both legs are now the same
+coverage. It also let the adoption step skip a pid the job already holds:
+re-assigning a member fails with `ERROR_ACCESS_DENIED`, and an earlier revision
+did exactly that, emitting a "could not be adopted" warning **per member on
+every healthy run**.
+
+The one gap, stated rather than papered over: a rank created *after*
+`_remember_tree()` runs, by a process that also failed to inherit the job, is
+tracked by neither leg. It cannot be closed at stop time — once the launcher is
+gone its descendants re-parent and a later enumeration finds nothing — so it is
+the conjunction of two one-in-ten events, the same class as §12.1's race, and
+the forced tier's sweep catches it while the launcher is still alive.
+
+### 12.9 Corrections index
 
 | # | statement | what it now says |
 |---|---|---|
@@ -1459,3 +1590,7 @@ every supported interpreter has the lock.
 | C4 | AC-11 | the negative case is a `Popen` whose `wait` times out, not an injected clock; and verification covers the graceful tier |
 | C5 | §9's grep | dropped `sched_setaffinity` from the substring search and asserted "no bare reference" over the AST instead |
 | C6 | §4 Q5's table | `launch_failed:process_creation_failed: <e>` added; the table presented itself as complete |
+| C7 | §12.1, first draft | the permanent-`CREATE_BREAKAWAY_FROM_JOB` reading is **withdrawn**: it does not reproduce with production's ordering. It is a one-in-ten assignment race, and the adopting leg is insurance rather than the fix |
+| C8 | §12.5, first draft | `int(snapshot) == -1` never true with `restype = wintypes.HANDLE`; empty and unknown are separate answers, and unknown is reported |
+| C9 | §12.6, first draft | `kernel32` is resolved once; a load failure is contained instead of unwinding `execute_job` with no state written |
+| C10 | AC-15 | the stop's budget is derived from the configured grace, so the bound holds at every legal value and not only at the default |
