@@ -875,18 +875,22 @@ class TestTheOwnershipRuleIsPinned:
         that keeps "the only such comment in the repository" true.
         """
         offenders = []
-        for path in (REPO_ROOT / "backend").rglob("*.py"):
-            if "tests" in path.parts:
-                continue
-            if "the agent never may" in path.read_text(encoding="utf-8"):
-                offenders.append(str(path.relative_to(REPO_ROOT)))
-        for path in (REPO_ROOT / "agent").rglob("*.py"):
-            if "tests" in path.parts:
-                continue
-            if "the agent never may" in path.read_text(encoding="utf-8"):
-                offenders.append(str(path.relative_to(REPO_ROOT)))
+        # ``as_posix()``, not ``str()``: this asserts on a *repository-relative
+        # path*, and a repository path is written with forward slashes on every
+        # platform. ``str()`` yields ``backend\\services\\job_service.py`` on
+        # Windows, so the assertion fails there for a reason that has nothing
+        # to do with the rule it is pinning.
+        for root in ("backend", "agent"):
+            for path in (REPO_ROOT / root).rglob("*.py"):
+                if "tests" in path.parts:
+                    continue
+                if "the agent never may" in path.read_text(encoding="utf-8"):
+                    offenders.append(path.relative_to(REPO_ROOT).as_posix())
 
-        assert offenders == ["backend/services/job_service.py"]
+        # Sorted, because ``rglob`` has no cross-platform ordering guarantee and
+        # a failure that depends on directory iteration order is a flaky test
+        # wearing a correctness costume.
+        assert sorted(offenders) == ["backend/services/job_service.py"]
 
     async def test_the_folder_cannot_change_a_jobs_spec_or_created_at(
         self, auth_client: AsyncClient, folder_root: Path
