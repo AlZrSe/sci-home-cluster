@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterator
 
 import pytest
+from watchdog.events import FileSystemEventHandler
 from watchdog.observers import Observer
 
 from agent.config import build_settings
@@ -220,6 +221,20 @@ async def wait_until(
     assert await wait_for(predicate, timeout), message
 
 
+class NullEventHandler(FileSystemEventHandler):
+    """A real handler that does nothing.
+
+    ``observer.schedule`` is typed as taking a ``FileSystemEventHandler``, and
+    this probe used to hand it a bare ``lambda *_a: None``. A callable is not a
+    handler, and mypy was right: ``observer.schedule`` hands the object to the
+    emitter, which calls ``dispatch`` on it. It happened to work on both
+    platforms tested, so this was a latent break as well as a type error, and
+    the fix is a subclass rather than a deletion because the point of the probe
+    is to schedule something an observer will actually accept at runtime as
+    well as at type-check time (issue #125 AC-3).
+    """
+
+
 def real_watch_supported() -> bool:
     """Whether this platform can run a real ``watchdog`` observer at all.
 
@@ -231,7 +246,7 @@ def real_watch_supported() -> bool:
     with tempfile.TemporaryDirectory() as tmp:
         observer = Observer()
         try:
-            observer.schedule(lambda *_a: None, tmp, recursive=True)
+            observer.schedule(NullEventHandler(), tmp, recursive=True)
             observer.start()
         except (OSError, NotImplementedError, RuntimeError):
             return False
@@ -248,6 +263,7 @@ __all__ = [
     "SIGNAL_GUARD",
     "WAIT_UNTIL_TIMEOUT_S",
     "FakeObserver",
+    "NullEventHandler",
     "RecordingWatcher",
     "REAL_WATCH_SUPPORTED",
     "SignalSafetyGuard",
