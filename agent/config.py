@@ -36,6 +36,7 @@ from pydantic_settings import (
 
 from agent.logging_config import VALID_LOG_LEVELS
 from agent.paths import resolve_root
+from agent.process import resolve_shell
 
 #: Process exit codes. Defined here so issue #104's systemd unit inherits one
 #: table instead of inventing a second (issue #93 R10).
@@ -91,6 +92,7 @@ _SOURCE_NAMES: Final[dict[str, str]] = {
     "AGENT_HEARTBEAT_INTERVAL_S": "HEARTBEAT_INTERVAL_S",
     "AGENT_HEARTBEAT_JITTER_S": "HEARTBEAT_JITTER_S",
     "AGENT_STATE_DIR": "AGENT_STATE_DIR",
+    "AGENT_SHELL": "SHELL",
 }
 
 #: Names that mean something in the shared file but cannot be honoured there.
@@ -120,6 +122,15 @@ class AgentSettings(BaseSettings):
     NODE_ID: str
     SYNCTHING_ROOT: Path
     LOG_LEVEL: str = "INFO"
+    # Which shell runs a submitted ``command`` (issue #125 Q1). ``"auto"`` -- the
+    # default -- means the platform default: ``cmd.exe /d /s /c`` on Windows,
+    # ``/bin/sh -c`` everywhere else. ``cmd.exe`` and not PowerShell because a
+    # submitted ``command`` is a *shell command line* and ``%VAR%``/``&&``/
+    # ``> file`` mean what an operator already expects them to mean on Windows.
+    # The value is fleet-wide by design -- it lives in a file that replicates to
+    # every node -- so an unknown one is a startup ``ConfigError`` on all of
+    # them rather than a silent fallback.
+    SHELL: str = "auto"
     SHUTDOWN_GRACE_S: float = 30.0
     FOLDER_WATCH_INTERVAL_S: float = 30.0
     FOLDER_RETRY_MAX_S: float = 60.0
@@ -168,6 +179,24 @@ class AgentSettings(BaseSettings):
                 f"{', '.join(VALID_LOG_LEVELS)}"
             )
         return value.upper()
+
+    @field_validator("SHELL")
+    @classmethod
+    def _check_shell(cls, value: str) -> str:
+        """Refuse a shell the agent cannot run, at start-up, on every node.
+
+        The table lives in ``agent.process`` and this validator only translates
+        its refusal into the shape ``build_settings`` turns into a
+        ``ConfigError``. Validating here rather than at first launch is what
+        makes a fleet-wide typo in ``nodes/agent.toml`` an immediate, loud
+        refusal naming every accepted value, instead of one identical failed
+        job per node (issue #125 AC-7).
+        """
+        try:
+            resolve_shell(value)
+        except ValueError as exc:
+            raise ValueError(str(exc)) from exc
+        return value
 
     @field_validator(
         "SHUTDOWN_GRACE_S",
@@ -245,6 +274,22 @@ def build_parser() -> argparse.ArgumentParser:
             "file. Case-insensitive, like every other layer."
         ),
     )
+    parser.add_argument(
+        "--shell",
+        default=None,
+        help=(
+            "Which shell runs a submitted command. 'auto' (the default) means "
+            "cmd.exe /d /s /c on Windows and /bin/sh -c everywhere else. "
+            "Accepted: auto, sh, dash, bash, cmd, pwsh, powershell, or a path "
+            "whose name is one of them. Only the program is configurable; the "
+            "flags are fixed per shell, because they are the quoting contract. "
+            "A submitted command is a shell command line: the agent assembles "
+            "[shell] + [fixed flags] + [command] and hands it to the operating "
+            "system verbatim, with no shlex.split, no re-quoting, no "
+            "re-escaping and no environment substitution. If it does not work "
+            "when typed at a prompt, it does not work here."
+        ),
+    )
     return parser
 
 
@@ -276,6 +321,8 @@ def _cli_layer(args: argparse.Namespace) -> dict[str, Any]:
         layer["SYNCTHING_ROOT"] = args.syncthing_root
     if args.log_level is not None:
         layer["LOG_LEVEL"] = args.log_level
+    if args.shell is not None:
+        layer["SHELL"] = args.shell
     return layer
 
 
