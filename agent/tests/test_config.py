@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import os
 import re
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
@@ -23,6 +24,7 @@ from agent.config import (
     config_file_path,
 )
 from agent.logging_config import VALID_LOG_LEVELS
+from agent.process import ACCEPTED_SHELLS, resolve_shell
 from backend.services.syncthing_service import SyncthingEventHandler
 
 pytestmark = pytest.mark.unit
@@ -116,6 +118,147 @@ def test_cli_log_level_wins_over_everything(syncthing_root: Path) -> None:
         "ERROR",
     )
     assert settings.LOG_LEVEL == "ERROR"
+
+
+# --- AGENT_SHELL: all three layers, one precedence order (AC-6) -----------
+
+
+def test_the_shell_defaults_to_auto(syncthing_root: Path) -> None:
+    assert build(base_env(syncthing_root)).SHELL == "auto"
+
+
+def test_the_shell_is_read_from_the_shared_config_file(syncthing_root: Path) -> None:
+    write_config(syncthing_root, 'AGENT_SHELL = "bash"\n')
+
+    assert build(base_env(syncthing_root)).SHELL == "bash"
+
+
+def test_the_environment_beats_the_shared_file_for_the_shell(
+    syncthing_root: Path,
+) -> None:
+    write_config(syncthing_root, 'AGENT_SHELL = "bash"\n')
+
+    settings = build({**base_env(syncthing_root), "AGENT_SHELL": "cmd"})
+
+    assert settings.SHELL == "cmd"
+
+
+def test_the_cli_flag_beats_everything_for_the_shell(syncthing_root: Path) -> None:
+    """The four-combination shape ``AGENT_LOG_LEVEL`` already uses, for the new key.
+
+    A setting that appears in only one of the three layers is a setting an
+    operator will try and find does nothing, and the error is silent.
+    """
+    write_config(syncthing_root, 'AGENT_SHELL = "bash"\n')
+    settings = build(
+        {**base_env(syncthing_root), "AGENT_SHELL": "cmd"},
+        "--shell",
+        "sh",
+    )
+
+    assert settings.SHELL == "sh"
+
+
+def test_an_unset_shell_flag_does_not_overwrite_a_lower_layer(
+    syncthing_root: Path,
+) -> None:
+    write_config(syncthing_root, 'AGENT_SHELL = "bash"\n')
+
+    assert build(base_env(syncthing_root), "--log-level", "INFO").SHELL == "bash"
+
+
+def test_an_unsupported_shell_is_refused_with_every_accepted_value(
+    syncthing_root: Path,
+) -> None:
+    """AC-7: the message is what an operator on every node in the fleet reads.
+
+    ``nodes/agent.toml`` replicates, so a typo in it fails everywhere at once
+    and "invalid shell" with no list of what *is* valid is a support ticket
+    rather than a fix.
+    """
+    with pytest.raises(ConfigError) as excinfo:
+        build({**base_env(syncthing_root), "AGENT_SHELL": "zsh"})
+
+    message = str(excinfo.value)
+    for accepted in ACCEPTED_SHELLS:
+        assert accepted in message
+    assert "zsh" in message
+
+
+def test_a_shell_path_is_accepted_because_an_operator_may_name_one(
+    syncthing_root: Path, tmp_path: Path
+) -> None:
+    """No ``choices=`` on the flag: a bare list would reject the useful case.
+
+    Two nodes may legitimately have the same shell in different places, and a
+    deployment may ship its own. The *basename* still decides how the command
+    line is assembled, so the quoting contract is not bypassed by naming a
+    path -- only the location changes.
+    """
+    shell = tmp_path / "sh.exe"
+    shell.write_text("", encoding="utf-8")
+
+    settings = build({**base_env(syncthing_root), "AGENT_SHELL": str(shell)})
+
+    assert settings.SHELL == str(shell)
+    assert resolve_shell(settings.SHELL).flags == ("-c",)
+    assert resolve_shell(settings.SHELL).single_string is False
+
+
+def test_the_shell_table_resolves_each_accepted_value(
+    syncthing_root: Path,
+) -> None:
+    """AC-7's table: program, flags and convention, not "it constructed".
+
+    A test asserting only that construction succeeded would pass with an empty
+    table, which is the failure mode a table test exists to prevent.
+    """
+    expected = {
+        "auto": platform_default(),
+        "sh": (("-c",), False),
+        "dash": (("-c",), False),
+        "bash": (("-c",), False),
+        "cmd": (("/d", "/s", "/c"), True),
+        "pwsh": (("-NoProfile", "-NonInteractive", "-Command"), True),
+        "powershell": (("-NoProfile", "-NonInteractive", "-Command"), True),
+    }
+
+    for configured, (flags, single_string) in expected.items():
+        spec = resolve_shell(configured)
+        assert spec.flags == flags, configured
+        assert spec.single_string is single_string, configured
+
+
+def platform_default() -> tuple[tuple[str, ...], bool]:
+    if sys.platform == "win32":
+        return ("/d", "/s", "/c"), True
+    return ("-c",), False
+
+
+def test_the_agent_process_exit_code_table_gained_no_member() -> None:
+    """AC-8: a job's error vocabulary is not an agent exit status.
+
+    ``agent/config.py``'s table exists so issue #104's systemd unit inherits
+    one set of codes rather than inventing a second. Issue #125 adds a shell
+    setting and a stop vocabulary; neither of them may leak in here, and this
+    is the assertion that says so.
+    """
+    from agent.config import (
+        EXIT_CONFIG_ERROR,
+        EXIT_INTERNAL_ERROR,
+        EXIT_OK,
+        EXIT_SHUTDOWN_GRACE_EXPIRED,
+        EXIT_WATCHER_DEAD,
+    )
+
+    statuses = {
+        EXIT_OK,
+        EXIT_CONFIG_ERROR,
+        EXIT_INTERNAL_ERROR,
+        EXIT_WATCHER_DEAD,
+        EXIT_SHUTDOWN_GRACE_EXPIRED,
+    }
+    assert statuses == {0, 1, 2, 3, 4}
 
 
 def test_unset_optional_flag_is_not_treated_as_a_value(syncthing_root: Path) -> None:

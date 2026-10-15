@@ -230,7 +230,7 @@ Flags: `--node-id` (required, also readable from `$NODE_ID`), `--syncthing-root`
 the whole fleet — the file replicates with the folder. Keys are flat: `AGENT_LOG_LEVEL`,
 `AGENT_SHUTDOWN_GRACE_S`, `AGENT_FOLDER_WATCH_INTERVAL_S`, `AGENT_FOLDER_RETRY_MAX_S`,
 `AGENT_WATCHER_LIVENESS_INTERVAL_S`, `AGENT_HEARTBEAT_INTERVAL_S`, `AGENT_HEARTBEAT_JITTER_S`,
-`AGENT_STATE_DIR`. Unknown keys are rejected loudly.
+`AGENT_STATE_DIR`, `AGENT_SHELL`. Unknown keys are rejected loudly.
 
 Precedence is **CLI flag > environment variable > `nodes/agent.toml` > default**.
 
@@ -264,6 +264,87 @@ separable. Exit codes: `0` clean shutdown, `1` configuration error, `2` unexpect
 > the exit code is the killer's rather than the agent's. `2` means a bug nobody planned for, and
 > `4` means a task ignored the stop event — no shipped task does. Both are exercised by injecting
 > the failure, not by running the agent.
+
+### What shell runs a job
+
+A submitted `command` is a **shell command line**, not a program. `AGENT_SHELL` chooses the shell
+and defaults to `auto`:
+
+| platform | `auto` resolves to |
+|---|---|
+| Windows | `cmd.exe /d /s /c` |
+| Linux, macOS | `/bin/sh -c` |
+
+`cmd.exe` and not PowerShell because a command written for a Windows box already means what the
+operator expects: `%VAR%`, `&&`, `||`, `> file` and `cd /d`. PowerShell would silently redefine
+all of them. Git for Windows' `sh.exe` is **not** the default either — it is only on `PATH` if
+someone installed Git, and it is an MSYS build with different path, quoting and signal
+semantics. It is selectable by name (`AGENT_SHELL = "bash"`) — "not the default" and "not
+supported" are different claims.
+
+Other accepted values: `sh`, `dash`, `bash`, `cmd`, `pwsh`, `powershell`, or a path whose name
+is one of those. Anything else is a startup error listing every accepted value, because
+`agent.toml` replicates and a typo has to fail on all nodes rather than be ignored on all nodes.
+**Only the program is configurable.** The flags are fixed per shell (`/c`, `/d /s /c`,
+`-NoProfile -NonInteractive -Command`) — a configurable flag set is how a quoting contract gets
+broken.
+
+> **Naming `bash` on Windows usually gets you WSL.** `sh`, `bash` and `dash` are resolved with
+> `shutil.which`, and on a stock Windows install the only `bash.exe` on `PATH` is
+> `C:\Windows\System32\bash.EXE` — the **WSL** launcher, not an argv `-c` shell. It will not
+> understand `E:\…` paths, and its output is a second distribution's, not this node's. The agent
+> will launch it, because that is what was asked for; the launch log line names the program it
+> resolved, so `shell=C:\Windows\system32\bash.EXE` is the thing to look for. If you want a real
+> POSIX shell on a Windows node, point `AGENT_SHELL` at Git's `sh.exe` by **path**:
+> `AGENT_SHELL = "C:\\Program Files\\Git\\bin\\sh.exe"`.
+
+> **The quoting contract.** The agent assembles `[shell program] + [fixed flags] + [command]` and
+> hands it to the operating system **verbatim**. It performs no `shlex.split`, no re-quoting,
+> no re-escaping and no environment substitution. The configured shell then parses the `command`
+> exactly as it would if you had typed it at a prompt.
+> **If it does not work when typed at a prompt, it does not work here.**
+
+**On Windows the command line is assembled as one string, not as an argv list.** `CreateProcess`
+takes a single command line, and Python composes it from a list with `list2cmdline`, which
+implements the MSVCRT/`CommandLineToArgvW` quoting rules that `cmd.exe` does not use. Every
+`command` that quotes anything would fail. Git-bash's `sh.exe` still gets the list form even on
+Windows, because it is a real argv program — the distinction is the shell's parser, not the
+platform.
+
+**Stopping a job kills its whole tree**, on both platforms, in two tiers: a polite request, then
+a forced one, then a **verification** that the tree is actually gone. On POSIX that is a process
+group (`SIGTERM`, then `SIGKILL`). On Windows it is a process group *and* a Job Object armed with
+`KILL_ON_JOB_CLOSE` (`CTRL_BREAK_EVENT`, then `TerminateJobObject` plus an independent
+`taskkill /T /F` sweep). A cooperative stop is defeatable on both platforms, so the forced tier is
+not optional. A job stopped by the agent is recorded `FAILED` with a reason; an operator who
+wants it to run again must `POST /jobs/{id}/retry`.
+
+**Job `error` codes** (the vocabulary #100 introduced; `exit_code` always carries the **real**
+wait status, never a sentinel):
+
+| `error` | `exit_code` | whose fault |
+|---|---|---|
+| `launch_failed:working_dir_not_found` | 1 | submitter |
+| `launch_failed:working_dir_create_failed: …` | 1 | host |
+| `launch_failed:input_missing` | 1 | submitter |
+| `launch_failed:insufficient_gpus` | 1 | scheduling |
+| `launch_failed:shell_not_found` | 127 | **the agent** — no shell on this machine, logged at ERROR with the PATH searched |
+| `launch_failed:command_not_found` | 127 | submitter — only a POSIX shell reports 127, so this is POSIX-only; logged at INFO |
+| `process_failed:exit_code=<N>` | `N` | submitter |
+| `stopped:shutdown` | the real wait status | the agent |
+| `stop_failed:tree_survived` | the real wait status | the agent — the forced stop ran and verification timed out |
+
+These are **not** the agent's own exit codes below. A job's error vocabulary and an agent process
+exit status are two different tables, and merging them is how a second one gets invented.
+
+**`working_dir` resolution.** An absolute path on the host is used as-is — created if it is
+inside the Syncthing root, required to exist otherwise. Anything else resolves against
+`SYNCTHING_ROOT`, **never** against the current working directory.
+
+**`resources.cpus` is advisory.** It is pinned with `sched_setaffinity` on Linux and logged at
+INFO as advisory everywhere else; there is no portable pinning primitive. `memory_gb` and
+`vram_gb` are not enforced at all. `gpus` **is** enforced — the claim is refused if the node
+cannot fit.
 
 ### CLI Usage
 ```bash

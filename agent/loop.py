@@ -74,6 +74,13 @@ class Agent:
         self._current_job_id: Optional[str] = None
         # Execution task for the current job (issue #98)
         self._execution_task: Optional[asyncio.Task] = None
+        # The stop handle for that job. Separate from ``self._stop`` on purpose:
+        # ``self._stop`` means "shut the agent down" and is consumed by the
+        # supervisor and by ``run``; this one means "stop this job", and it is
+        # the only thing ``execute_job`` polls. Until issue #125 the executor's
+        # event was a local in ``_spawn_execution_task`` that nothing could set,
+        # so the stop path was unreachable on every platform (issue #125 §2).
+        self._job_stop: Optional[asyncio.Event] = None
 
     @property
     def paths(self) -> AgentPaths:
@@ -497,6 +504,12 @@ class Agent:
 
         The task runs concurrently with heartbeat, log shipping, and event drain.
         On completion, it clears _current_job_id and updates the node spec.
+
+        The stop a job gets is sized from ``SHUTDOWN_GRACE_S`` rather than from
+        a constant: the grace is validated only as "greater than zero", so a
+        stop bounded by the module constants can overrun a small configured
+        grace several times over (issue #125 N4). The agent passes its own
+        budget down and the executor derives the two waits from it.
         """
         from shared.file_ops.yaml_utils import read_yaml
         from shared.schemas.job_state import JobState
@@ -505,7 +518,8 @@ class Agent:
         job_state = read_yaml(str(state_file), JobState)
         job_spec = job_state.spec
 
-        stop_event = asyncio.Event()
+        # An attribute, not a local: this is the handle a stop acts on.
+        self._job_stop = asyncio.Event()
 
         async def execution_wrapper():
             try:
@@ -515,7 +529,9 @@ class Agent:
                     node_spec=node_spec,
                     paths=self._paths,
                     syncthing_root=self._paths.root,
-                    stop_event=stop_event,
+                    stop_event=self._job_stop,
+                    shell=self._settings.SHELL,
+                    shutdown_grace_s=self._settings.SHUTDOWN_GRACE_S,
                     watcher=self._watcher,
                 )
             except Exception as e:
@@ -523,6 +539,11 @@ class Agent:
             finally:
                 # Clear current job ID and update node spec
                 self._current_job_id = None
+                # Cleared, not merely left set: a finished job must not leave a
+                # set stop handle behind for the next one. A stopped-then-
+                # reused handle is the same "two jobs share one state" class of
+                # bug as the fixed `/sync/projects/new-run` default (issue #125).
+                self._job_stop = None
                 try:
                     updated_node_spec = collect_node_spec(self._settings.NODE_ID)
                     updated_node_spec.current_job_id = None
@@ -546,10 +567,16 @@ class Agent:
         """
         if self._current_job_id is not None:
             logger.info("handing back in-flight job %s", self._current_job_id)
-            # Signal the execution task to stop
+            # Signal the execution task to stop. The belt to the braces that
+            # `_shutdown_sequence` wears: the shutdown sets the job's stop
+            # event before it waits on the supervisor, so the tree is already
+            # dying, and this setter covers the case where the execution task
+            # was created in between those two points. Before issue #125 this
+            # branch was a `pass` whose comment described a wiring that did not
+            # exist.
             if self._execution_task is not None and not self._execution_task.done():
-                # The execution task checks the agent's stop event
-                pass
+                if self._job_stop is not None:
+                    self._job_stop.set()
             self._current_job_id = None
             # Update node spec to clear current_job_id
             node_spec = collect_node_spec(self._settings.NODE_ID)
@@ -599,9 +626,25 @@ class Agent:
         logger.info("shutdown: signalling %d task(s)", len(supervisor.task_names))
         stop.set()
 
+        # One deadline, spent once. Before issue #125 the grace was handed to
+        # `supervisor.shutdown` and then handed *again* to the execution-task
+        # wait, so `SHUTDOWN_GRACE_S = 30` meant up to 60 seconds and the
+        # documented number was not a bound on anything.
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + self._settings.SHUTDOWN_GRACE_S
         grace = self._settings.SHUTDOWN_GRACE_S
+
+        def remaining() -> float:
+            return max(0.0, deadline - loop.time())
+
+        # The job's stop goes out *before* the supervisor winds down, so the
+        # process tree is already dying while the periodic tasks finish. The
+        # reverse order spends the grace on the wrong thing first.
+        if self._job_stop is not None:
+            self._job_stop.set()
+
         logger.info("shutdown: awaiting in-flight tasks (grace=%.1fs)", grace)
-        failures = await supervisor.shutdown(grace)
+        failures = await supervisor.shutdown(remaining())
         if failures:
             logger.warning(
                 "shutdown: %d task failure(s) were recorded during the run",
@@ -612,8 +655,8 @@ class Agent:
         if self._execution_task is not None and not self._execution_task.done():
             logger.info("waiting for execution task to complete")
             try:
-                await asyncio.wait_for(self._execution_task, timeout=grace)
-            except asyncio.TimeoutError:
+                await asyncio.wait_for(self._execution_task, timeout=remaining())
+            except (asyncio.TimeoutError, TimeoutError):
                 logger.warning("execution task did not complete within grace period")
 
         await self._hand_back_in_flight_job()

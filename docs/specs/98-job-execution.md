@@ -227,6 +227,13 @@ GPU allocation: the agent claims a job only if `node_spec.gpus` has enough devic
 
 ### Process group and signal handling
 
+> **Superseded by [`docs/specs/125-windows-job-execution.md`](125-windows-job-execution.md).**
+> This subsection is the historical record of what #98 decided. The code no longer looks like
+> this: the shell is `AGENT_SHELL` rather than `/bin/sh`, the platform half lives in
+> `agent/process.py`, and the Windows implementation is a Job Object plus a `taskkill /T /F`
+> sweep rather than a process group. Read §4 Q1 and Q2 of #125 for what runs and what is
+> signalled today.
+
 ```python
 proc = await asyncio.create_subprocess_shell(
     command,
@@ -244,6 +251,13 @@ proc = await asyncio.create_subprocess_shell(
 - This satisfies AC-4: a test kills the launcher with a multi-process child still running and asserts the entire tree terminates.
 
 ### Error vocabulary (agent-side launch failures)
+
+> **Extended and partially corrected by
+> [`docs/specs/125-windows-job-execution.md`](125-windows-job-execution.md).** The table below
+> is #98's; §4 Q5 of #125 is the vocabulary as shipped. It adds
+> `launch_failed:shell_not_found`, `stopped:shutdown` and `stop_failed:tree_survived`, and it
+> narrows `launch_failed:command_not_found` to POSIX -- `cmd.exe` and `pwsh` return 1 for a
+> missing program, with a localized message, so there is nothing portable to match on.
 
 These are written to `state.yaml` as `error` when the agent cannot launch the process at all:
 

@@ -65,6 +65,13 @@ The agent executes once. On any terminal outcome, it writes terminal state and s
 
 ### Q3 — What should `error` contain?
 
+> **Extended by [`docs/specs/125-windows-job-execution.md`](125-windows-job-execution.md).** The
+> table below is the vocabulary as designed here. §4 Q5 of #125 is it as shipped: three codes
+> added (`launch_failed:shell_not_found`, `stopped:shutdown`, `stop_failed:tree_survived`),
+> `launch_failed:command_not_found` narrowed to POSIX, and `exit_code` documented as always the
+> **real** wait status and never a sentinel -- which widens
+> `agent/terminal.py`'s parameter to `int | None` for a stop that arrives before the launch.
+
 **Decision: A documented vocabulary of machine-readable codes distinguishing launch failure from process failure.**
 
 | Code Pattern | Meaning | Written By |

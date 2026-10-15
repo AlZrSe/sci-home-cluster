@@ -3,6 +3,13 @@ Terminal state writing for the worker agent.
 
 This module handles writing the final job state (COMPLETED/FAILED/CANCELLED)
 to the state.yaml file when a job finishes execution.
+
+``exit_code`` is ``int | None`` and not ``int``. The ``None`` is not a
+sentinel: it means the job never had a process -- a stop that arrived before
+the launch -- and there is no wait status to report. Forcing a number there
+would mean inventing a code the backend has no meaning for, when ``-1``
+already means "cancelled" and ``0xC000013A`` already means what Windows
+returns for a process killed by ``CTRL_BREAK_EVENT`` (issue #125 Q5, D8).
 """
 
 import logging
@@ -23,7 +30,7 @@ async def write_terminal_state(
     paths: AgentPaths,
     job_id: str,
     status: JobStatus,
-    exit_code: int,
+    exit_code: int | None,
     error: str | None,
     watcher: FolderWatcher | None = None,
 ) -> None:
@@ -36,7 +43,7 @@ async def write_terminal_state(
         paths: Resolved agent paths.
         job_id: The job identifier.
         status: Terminal status (COMPLETED, FAILED, or CANCELLED).
-        exit_code: Process exit code.
+        exit_code: Process exit code, or ``None`` when no process ran.
         error: Machine-readable error code from the documented vocabulary,
                or None for successful completion.
         watcher: Optional FolderWatcher to record the write and suppress
@@ -68,7 +75,7 @@ async def write_terminal_state(
         watcher.ledger.record(state_file)
 
     logger.info(
-        "wrote terminal state for %s: status=%s exit_code=%d error=%s",
+        "wrote terminal state for %s: status=%s exit_code=%s error=%s",
         job_id,
         status.value,
         exit_code,

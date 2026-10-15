@@ -26,6 +26,7 @@ SHIPPED_MODULES = [
     "log_writer",
     "loop",
     "paths",
+    "process",
     "run_agent",
     "supervisor",
     "terminal",
