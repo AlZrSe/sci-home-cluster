@@ -731,6 +731,109 @@ def install_broken_snapshot(monkeypatch: pytest.MonkeyPatch) -> BrokenSnapshot:
     return kernel32
 
 
+# --- the platform-dependent initial state is load-bearing (F4, F5) --------
+
+
+def test_the_enumeration_starts_unknown_on_windows_and_empty_on_posix() -> None:
+    """F4: the single most load-bearing line in the module, pinned on both sides.
+
+    ``self._tracked: set[int] | None = set() if sys.platform != "win32" else None``
+    is one line and it decides whether **every** job on a host reports cleanly
+    or **every** job on a host reports a survivor:
+
+    * POSIX starts at ``None`` -> ``_outstanding()`` returns ``None`` on every
+      POSIX stop -> ``verify()`` is ``False`` forever -> ``stop_failed:
+      tree_survived`` written for every job that ever stopped, forever.
+    * Windows starts at ``set()`` -> the same, in the other direction, because
+      a tree nobody has enumerated would be called clean.
+
+    Which of the two is right is a platform question, so this asserts the
+    platform's own answer and runs on both -- a POSIX host checks the branch QA
+    could not reach, and this host checks the branch that is actually live.
+    """
+    proc = a_finished_process()
+    proc.wait(timeout=30)
+    tree = ProcessTree(proc, log=lambda *_a: None)
+    try:
+        if sys.platform == "win32":
+            assert tree._tracked is None, (
+                "a Windows tree must start as 'not yet enumerated', because a "
+                "tree nobody has enumerated is unknown and not clean (N1)"
+            )
+        else:
+            assert tree._tracked == set(), (
+                "a POSIX tree must start as an empty enumeration, or every job "
+                "on this host is written stop_failed:tree_survived forever"
+            )
+    finally:
+        tree.close()
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="asserts the POSIX contract")
+def test_on_posix_a_never_enumerated_tree_is_empty_rather_than_unknown() -> None:
+    """F4: the POSIX half of the contract, on a platform that can run it.
+
+    QA could not verify this from Windows, which is the only host this issue
+    has been developed on, and the branch is the one whose failure mode is
+    fleet-wide rather than per-stop. So the assertion is written for the host
+    that owns it, names the reason it cannot be exercised here, and fails
+    rather than skips silently if the initial state and this expectation ever
+    stop agreeing.
+
+    POSIX has no enumeration at all -- ``killpg`` addresses the whole group by
+    pgid and keeps working after the leader is reaped -- so its initial
+    ``set()`` is not "we looked and found nothing". It is "there is nothing to
+    look for", and ``_outstanding`` must read it that way.
+    """
+    proc = a_finished_process()
+    proc.wait(timeout=30)
+    tree = ProcessTree(proc, log=lambda *_a: None)
+    try:
+        # No tier has run, so nothing has been enumerated: _tracked is still its
+        # initial value, which on POSIX is the empty set rather than None.
+        assert tree._tracked == set()
+        assert tree._outstanding() == [], (
+            "POSIX must answer 'nothing outstanding' for a tree it never had to "
+            "enumerate; None here becomes stop_failed:tree_survived on every "
+            "job this host ever stops"
+        )
+    finally:
+        tree.close()
+
+
+def test_the_non_windows_probe_branch_answers_empty_and_says_why(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """F5: an unreachable guard should have a harmless answer, and say so.
+
+    ``_live_processes()`` is behind a Windows guard and cannot be reached from
+    POSIX -- but the two candidate answers for "reached anyway" are not
+    equivalent. ``None`` propagates to ``_outstanding`` and writes
+    ``stop_failed:tree_survived`` for every job on a POSIX host that ever got
+    there; ``{}`` cannot. So the branch answers ``{}``, and the DEBUG line is
+    there so a future reader can tell the branch was deliberate rather than
+    overlooked.
+    """
+    with caplog.at_level("DEBUG", logger="agent.process"):
+        result = process_module._live_processes()
+
+    if sys.platform != "win32":
+        assert result == {}, (
+            "the non-Windows branch must answer with an empty dict: None here is "
+            "the destructive answer (F5)"
+        )
+        assert any("no such primitive" in r.getMessage() for r in caplog.records), (
+            "the guard held and nothing said so, so the next reader cannot tell "
+            f"deliberate from overlooked: "
+            f"{[r.getMessage() for r in caplog.records]}"
+        )
+    else:
+        assert result, "on Windows the probe must enumerate the host"
+        assert not any(
+            "no such primitive" in r.getMessage() for r in caplog.records
+        ), "the non-Windows branch was taken on Windows"
+
+
 @pytest.mark.skipif(sys.platform != "win32", reason=NO_JOB_OBJECTS)
 def test_a_failed_snapshot_is_unknown_not_an_empty_host(
     monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture

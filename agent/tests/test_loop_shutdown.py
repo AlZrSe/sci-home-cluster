@@ -22,6 +22,7 @@ AC-13's remaining half -- a delivered ``SIGTERM`` through ``Agent.run`` -- is
 from __future__ import annotations
 
 import asyncio
+import shutil
 import time
 from pathlib import Path
 from typing import Any, Callable
@@ -30,6 +31,7 @@ import psutil
 import pytest
 
 from agent.config import build_settings
+from agent.executor import stop_budget
 from agent.loop import Agent
 from agent.paths import resolve_paths
 from agent.tests.conftest import (
@@ -73,17 +75,36 @@ async def drive_a_shutdown(
     *,
     shutdown_grace_s: float,
     refuse_polite: bool = False,
+    degraded: bool = False,
 ) -> tuple[int, float, list[int], str]:
     """Claim a job, run the agent, stop it, and report what the stop cost.
 
-    The four things N4 needs from one drive: the agent's exit code, the wall
-    clock of the shutdown, the pids of the tree, and the node file afterwards.
-    Returned rather than asserted so a test can choose what it is claiming.
+    The four things N4 and F1 need from one drive: the agent's exit code, the
+    wall clock of the shutdown, the pids of the tree, and the node file
+    afterwards. Returned rather than asserted so a test can choose what it is
+    claiming.
+
+    ``degraded`` takes away the two mechanisms that *can* reach a surviving
+    rank -- the job object and ``taskkill /T`` -- so the forced tier can only
+    kill the launcher and something is left holding the pipes. That is the
+    configuration issue #125 AC-12 describes, and it is the only way to reach
+    the path F1 is about; ``test_execution.py`` covers the same stop through
+    ``execute_job`` directly.
     """
     root = tmp_path / "syncthing"
     (root / "jobs" / "job-1").mkdir(parents=True)
     (root / "nodes").mkdir(parents=True)
     monkeypatch.setenv("SYNCTHING_ROOT", str(root))
+
+    if degraded:
+        # Only taskkill goes: `shutil.which` is also how the shell is resolved,
+        # and taking the whole function would mean no job ever launches.
+        real_which = shutil.which
+        monkeypatch.setattr(
+            "agent.process.shutil.which",
+            lambda name: None if name == "taskkill.exe" else real_which(name),
+        )
+        monkeypatch.setattr("agent.process._open_job_object", lambda _log: None)
 
     tree = tree_script(refuse_polite=refuse_polite)
     _claim(root, tree.command)
@@ -186,6 +207,57 @@ async def test_a_shutdown_whose_tree_refuses_still_fits_the_configured_grace(
         f"{elapsed:.2f}s (issue #125 N4)"
     )
     assert recorded
+
+
+@pytest.mark.parametrize("shutdown_grace_s", [0.5, 1.0, 5.0])
+async def test_a_shutdown_that_leaves_a_survivor_still_fits_the_configured_grace(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    tree_script: Callable[..., Tree],
+    shutdown_grace_s: float,
+) -> None:
+    """F1, at the level QA measured it: the path where a tree *survives*.
+
+    Neither test above can see F1. A tree that stops closes its pipes, so the
+    reader threads get EOF and both joins return in microseconds -- a join
+    timeout is invisible on that path. Here the forced tier cannot reach the
+    refusing rank (no job object, no ``taskkill``, the AC-12 configuration), so
+    something is left holding the write end of both pipes: ``readline`` never
+    returns, and each join runs to its full allowance every time.
+
+    Measured before the fix, same path, real ``Agent.run``::
+
+        grace=0.5   budget=0.250s   4.250s   (8.5x)
+        grace=1.0   budget=0.500s   4.391s   (4.4x)
+        grace=5.0   budget=2.500s   5.718s   (1.1x)
+
+    and after: 0.297s / 0.468s / 2.063s -- inside at every value, and each one
+    close to the budget rather than to a floor, which is what "the stop spent
+    its allowance" looks like as opposed to "the stop gave up immediately".
+
+    The survivor here is *expected* and is cleaned up by the harness. What is
+    under test is the clock: a surviving tree is already reported as
+    ``stop_failed:tree_survived`` and cannot be reported clean, so the join can
+    only cost time, and time is the contract.
+    """
+    exit_code, elapsed, recorded, _node_file = await drive_a_shutdown(
+        tmp_path,
+        monkeypatch,
+        tree_script,
+        shutdown_grace_s=shutdown_grace_s,
+        refuse_polite=True,
+        degraded=True,
+    )
+
+    grace, verify, join = stop_budget(shutdown_grace_s)
+    budget = grace + 2 * verify + 2 * join
+    assert exit_code == 0
+    assert recorded, "the tree never started, so nothing was measured"
+    assert elapsed <= shutdown_grace_s + 0.5, (
+        f"a surviving tree overran a {shutdown_grace_s}s configured grace: "
+        f"{elapsed:.2f}s against a {budget:.3f}s budget, of which the two reader "
+        f"joins alone were {2 * join:.3f}s (issue #125 F1)"
+    )
 
 
 async def test_a_shutdown_with_a_job_in_flight_stops_the_tree_and_writes_the_state(
