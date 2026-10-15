@@ -20,6 +20,7 @@ from __future__ import annotations
 import ast
 import asyncio
 import logging
+import re
 import os
 import subprocess
 import sys
@@ -35,8 +36,12 @@ import pytest
 
 from agent import executor as executor_module
 from agent.executor import (
+    DOCUMENTED_STOP_S,
     JOB_ERRORS,
+    READER_JOIN_S,
     STOP_GRACE_S,
+    STOP_GRACE_SHARE,
+    STOP_VERIFY_POLL_S,
     STOP_VERIFY_TIMEOUT_S,
     ExecutionResult,
     execute_job,
@@ -1005,37 +1010,158 @@ def test_the_vocabulary_and_the_exit_status_table_are_two_different_tables() -> 
 def test_a_stop_never_claims_more_than_half_the_configured_shutdown_grace(
     shutdown_grace_s: float,
 ) -> None:
-    """N4: AC-15's promise, checked against every grace an operator can set.
+    """F1/N4: AC-15's promise, checked against every grace an operator can set.
 
     ``AGENT_SHUTDOWN_GRACE_S`` is validated only as "greater than zero", so
     "the stop fits inside the shutdown grace" has to hold for *any* legal
-    value, not only the default. Before this, a grace of 1.0 bought a 5.03 s
-    shutdown: the execution task's own 5 s grace was spent inside
-    ``_stop_tree`` before ``wait_for`` around the task could cancel it.
+    value, not only the default. Two rounds of this have failed: a grace of
+    1.0 bought a 5.03 s shutdown (N4), and then a fixed 2 s + 2 s pair of
+    reader-thread joins, outside the budget entirely, put a 4.4 s floor on the
+    one path where the tree survives (F1).
+
+    So the count of waits is what matters: a graceful grace, a verification per
+    tier, and a join allowance per reader thread. All five are inside, or the
+    arithmetic is not a bound.
     """
-    grace, verify = stop_budget(shutdown_grace_s)
+    grace, verify, join = stop_budget(shutdown_grace_s)
+    worst_case = grace + 2 * verify + 2 * join
 
     assert grace > 0, "a stop that cannot wait is not a stop"
     assert verify > 0
-    assert grace + 2 * verify <= shutdown_grace_s + 1e-9, (
-        f"a stop may claim at most half of {shutdown_grace_s}s, and the worst "
-        f"case is grace + 2 verifies = {grace + 2 * verify:.3f}s"
+    assert join > 0
+    assert worst_case <= STOP_GRACE_SHARE * shutdown_grace_s + 1e-9, (
+        f"a stop may claim at most {STOP_GRACE_SHARE:.2f} of {shutdown_grace_s}s, "
+        f"and the worst case is grace + 2 verifies + 2 joins = {worst_case:.3f}s"
     )
 
 
-def test_the_documented_default_is_exactly_what_the_constants_describe() -> None:
-    """N4: deriving the budget must not quietly change the shipped default.
+def test_a_budget_smaller_than_one_poll_is_floored_at_one_poll() -> None:
+    """F7: arithmetic that small is worse than no answer at all.
 
-    30 s configured, and ``STOP_GRACE_S``/``STOP_VERIFY_TIMEOUT_S`` are already
-    the numbers that fit inside it. If a future edit changes one of them, this
+    ``stop_budget(1e-9)`` is arithmetically positive and useless -- a grace or a
+    verification shorter than one poll cannot make progress, so every such stop
+    degenerates to "forced, and unconfirmed", which is a *worse* report than a
+    stop that was allowed to try.
+
+    The floor makes the bound honest rather than unconditional, and the price is
+    named rather than hidden: below the documented crossover the stop may take
+    more than its share. A 10 ms grace is not a budget an agent can honour;
+    pretending otherwise would only hide it.
+    """
+    for absurd in (1e-9, 1e-6, 0.01, 0.1):
+        grace, verify, join = stop_budget(absurd)
+        assert grace == verify == join == STOP_VERIFY_POLL_S, (
+            f"at a {absurd}s grace nothing can make progress, so every wait "
+            f"should be one poll; got {(grace, verify, join)}"
+        )
+
+
+def test_the_floor_only_binds_below_the_documented_crossover() -> None:
+    """F7: the floor is a floor, not the answer.
+
+    The crossover is computed from the constants rather than written down, so a
+    change to any of them moves it rather than quietly falsifying a literal.
+    Above it the derivation owns every wait; below it the floor does, and the
+    two tests either side of this one say so.
+    """
+    crossover = (
+        STOP_VERIFY_POLL_S * DOCUMENTED_STOP_S / (STOP_GRACE_SHARE * READER_JOIN_S)
+    )
+    assert 0.25 < crossover < 0.5, (
+        f"the crossover moved to {crossover:.3f}s; #93's lifecycle tests use "
+        "0.05s and 0.2s and the shipped default is 30s, so this number is a "
+        "statement about where the arithmetic stops being meaningful, and the "
+        "bound is here to say when it moves"
+    )
+    for legal in (crossover * 1.01, 0.5, 1.0, 5.0, 30.0):
+        grace, verify, join = stop_budget(legal)
+        assert min(grace, verify, join) > STOP_VERIFY_POLL_S, (
+            f"the floor is binding at {legal:.3f}s, above the {crossover:.3f}s "
+            "crossover, where the derivation should own the answer"
+        )
+    for below in (crossover * 0.99, 0.2, 0.1, 0.05):
+        grace, verify, join = stop_budget(below)
+        assert min(grace, verify, join) == STOP_VERIFY_POLL_S, (
+            f"the floor should own a {below:.3f}s grace; got "
+            f"{(grace, verify, join)}"
+        )
+
+
+def test_the_documented_default_is_exactly_what_the_constants_describe() -> None:
+    """N4/F1: deriving the budget must not quietly change the shipped default.
+
+    30 s configured, and the three constants -- ``STOP_GRACE_S``,
+    ``STOP_VERIFY_TIMEOUT_S`` and ``READER_JOIN_S`` -- are already the numbers
+    that fit inside it (19 s of 30). If a future edit changes one of them, this
     says whether the documented behaviour moved or the derivation did.
     """
-    assert stop_budget(30.0) == (STOP_GRACE_S, STOP_VERIFY_TIMEOUT_S)
+    assert stop_budget(30.0) == (
+        STOP_GRACE_S,
+        STOP_VERIFY_TIMEOUT_S,
+        READER_JOIN_S,
+    )
 
 
 def test_no_agent_around_the_job_means_the_documented_constants() -> None:
     """``None`` is the "direct caller" case, and keeps the old behaviour."""
-    assert stop_budget(None) == (STOP_GRACE_S, STOP_VERIFY_TIMEOUT_S)
+    assert stop_budget(None) == (
+        STOP_GRACE_S,
+        STOP_VERIFY_TIMEOUT_S,
+        READER_JOIN_S,
+    )
+
+
+async def test_the_reader_joins_use_the_derived_allowance_not_a_fixed_one(
+    harness: Harness,
+    tree_script: Callable[..., Tree],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """F1, pinned on the argument rather than on a clock.
+
+    The wall-clock form of this needs a *surviving* rank to hold the pipes open,
+    which needs the AC-12 degraded configuration and a real ``Agent.run`` --
+    ``test_loop_shutdown.py`` does that, because it has to. Here the question is
+    narrower and exactly answerable: **what timeout is passed to
+    ``Thread.join``?** It used to be a literal ``2.0``, twice, outside the
+    budget, which is the whole of F1.
+
+    So the join timeouts are recorded and compared against the budget. No
+    timing, no surviving process, no flakiness -- and it cannot pass against the
+    old code, which passed ``2.0``.
+    """
+    seen: list[float | None] = []
+    real_join = threading.Thread.join
+
+    def recording_join(self: threading.Thread, timeout: float | None = None) -> None:
+        seen.append(timeout)
+        real_join(self, timeout=timeout)
+
+    monkeypatch.setattr(threading.Thread, "join", recording_join)
+    monkeypatch.setattr(executor_module, "READER_JOIN_S", 2.0)
+
+    tree = tree_script()
+    spec = harness.spec(tree.command)
+    harness.claim(spec)
+    stop_event = asyncio.Event()
+    task = asyncio.create_task(run_job(harness, spec, stop_event, shutdown_grace_s=1.0))
+    recorded = await wait_for_tree(tree)
+    stop_event.set()
+    await task
+
+    try:
+        assert len(seen) == 2, f"expected one join per reader thread, got {seen}"
+        expected = stop_budget(1.0)[2]
+        assert seen == [expected, expected], (
+            f"the joins were given {seen}, not the derived allowance "
+            f"{expected:.4f}s -- a fixed timeout outside the budget is the "
+            "defect (issue #125 F1)"
+        )
+        assert 2.0 not in seen, (
+            "the join allowance is the module constant, so the budget is not "
+            "being applied to it at all"
+        )
+    finally:
+        kill_anything_left_alive(recorded)
 
 
 async def test_a_job_stop_fits_the_budget_it_was_given(
@@ -1244,6 +1370,124 @@ def _race_waiters(timeout: float | None) -> list[int]:
 
 
 # --- AC-19: the documentation the record requires --------------------------
+
+
+def _spec_text() -> str:
+    return (REPO_ROOT / "docs" / "specs" / "125-windows-job-execution.md").read_text(
+        encoding="utf-8"
+    )
+
+
+def _corrections_index(text: str) -> dict[str, str]:
+    """``{id: what it now says}`` from §12.9's table, and only from there."""
+    table = text.split("### 12.9 Corrections index", 1)[-1]
+    found: dict[str, str] = {}
+    for line in table.splitlines():
+        cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
+        if len(cells) >= 2 and re.fullmatch(r"C\d+", cells[0]):
+            found[cells[0]] = cells[-1]
+    return found
+
+
+def test_the_header_cannot_disagree_with_the_corrections_index() -> None:
+    """F3: the record must not contradict itself about its own retractions.
+
+    This header is the first thing a reader sees, and it used to carry two
+    things §12 had already fixed: an amendments table stopping at C6 while the
+    index held C10, and the permanent-breakaway claim that §12.1 had withdrawn
+    by name. Both were hand-maintained, which is the actual defect — a summary
+    of a summary is wrong the moment either moves.
+
+    So the header no longer restates the index. It points at it, states a
+    count, and this test reads §12.9 and fails if the count drifts. Markdown
+    cannot literally derive one block from another; a test that compares them
+    is the nearest honest equivalent, and it is closer than a hand-kept table
+    because it cannot rot silently.
+    """
+    text = _spec_text()
+    index = _corrections_index(text)
+    header = text.split("## 0. Baseline", 1)[0]
+
+    assert len(index) >= 12, (
+        f"§12.9 indexes only {sorted(index)}; the index is the single source the "
+        "header points at, so it is the block that must not be abbreviated"
+    )
+    assert f"{len(index)} corrections" in header, (
+        f"the header must state the index's size ({len(index)} corrections) so it "
+        "cannot drift; it does not"
+    )
+    # No hand-kept amendments table: the header may refer to the index's ids in
+    # prose, never restate them as its own rows.
+    assert "| C1 |" not in header, (
+        "the header keeps its own amendments table again; it is a hand-maintained "
+        "copy of §12.9 and has already been wrong twice"
+    )
+    # A range the index's own bounds must match, so "C1 through C6" fails the
+    # moment §12.9 grows. Spelling out all twelve ids in the header would be the
+    # hand-maintained copy this test exists to prevent.
+    numbers = sorted(int(key[1:]) for key in index)
+    span = re.search(r"C(\d+)\s*(?:through|to|–|-)\s*C(\d+)", header)
+    assert span is not None, (
+        "the header must name the index's bounds as a range (C1 through C<N>), so "
+        "it is derived rather than restated"
+    )
+    assert (int(span.group(1)), int(span.group(2))) == (numbers[0], numbers[-1]), (
+        f"the header says C{span.group(1)} through C{span.group(2)}, and §12.9 "
+        f"indexes C{numbers[0]} through C{numbers[-1]}"
+    )
+    # And the withdrawn claim must not be *asserted* up there. Mentioning it in
+    # order to retract it is the point, so the rule is per-paragraph: a block
+    # carrying a retracted phrase has to carry a withdrawal in the same block.
+    # (Per-line would be wrong — the claim is quoted across three lines.)
+    retraction_markers = ("withdrawn", "withdrew", "does not reproduce", "retracted")
+    retracted = (
+        "fails on the very host",
+        "CREATE_BREAKAWAY_FROM_JOB",
+        "one run in ten",
+    )
+    paragraphs = re.split(r"\n\s*\n", header)
+    offenders = [
+        block.strip().replace("\n", " ")
+        for block in paragraphs
+        if any(phrase in block for phrase in retracted)
+        and not any(marker in block for marker in retraction_markers)
+    ]
+    assert offenders == [], (
+        "the header states a claim §12.1 withdrew without retracting it in the "
+        "same paragraph, so a reader who stops at the top of the file gets the "
+        f"withdrawn version: {offenders} (issue #125 F3)"
+    )
+    assert any(any(phrase in block for phrase in retracted) for block in paragraphs), (
+        "the header no longer mentions the withdrawn claim at all; a retraction "
+        "a reader cannot find from the top of the file is not a retraction"
+    )
+
+
+def test_the_spec_attributes_the_probe_cost_to_something_real() -> None:
+    """F2: a number in the spec of record must name a cause that reproduces.
+
+    §12.6 attributed ~560 ms of verification to `WinDLL` re-resolution. The
+    560 ms reproduces — QA measured 563 ms after the cache was in place, which
+    is how the attribution was falsified — but the DLL load is ~8% of a probe.
+    The cost is the kernel snapshot and the walk over the host's processes.
+
+    Pinned by requiring the attribution to be stated next to a measurement of
+    it. If someone re-derives a cost claim later, this is the test that makes
+    them put the split next to it.
+    """
+    section = _spec_text().split("### 12.6 ", 1)[-1].split("### 12.7 ", 1)[0]
+
+    assert (
+        "CreateToolhelp32Snapshot" in section
+    ), "§12.6 must name what actually costs: the kernel snapshot and the walk"
+    assert "per probe" in section, "§12.6 must quote a per-probe cost, not a total"
+    assert (
+        "2.296" in section or "2.8" in section
+    ), "§12.6 must carry a measured per-probe figure"
+    assert "8%" in section, (
+        "§12.6 must say how much the cache is actually worth, which is the part "
+        "the wrong attribution overstated"
+    )
 
 
 def test_the_superseded_specs_point_at_this_one() -> None:
