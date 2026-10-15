@@ -14,6 +14,7 @@ import ast
 import asyncio
 import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import Any, Callable, cast
 
@@ -39,6 +40,7 @@ from agent.process import (
     resolve_shell,
     shell_argv,
 )
+import agent.process as process_module
 from agent.tests.conftest import (
     REPO_ROOT,
     Tree,
@@ -438,24 +440,42 @@ def test_the_worst_case_stop_fits_inside_the_default_shutdown_grace() -> None:
 class StubJob:
     """A job object the test controls, so the degraded modes are reachable."""
 
-    def __init__(self, *, refuse_assign: bool = False, active: int = 0) -> None:
+    def __init__(
+        self,
+        *,
+        refuse_assign: bool = False,
+        active: int = 0,
+        held: set[int] | None = None,
+    ) -> None:
         self.refuse_assign = refuse_assign
         self.active = active
+        self.held = held
         self.assigned: list[int] = []
         self.terminated: list[int] = []
         self.closed = False
 
     def assign(self, pid: int, what: str = "the launched process") -> bool:
         self.assigned.append(pid)
+        if self.held is not None:
+            self.held.add(pid)
         return not self.refuse_assign
 
     def terminate(self, exit_code: int) -> bool:
         self.terminated.append(exit_code)
         self.active = 0
+        if self.held is not None:
+            self.held.clear()
         return True
 
     def active_processes(self) -> int:
+        if self.held is not None:
+            return len(self.held)
         return self.active
+
+    def members(self) -> set[int] | None:
+        if self.held is not None:
+            return set(self.held)
+        return {self.active} if self.active else set()
 
     def close(self) -> None:
         self.closed = True
@@ -596,12 +616,33 @@ def test_posix_always_claims_the_process_group_and_never_a_job() -> None:
 
 
 def test_verify_is_true_for_a_process_that_has_already_exited() -> None:
+    """The trivial positive, asked the way production asks it.
+
+    ``verify`` speaks about a tree it has *looked at*, and looking requires a
+    live launcher to enumerate from -- so a tier runs first, exactly as
+    ``_stop_tree`` does. Asking before that is asking about a tree nobody has
+    inspected, and the honest answer is "cannot confirm" rather than "clean".
+    """
     proc = a_finished_process()
     proc.wait(timeout=30)
 
     tree = ProcessTree(proc, log=lambda *_a: None)
+    tree.stop_gracefully()
 
     assert tree.verify(5.0) is True
+    tree.close()
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason=NO_JOB_OBJECTS)
+def test_verify_is_false_while_the_job_still_holds_a_member() -> None:
+    """AC-11: the job's own membership is what the negative case turns on."""
+    proc = a_finished_process()
+    proc.wait(timeout=30)
+    job = StubJob(held={4242})
+
+    tree = ProcessTree(proc, log=lambda *_a: None, create_job=_stub_job(job))
+
+    assert tree.verify(0.2) is False
     tree.close()
 
 
@@ -633,17 +674,196 @@ def test_verify_reports_a_leader_that_will_not_be_reaped() -> None:
     tree.close()
 
 
+# --- a broken probe must fail loud, never open (N1, N2) -------------------
+
+
+class BrokenSnapshot:
+    """``kernel32`` whose snapshot call returns the documented failure value.
+
+    The failure value is ``INVALID_HANDLE_VALUE``, which with
+    ``restype = wintypes.HANDLE`` arrives as **18446744073709551615**, not
+    ``-1``. Comparing it against ``-1`` is never true on 64-bit, so a broken
+    snapshot walks straight through the check, ``Process32FirstW`` fails, and
+    the caller is handed an empty host -- which reads as "the tree is gone"
+    (issue #125 N1).
+    """
+
+    def __init__(self, handle: int) -> None:
+        self.handle = handle
+        self.first_called = False
+
+    def CreateToolhelp32Snapshot(self, flags: int, pid: int) -> int:  # noqa: N802
+        return self.handle
+
+    def Process32FirstW(self, snapshot: int, entry: Any) -> int:  # noqa: N802
+        self.first_called = True
+        return 0
+
+    def Process32NextW(self, snapshot: int, entry: Any) -> int:  # noqa: N802
+        return 0
+
+    def CloseHandle(self, handle: int) -> int:  # noqa: N802
+        return 1
+
+
+def install_broken_snapshot(monkeypatch: pytest.MonkeyPatch) -> BrokenSnapshot:
+    """Make every process snapshot fail, the way a denied one would.
+
+    The real ``ctypes`` and ``wintypes`` are kept in the cached tuple -- only
+    ``kernel32`` is faked -- because the failure path reports
+    ``get_last_error()`` and that call is part of what is under test.
+    """
+    import ctypes  # local: the Windows-only stdlib, as agent/process.py does
+    import subprocess as sp
+    from ctypes import wintypes
+
+    assert sp is subprocess
+    invalid = ctypes.c_void_p(-1).value
+    assert invalid == 18446744073709551615, "the point of the fixture"
+    kernel32 = BrokenSnapshot(invalid)
+    real_toolhelp = process_module._toolhelp()
+    assert real_toolhelp is not None
+    ctypes_module, wintypes_module, _kernel32, _entry, _invalid = real_toolhelp
+    assert ctypes_module is ctypes and wintypes_module is wintypes
+    monkeypatch.setattr(
+        process_module, "_toolhelp", lambda: (ctypes, wintypes, kernel32, None, invalid)
+    )
+    return kernel32
+
+
 @pytest.mark.skipif(sys.platform != "win32", reason=NO_JOB_OBJECTS)
-def test_verify_is_false_while_the_job_still_counts_a_live_process() -> None:
-    """AC-11: the job's own accounting is what the negative case turns on."""
+def test_a_failed_snapshot_is_unknown_not_an_empty_host(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """N1: the probe must not fail open.
+
+    ``None`` means "could not enumerate"; ``{}`` means "the host is empty".
+    Collapsing them is how a broken probe becomes a clean stop report for a
+    tree that is still running, which is the worst direction this code can
+    fail in.
+    """
+    kernel32 = install_broken_snapshot(monkeypatch)
+
+    with caplog.at_level("WARNING", logger="agent.process"):
+        result = process_module._live_processes()
+
+    assert result is None, "a failed snapshot must not read as an empty host"
+    assert not kernel32.first_called, (
+        "INVALID_HANDLE_VALUE was not recognised, so the code walked on into a "
+        "call that could only fail"
+    )
+    assert any("cannot be confirmed" in r.getMessage() for r in caplog.records), (
+        "a probe that cannot answer must say so: "
+        f"{[r.getMessage() for r in caplog.records]}"
+    )
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason=NO_JOB_OBJECTS)
+def test_a_failed_snapshot_makes_verify_report_a_tree_it_cannot_confirm(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """N1, at the level the executor reads: ``False``, immediately, not at the deadline.
+
+    Polling a broken probe to its deadline would only turn a broken answer into
+    a slower broken answer.
+    """
     proc = a_finished_process()
     proc.wait(timeout=30)
-    job = StubJob(active=3)
-
+    job = StubJob()
     tree = ProcessTree(proc, log=lambda *_a: None, create_job=_stub_job(job))
+    install_broken_snapshot(monkeypatch)
+    tree._tracked = {12345}
 
-    assert tree.verify(0.2) is False
+    started = time.monotonic()
+    assert tree.verify(30.0) is False
+    assert (
+        time.monotonic() - started < 1.0
+    ), "an unreadable tree is not going to become readable by waiting"
     tree.close()
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason=NO_JOB_OBJECTS)
+def test_a_library_that_cannot_be_loaded_does_not_escape_the_probe(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """N2: an exception out of here would unwind ``execute_job`` with no state written.
+
+    The module docstring promises "we report a stop we cannot fully confirm"
+    rather than "a crash on the stop path"; this is the assertion for that
+    promise, with the failure mode QA measured -- ``WinDLL`` raising
+    ``OSError: [Errno 126]`` when the library is missing.
+    """
+
+    def refuse() -> Any:
+        raise OSError(126, "The specified module could not be found")
+
+    monkeypatch.setattr(process_module, "_toolhelp", refuse)
+
+    assert process_module._live_processes() is None
+    assert process_module._descendant_pids(1) is None
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason=NO_JOB_OBJECTS)
+def test_the_toolhelp_handle_is_resolved_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """N2: re-resolving ``WinDLL`` per probe cost 560 ms across a 5 s verify."""
+    import agent.process as module
+
+    module._toolhelp.cache_clear()
+    try:
+        first = module._toolhelp()
+        assert first is not None
+        second = module._toolhelp()
+        assert second is first
+        assert module._toolhelp.cache_info().hits >= 1
+    finally:
+        module._toolhelp.cache_clear()
+    assert monkeypatch is not None
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason=NO_JOB_OBJECTS)
+async def test_the_job_reports_which_pids_it_holds_not_only_how_many(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """N6: the two legs of ``_outstanding`` must cover the same processes.
+
+    One query answers "which", and it is what lets the adoption step skip a
+    member the job already holds. Re-assigning a member fails with
+    ``ERROR_ACCESS_DENIED``, and an earlier version of this code did exactly
+    that: a warning per member, on every *healthy* run where the job had
+    already inherited the tree.
+    """
+    process = build_tree(tmp_path, with_shell=False)
+    proc = spawn_tree(process, creationflags=CREATE_NEW_PROCESS_GROUP)
+    stop = ProcessTree(proc, log=lambda *_a: None)
+    # The tree is enumerated at *stop* time, so the descendants have to exist
+    # first; this is the ordering production has too, and it is why an earlier
+    # version of this test saw an empty tree.
+    await wait_until(
+        lambda: len(process.recorded()) >= process.expected_pids,
+        f"the tree never started: {process.pids_file}",
+    )
+    try:
+        assert stop._job is not None
+        with caplog.at_level("WARNING", logger="agent.process"):
+            stop._remember_tree()
+
+        assert stop._job.members(), "the job holds nothing at all"
+        assert stop._job.active_processes() == len(
+            stop._job.members() or ()
+        ), "the count and the list disagree, which is the N6 coverage gap"
+        assert stop._tracked, "nothing was enumerated under the launcher"
+        assert not any(
+            "could not be adopted" in r.getMessage() for r in caplog.records
+        ), (
+            "the adopting leg re-assigned pids the job already held: "
+            f"{[r.getMessage() for r in caplog.records]}"
+        )
+    finally:
+        stop.stop_forced()
+        stop.verify(10.0)
+        stop.close()
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason=NO_JOB_OBJECTS)

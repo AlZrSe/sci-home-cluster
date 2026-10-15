@@ -27,7 +27,7 @@ import threading
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, cast
 
 import psutil
 import pytest
@@ -571,6 +571,107 @@ def kill_anything_left_alive(recorded: list[int]) -> None:
     """End any rank a test deliberately left running.
 
     ``BoundedLineWriter`` and the stop path both end up waiting on a process
+def _unreadable_tree(
+    proc: subprocess.Popen, *, log: Any, create_job: Any = None
+) -> Any:
+    """A tree whose process snapshot is broken, as a denied one would be.
+
+    The worst combination: no job to ask, and no way to enumerate what is
+    still running. This is the state round-1's S1 fix could be pushed into by
+    a failed snapshot, and it reported a clean stop for a live tree.
+    """
+    return ProcessTree(proc, log=log, create_job=lambda _log: None)
+
+
+class BrokenSnapshotKernel32:
+    """``kernel32`` whose snapshot call returns the documented failure value.
+
+    ``INVALID_HANDLE_VALUE`` with ``restype = wintypes.HANDLE`` arrives as
+    **18446744073709551615**, not ``-1``, so a comparison against ``-1`` is
+    never true on 64-bit and a broken probe walks on into a call that can only
+    fail (issue #125 N1).
+    """
+
+    def __init__(self, handle: int) -> None:
+        self.handle = handle
+        self.first_called = False
+
+    def CreateToolhelp32Snapshot(self, flags: int, pid: int) -> int:  # noqa: N802
+        return self.handle
+
+    def Process32FirstW(self, snapshot: int, entry: Any) -> int:  # noqa: N802
+        self.first_called = True
+        return 0
+
+    def Process32NextW(self, snapshot: int, entry: Any) -> int:  # noqa: N802
+        return 0
+
+    def CloseHandle(self, handle: int) -> int:  # noqa: N802
+        return 1
+
+
+@pytest.fixture
+def broken_snapshot(monkeypatch: pytest.MonkeyPatch) -> BrokenSnapshotKernel32:
+    """Make every process snapshot fail, the way a denied one would."""
+    import ctypes
+    from ctypes import wintypes
+
+    import agent.process as process_module
+
+    invalid = cast(int, ctypes.c_void_p(-1).value)
+    kernel32 = BrokenSnapshotKernel32(invalid)
+    monkeypatch.setattr(
+        process_module,
+        "_toolhelp",
+        lambda: (ctypes, wintypes, kernel32, None, invalid),
+    )
+    return kernel32
+
+
+async def test_a_stop_cannot_be_confirmed_is_never_reported_as_a_clean_one(
+    harness: Harness,
+    tree_script: Callable[..., Tree],
+    monkeypatch: pytest.MonkeyPatch,
+    broken_snapshot: BrokenSnapshotKernel32,
+) -> None:
+    """N1, end to end: a broken probe must produce ``stop_failed``, not ``stopped``.
+
+    QA's reproduction, exactly: the grandchild refuses the polite request and
+    the snapshot is broken, so the agent has neither the job's accounting (the
+    job object is taken away, as on a degraded node) nor a way to enumerate the
+    tree. The old code returned ``stopped:shutdown`` here with the grandchild
+    still running, which is the one answer this whole path must never give.
+
+    The grandchild really does survive here -- there is nothing left to kill it
+    with -- so the test cleans it up rather than pretending otherwise. What is
+    under test is the *report*.
+    """
+    monkeypatch.setattr(executor_module, "STOP_GRACE_S", 0.5)
+    monkeypatch.setattr(executor_module, "STOP_VERIFY_TIMEOUT_S", 0.5)
+    monkeypatch.setattr(executor_module, "ProcessTree", _unreadable_tree)
+    tree = tree_script(refuse_polite_child=True)
+    spec = harness.spec(tree.command)
+    harness.claim(spec)
+    stop_event = asyncio.Event()
+
+    task = asyncio.create_task(run_job(harness, spec, stop_event))
+    recorded = await wait_for_tree(tree)
+    stop_event.set()
+    result = await task
+
+    try:
+        assert (
+            result.error_code == "stop_failed:tree_survived"
+        ), "an unconfirmable stop is the one thing this must never call clean"
+        assert harness.read_state().error == "stop_failed:tree_survived"
+        assert not broken_snapshot.first_called, (
+            "INVALID_HANDLE_VALUE was not recognised, so the probe walked on "
+            "into a call that could only fail and reported an empty host"
+        )
+    finally:
+        kill_anything_left_alive(recorded)
+
+
     that has been told to sleep for five minutes, and a suite that leaks one
     per run is a suite that fails on somebody else's machine next week.
     """
