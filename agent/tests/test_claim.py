@@ -5,7 +5,7 @@ from __future__ import annotations
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -327,24 +327,41 @@ class TestTryClaimJob:
     async def test_claim_marker_cleanup_on_failure(
         self, temp_paths, node_spec, job_state
     ):
+        """Test marker cleanup when marker creation or state write fails.
+
+        Uses mock-based failure injection for cross-platform compatibility.
+        """
         setup_job_dir(temp_paths, "job-1", job_state)
+        marker_file = temp_paths.jobs_dir / "job-1" / ".claim.node-01"
 
-        # Make job directory read-only to force write failure
-        # Note: this also prevents marker creation, so we test that case
-        job_dir = temp_paths.jobs_dir / "job-1"
-        job_dir.chmod(0o555)
-
-        try:
+        # Test 1: Marker creation fails (os.open raises PermissionError)
+        with patch(
+            "agent.claim.os.open",
+            side_effect=PermissionError("Simulated marker failure"),
+        ):
             success, reason = await try_claim_job(
                 temp_paths, "job-1", "node-01", node_spec
             )
-            # Marker creation fails first (permission denied on dir)
+            assert success is False
+            assert "failed to create marker" in reason
             assert (
-                "failed to create marker" in reason
-                or "failed to write RUNNING state" in reason
+                not marker_file.exists()
+            ), "Marker should not exist after creation failure"
+
+        # Test 2: State write fails after marker created
+        # (write_yaml raises PermissionError)
+        with patch(
+            "agent.claim.write_yaml",
+            side_effect=PermissionError("Simulated state write failure"),
+        ):
+            success, reason = await try_claim_job(
+                temp_paths, "job-1", "node-01", node_spec
             )
-        finally:
-            job_dir.chmod(0o755)
+            assert success is False
+            assert "failed to write RUNNING state" in reason
+            assert (
+                not marker_file.exists()
+            ), "Marker should be cleaned up after state write failure"
 
     async def test_claim_nonexistent_state_file(self, temp_paths, node_spec):
         """Claiming non-existent job returns error."""

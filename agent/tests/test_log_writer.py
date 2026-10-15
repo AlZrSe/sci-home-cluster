@@ -126,6 +126,23 @@ class TestBoundedLineWriter:
             content = file_path.read_text(encoding="utf-8")
             assert content == "hello\n"
 
+    def test_implicit_cleanup_on_gc(self):
+        """Test that file handle is closed when writer is garbage collected."""
+        import gc
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            file_path = Path(tmpdir) / "test.log"
+            writer = BoundedLineWriter(file_path)
+            writer.write_line(b"hello")
+            del writer
+            gc.collect()  # Force collection
+
+            # Should be able to read/delete the file
+            content = file_path.read_text(encoding="utf-8")
+            assert content == "hello\n"
+
 
 class TestBoundedLineWriterEdgeCases:
     """Edge case tests for BoundedLineWriter."""
