@@ -26,7 +26,9 @@ Three rules keep the halves honest:
   ``# type: ignore`` and ``pyproject.toml`` is unchanged.
 * **"we sent a signal" is not "the tree is gone".** Every stop is followed by
   :meth:`ProcessTree.verify`, which reads a property of the running system
-  rather than assuming the call worked.
+  rather than assuming the call worked -- and it reads **two** of them on
+  Windows, because the Job Object's own accounting is not sufficient there
+  (see :meth:`ProcessTree._remember_tree`).
 """
 
 from __future__ import annotations
@@ -125,6 +127,15 @@ ACCEPTED_SHELLS: Final[tuple[str, ...]] = (
 #: path an operator most likely has is Git's ``sh.exe``, which is exactly the
 #: program this table must recognise as "an argv shell" if it is to be usable
 #: by name at all (issue #125 Q1).
+#:
+#: One trap worth naming, because ``which`` cannot tell it from a real shell:
+#: on a stock Windows install the only ``bash.exe`` on ``PATH`` is
+#: ``C:\Windows\System32\bash.EXE``, the **WSL** launcher. It is not an argv
+#: ``-c`` shell for this node's paths, and D5's "resolve it the way the command
+#: resolves" rule means the agent will faithfully launch it. Refusing it would
+#: break a deployment that genuinely has a real ``bash.exe`` earlier on
+#: ``PATH``, so it is a documented warning in the README and a program name in
+#: the launch log line, not a special case in the table.
 _SHELL_TABLE: Final[dict[str, tuple[str, tuple[str, ...], bool]]] = {
     "sh": ("sh", ("-c",), False),
     "sh.exe": ("sh", ("-c",), False),
@@ -294,7 +305,7 @@ class JobHandle(Protocol):
     knowledge of Windows types at all.
     """
 
-    def assign(self, pid: int) -> bool:
+    def assign(self, pid: int, what: str = "the launched process") -> bool:
         """Put ``pid`` in the job. ``False`` when the kernel refused."""
 
     def terminate(self, exit_code: int) -> bool:
@@ -475,16 +486,23 @@ class _JobObject:
         limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
         return limits
 
-    def assign(self, pid: int) -> bool:
-        """Add a freshly launched process to the job.
+    def assign(self, pid: int, what: str = "the launched process") -> bool:
+        """Add a process to the job.
 
         Assignment happens *after* ``CreateProcess`` returned, so a descendant
         spawned inside that window is structurally outside the job and the
-        job's accounting never counts it. The window is milliseconds and 13
-        measured runs produced no escape, which is why this is a structural
-        residual rather than a reproduced failure -- and why
-        :meth:`ProcessTree.stop_forced` also runs an independent sweep
-        (issue #125 §1.6).
+        job's accounting never counts it -- and on some hosts it is not a
+        window at all. Measured on this one: ``uv``'s Windows venv launcher
+        (``\\.venv\\Scripts\\python.exe``, a 47 KB redirector, not the 91 KB
+        interpreter beside it) creates its child with
+        ``CREATE_BREAKAWAY_FROM_JOB``, so **every** descendant past the
+        redirector stays out of the job for good. ``ActiveProcesses`` then
+        reads 1 with four live descendants, ``TerminateJobObject`` kills the
+        launcher, and the grandchild survives. That is why
+        :meth:`ProcessTree._remember_tree` also adopts the tree by hand: the
+        job is only useful for what is actually in it, and the spec's
+        assumption that children simply inherit turns out to be a property of
+        the launchers on a host, not of Windows.
 
         ``OpenProcess`` rather than ``Popen``'s private ``_handle``: the two
         rights are named in the Win32 contract, and a handle the agent did not
@@ -503,8 +521,10 @@ class _JobObject:
         )
         if not process:
             logger.warning(
-                "OpenProcess(%d) failed (winerror %d); the job cannot hold it",
+                "OpenProcess(%d) for %s failed (winerror %d); the job cannot "
+                "hold it",
                 pid,
+                what,
                 ctypes.get_last_error(),
             )
             return False
@@ -516,9 +536,11 @@ class _JobObject:
             kernel32.CloseHandle(process)
         if not ok:
             logger.warning(
-                "AssignProcessToJobObject(%d) failed (winerror %d); nested jobs "
-                "are unavailable on some hosts",
+                "AssignProcessToJobObject(%d) for %s failed (winerror %d); "
+                "nested jobs are unavailable on some hosts and some launchers "
+                "break away from the job they are in",
                 pid,
+                what,
                 ctypes.get_last_error(),
             )
         return bool(ok)
@@ -614,6 +636,104 @@ def _open_job_object(log: Callable[..., None]) -> JobHandle | None:
     return job
 
 
+#: ``TH32CS_SNAPPROCESS`` from ``<tlhelp32.h>``: take a snapshot of every
+#: process on the host. The only stdlib route to a parent/child map, and the
+#: parent link is the only thing that makes "is my tree still running"
+#: answerable once a launcher has exited.
+TH32CS_SNAPPROCESS: Final[int] = 0x00000002
+
+
+def _live_processes() -> dict[int, int]:
+    """``{pid: parent pid}`` for every process on the host right now.
+
+    Windows only, and deliberately built on ``CreateToolhelp32Snapshot``
+    rather than on a process library: the agent is file-only by decision
+    (issue #92) and this is the stdlib answer to the one question the Job
+    Object's accounting cannot answer on a host where a launcher breaks away
+    from its job.
+
+    ``{}`` on any failure, and that is a **fail-open** answer: a snapshot that
+    could not be taken makes the caller believe the tree is empty. The
+    caller compensates -- the job's own accounting is still consulted, and a
+    job with no members reads zero either -- so the failure mode is "we
+    report a stop we cannot fully confirm", which is the documented
+    behaviour, rather than a crash on the stop path.
+    """
+    if sys.platform != "win32":
+        return {}
+    import ctypes
+    from ctypes import wintypes
+
+    class _ProcessEntry32W(ctypes.Structure):
+        _fields_ = [
+            ("dwSize", wintypes.DWORD),
+            ("cntUsage", wintypes.DWORD),
+            ("th32ProcessID", wintypes.DWORD),
+            ("th32DefaultHeapID", ctypes.POINTER(ctypes.c_ulong)),
+            ("th32ModuleID", wintypes.DWORD),
+            ("cntThreads", wintypes.DWORD),
+            ("th32ParentProcessID", wintypes.DWORD),
+            ("pcPriClassBase", ctypes.c_long),
+            ("dwFlags", wintypes.DWORD),
+            ("szExeFile", wintypes.WCHAR * 260),
+        ]
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.CreateToolhelp32Snapshot.restype = wintypes.HANDLE
+    kernel32.CreateToolhelp32Snapshot.argtypes = [wintypes.DWORD, wintypes.DWORD]
+    kernel32.Process32FirstW.restype = wintypes.BOOL
+    kernel32.Process32FirstW.argtypes = [wintypes.HANDLE, ctypes.c_void_p]
+    kernel32.Process32NextW.restype = wintypes.BOOL
+    kernel32.Process32NextW.argtypes = [wintypes.HANDLE, ctypes.c_void_p]
+    kernel32.CloseHandle.restype = wintypes.BOOL
+    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+
+    snapshot = kernel32.CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0)
+    # INVALID_HANDLE_VALUE is the documented failure value for the snapshot;
+    # a NULL handle means "an empty snapshot", which is a valid answer here.
+    if snapshot is None or int(snapshot) == -1:
+        logger.warning(
+            "CreateToolhelp32Snapshot failed (winerror %d); the tree cannot be "
+            "enumerated and the verification is weaker than usual",
+            ctypes.get_last_error(),
+        )
+        return {}
+    processes: dict[int, int] = {}
+    try:
+        entry = _ProcessEntry32W()
+        entry.dwSize = ctypes.sizeof(entry)
+        if not kernel32.Process32FirstW(snapshot, ctypes.byref(entry)):
+            return {}
+        while True:
+            processes[int(entry.th32ProcessID)] = int(entry.th32ParentProcessID)
+            if not kernel32.Process32NextW(snapshot, ctypes.byref(entry)):
+                break
+    finally:
+        kernel32.CloseHandle(snapshot)
+    return processes
+
+
+def _descendant_pids(root_pid: int) -> set[int]:
+    """Every live process under ``root_pid``, transitively.
+
+    Walked breadth-first over one snapshot rather than per-pid, because the
+    answer is a *set* and the snapshot is the only place the parent links
+    live: a process whose parent has exited has already been re-parented and
+    is no longer reachable from the launcher.
+    """
+    live = _live_processes()
+    found: set[int] = set()
+    frontier = {root_pid}
+    while frontier:
+        parent = frontier.pop()
+        for pid, ppid in live.items():
+            if ppid != parent or pid in found or pid == root_pid:
+                continue
+            found.add(pid)
+            frontier.add(pid)
+    return found
+
+
 class ProcessTree:
     """Owns everything needed to stop one launched job's tree on this platform.
 
@@ -654,6 +774,10 @@ class ProcessTree:
         self._taskkill: str | None = None
         self._control_mode = CONTROL_MODE_GROUP
         self._closed = False
+        #: Pids seen under the launcher, recorded at stop time. Empty on
+        #: POSIX, where the group signal reaches every member whether or not
+        #: the leader is alive; populated on Windows, where nothing does.
+        self._tracked: set[int] = set()
         if sys.platform == "win32":
             self._open_windows_tree(create_job or _open_job_object)
 
@@ -667,8 +791,20 @@ class ProcessTree:
         self._taskkill = shutil.which("taskkill.exe")
         try:
             job = create_job(self._log)
-            if job is not None:
-                job.assign(self._proc.pid)
+            if job is not None and not job.assign(self._proc.pid, "the shell"):
+                # A refused assignment leaves a job with **no members**, and a
+                # job with no members answers every accounting query with
+                # zero. Keeping it would mean `verify()` reported a tree as
+                # empty because nothing was ever in it -- the vacuous-success
+                # shape issue #125 Q2 warns about. The job is closed and the
+                # mode drops to the sweep (issue #125 S2).
+                job.close()
+                job = None
+                logger.warning(
+                    "process tree control: the job object refused the shell; "
+                    "falling back to taskkill, and the forced stop can no "
+                    "longer be confirmed by the job's own accounting"
+                )
         except OSError as exc:
             logger.warning(
                 "process tree control: job object unavailable (winerror %s); "
@@ -694,6 +830,68 @@ class ProcessTree:
                 "HAVE SURVIVED"
             )
 
+    def _remember_tree(self) -> None:
+        """Record what is under the launcher, and pull it into the job.
+
+        Called at the start of each tier, which is the **only** moment this is
+        possible: while the launcher is alive, the parent/child links that
+        make a tree enumerable still exist. Once it exits its descendants
+        re-parent and there is nothing left to ask "is that still running?".
+
+        Two jobs here, and the second is the one that matters on a real host:
+
+        1. remembering the pids, so :meth:`verify` can prove each one is gone
+           rather than asking a job that may not hold them;
+        2. adopting them into the job, so the **forced** tier can actually
+           kill them. Job membership is inherited by children created after a
+           process joins -- but not by a child created with
+           ``CREATE_BREAKAWAY_FROM_JOB``, which is what ``uv``'s Windows venv
+           launcher does, measured. Adopting explicitly is what makes
+           ``TerminateJobObject`` mean "this tree" rather than "this
+           process".
+
+        A no-op on POSIX: there is no portable enumeration, and none is
+        needed, because ``killpg`` addresses the whole group by pgid and keeps
+        working after the group leader is reaped.
+        """
+        if sys.platform != "win32":
+            return
+        discovered = _descendant_pids(self._proc.pid)
+        if not discovered:
+            return
+        self._tracked |= discovered
+        if self._job is None:
+            return
+        adopted = 0
+        for pid in discovered:
+            if self._job.assign(pid, "a descendant of the shell"):
+                adopted += 1
+        if adopted != len(discovered):
+            logger.warning(
+                "%d of %d processes under the shell could not be adopted into "
+                "the job object; the forced stop will rely on taskkill and the "
+                "verification will not be able to see them",
+                len(discovered) - adopted,
+                len(discovered),
+            )
+
+    def _outstanding(self) -> list[int]:
+        """The pids this stop is still answerable for and has not accounted for.
+
+        The job's own count is one input and the enumerated tree is the
+        other, because on a host where a launcher breaks away from its job the
+        first is zero with the second still populated -- and trusting the
+        first alone is how a surviving grandchild gets reported as a clean
+        stop.
+        """
+        outstanding: list[int] = []
+        if self._job is not None and self._job.active_processes() > 0:
+            outstanding.append(self._proc.pid)
+        if self._tracked:
+            live = _live_processes()
+            outstanding.extend(pid for pid in sorted(self._tracked) if pid in live)
+        return outstanding
+
     @property
     def control_mode(self) -> str:
         """Which mechanism is live -- one token for the launch log line."""
@@ -710,6 +908,7 @@ class ProcessTree:
         survives it indefinitely. Measured: two events did not kill it. That is
         why the forced tier is not optional.
         """
+        self._remember_tree()
         if sys.platform == "win32":
             try:
                 self._proc.send_signal(signal.CTRL_BREAK_EVENT)
@@ -752,6 +951,7 @@ class ProcessTree:
                 self._log("process group %d is already gone", self._proc.pid)
             return
 
+        self._remember_tree()
         if self._taskkill is not None:
             self._sweep()
         if self._job is not None and not self._job.terminate(FORCED_STOP_EXIT_CODE):
@@ -809,25 +1009,34 @@ class ProcessTree:
         that the tree is gone by then, which is the assumption this method
         exists to remove.
 
-        Windows asks two questions because they have different answers.
-        ``ActiveProcesses == 0`` says nothing still runs *in this tree*;
-        ``proc.wait()`` says the *launcher* has been reaped. Measured, the
-        first reads 0 within microseconds of ``TerminateJobObject`` and the
-        second takes about 0.3 s.
+        It asks **two** questions on Windows because they have different
+        answers, and because the first one is not sufficient:
 
-        POSIX can only ask the second. There is no portable "how many processes
+        * *is anything still running in the job?* --
+          ``ActiveProcesses != 0``. Kernel-maintained, cheap, and blind to any
+          process that broke away from the job.
+        * *is anything left that was under the launcher when the stop began?*
+          -- the pids :meth:`_remember_tree` recorded, checked against a live
+          process snapshot. This is the question that catches the orphan the
+          spec's §1.6 window could not, and the one that catches a launcher
+          which never inherited its job at all.
+        * *has the launcher been reaped?* -- ``proc.wait()``.
+
+        All three must hold. Measuring the first alone is what let a
+        surviving grandchild be written down as ``stopped:shutdown``.
+
+        POSIX can only ask the third. There is no portable "how many processes
         are in this group", and pretending otherwise would make the production
-        claim stronger than the platform can support; the whole group is proved
-        gone by a test that can see every pid instead.
+        claim stronger than the platform can support; the whole group is
+        reached anyway, because ``killpg`` addresses the group by pgid and
+        keeps working after the leader is reaped, and the *whole group* being
+        gone is proved by a test that can see every pid.
         """
         deadline = time.monotonic() + timeout_s
-        if self._job is not None:
-            while self._job.active_processes() > 0:
-                if time.monotonic() >= deadline:
-                    return False
-                time.sleep(STOP_VERIFY_POLL_S)
-            if self._job.active_processes() > 0:
+        while self._outstanding():
+            if time.monotonic() >= deadline:
                 return False
+            time.sleep(STOP_VERIFY_POLL_S)
         try:
             self._proc.wait(timeout=max(0.0, deadline - time.monotonic()))
         except subprocess.TimeoutExpired:
