@@ -1194,7 +1194,9 @@ def test_two_threads_waiting_on_one_process_agree_on_its_status() -> None:
     """S8: the loser of a ``Popen.wait`` race must not invent a status.
 
     The executor parks one thread in ``proc.wait()`` and :meth:`ProcessTree.verify`
-    asks a second one. On POSIX, ``Popen._wait`` reaches ``os.waitpid``, whose
+    asks a second one -- and it asks with a **timeout**, which is the other
+    branch of ``Popen._wait``. Both are raced here, because both reach
+    ``os.waitpid`` and both are held by the same library invariant. On POSIX the
     losing thread would take ``ChildProcessError`` -- which CPython translates
     to ``sts = 0``, i.e. **a forcibly killed job reported as ``COMPLETED``**.
 
@@ -1206,6 +1208,20 @@ def test_two_threads_waiting_on_one_process_agree_on_its_status() -> None:
     Windows by construction (handle-based waiting) and is the guard that proves
     it on a POSIX host, which is where the failure would land.
     """
+    untimed = _race_waiters(timeout=None)
+    assert sorted(untimed) == [7, 7, 7, 7], (
+        "a losing Popen.wait fabricated a status; a forced job would be "
+        f"written down as COMPLETED. Got: {untimed}"
+    )
+    timed = _race_waiters(timeout=30.0)
+    assert sorted(timed) == [7, 7, 7, 7], (
+        "the timed branch -- the one verify() actually uses -- is not held the "
+        f"same way. Got: {timed}"
+    )
+
+
+def _race_waiters(timeout: float | None) -> list[int]:
+    """Four threads released together onto one ``Popen``, and what each saw."""
     proc = subprocess.Popen(
         [sys.executable, "-c", "import sys; sys.exit(7)"],
         stdout=subprocess.DEVNULL,
@@ -1216,7 +1232,7 @@ def test_two_threads_waiting_on_one_process_agree_on_its_status() -> None:
 
     def wait() -> None:
         start.wait(timeout=30)
-        statuses.append(proc.wait())
+        statuses.append(proc.wait(timeout=timeout))
 
     waiters = [threading.Thread(target=wait) for _ in range(4)]
     for thread in waiters:
@@ -1224,11 +1240,7 @@ def test_two_threads_waiting_on_one_process_agree_on_its_status() -> None:
     start.wait(timeout=30)
     for thread in waiters:
         thread.join(timeout=30)
-
-    assert sorted(statuses) == [7, 7, 7, 7], (
-        "a losing Popen.wait fabricated a status; a forced job would be "
-        f"written down as COMPLETED. Got: {statuses}"
-    )
+    return statuses
 
 
 # --- AC-19: the documentation the record requires --------------------------
