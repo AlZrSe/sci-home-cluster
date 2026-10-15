@@ -714,11 +714,28 @@ TH32CS_SNAPPROCESS: Final[int] = 0x00000002
 def _toolhelp() -> Any:
     """``kernel32``, its declared prototypes, and the two process-reading structs.
 
-    Resolved **once**, on first use. Re-resolving ``WinDLL("kernel32")`` and
-    re-declaring six prototypes on every probe cost 560 ms across a five-second
-    verification -- around 11% of the stop budget for a call that is supposed
-    to be free, and repeated on a path that is already the slowest thing the
-    agent does while shutting down (issue #125 N2).
+    Resolved **once**, on first use, because re-resolving the library and
+    re-declaring six prototypes on every probe is work whose only purpose is to
+    be thrown away. Measured, 25 runs each: 2.501 ms per probe with the cache
+    off, 2.296 ms with it on, so the cache is worth about 205 us per probe --
+    real, and about 8% of one.
+
+    **The cache is not what made verification expensive, and an earlier version
+    of this docstring said it was.** The cost is the probe itself: over a
+    five-second verification at the 25 ms poll, 200 probes x 2.296 ms is
+    **459 ms**, and that was the "560 ms" figure quoted before. Splitting one
+    probe (same host, 25 runs each):
+
+    ==========================  ===========
+    ``CreateToolhelp32Snapshot`` + close   1.168 ms  (53%)
+    the ``Process32FirstW/NextW`` walk     1.022 ms  (47%)
+    over **171** processes on this host
+    ==========================  ===========
+
+    So enumeration is the dominant term in a Windows verification and the DLL
+    load was never the story. It is still worth caching, because 8% of the
+    slowest thing the agent does while shutting down should not be spent
+    re-importing a module (issue #125 N2, F2).
 
     The tuple is ``(ctypes, wintypes, kernel32, entry, invalid_handle)``. The
     last element is ``INVALID_HANDLE_VALUE`` **as the unsigned value ctypes
@@ -796,6 +813,25 @@ def _live_processes() -> dict[int, int] | None:
                 ctypes.get_last_error(),
             )
             return None
+    Cost, because it is the dominant term in a Windows verification: **2.296 ms
+    per probe** on this host (25 runs), 459 ms across a five-second
+    verification at the 25 ms poll. ``_toolhelp``'s docstring has the split.
+
+    **The non-Windows branch answers, and why.** It returns ``{}`` -- the
+    empty dict -- and says so at DEBUG. Reaching it at all is a bug: both
+    callers are behind a ``sys.platform == "win32"`` guard
+    (:meth:`ProcessTree._remember_tree` and the Windows branch of
+    :meth:`ProcessTree._outstanding`), and both are unreachable on POSIX
+    because ``_tracked`` starts at ``set()`` there rather than ``None``. The
+    two answers are not equivalent, though, and that is the point of the branch:
+    ``{}`` is unreachable-but-harmless, while ``None`` would propagate to
+    ``_outstanding`` and write ``stop_failed:tree_survived`` for **every** job
+    on a POSIX host that ever reached it. A guard whose unreachable answer is
+    the destructive one is worse than no guard, so the answer is the safe one
+    and the log line says the branch should not be reachable (issue #125 F5).
+    An earlier draft answered ``None`` here, which would have turned a
+    hypothetical refactor into a fleet-wide false failure.
+
         processes: dict[int, int] = {}
         try:
             entry = entry_class()
