@@ -51,6 +51,7 @@ from agent.log_writer import BoundedLineWriter
 from agent.paths import AgentPaths
 from agent.process import (
     STOP_GRACE_S,
+    STOP_VERIFY_POLL_S,
     STOP_VERIFY_TIMEOUT_S,
     ProcessTree,
     StopReason,
