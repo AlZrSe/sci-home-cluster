@@ -1,5 +1,28 @@
 # Spec: Windows Job Execution — One Shell, One Tree-Stop, One Reachable Stop Event
 
+> **Amended after the SWE and QA cycles (2026-10-15).** Six statements in this
+> document were measured wrong or contradicted by the shipped code, and QA
+> adjudicated all six in the implementer's favour. Each is marked
+> **[corrected]** where it appears and collected in §12. This file is the
+> artifact of record, so a spec that disagrees with the code is a defect, not
+> a note. Nothing outside the corrections was changed.
+>
+> | # | where | what was wrong |
+> |---|---|---|
+> | C1 | §4 Q2, §6.1 | the forced tier's **order**, and a `control_mode` token list one short |
+> | C2 | §4 Q3 | the pseudocode puts the job outside the Syncthing root on Windows |
+> | C3 | §4 Q8(b) | says "first-argument" where it means the signal argument |
+> | C4 | AC-11 | says "injected clock" for a branch no clock can reach |
+> | C5 | §9 | a grep its own §4 Q6 makes unsatisfiable |
+> | C6 | §4 Q5 | a table that presents itself as the full vocabulary, missing one code |
+>
+> **Two further facts were measured during QA and change the design rather than
+> the wording.** They are set out in §12.1: the Job Object does **not**
+> necessarily hold the tree — §1.6's inheritance assumption fails on the very
+> host this spec was written on — and the stop therefore has to enumerate the
+> tree rather than trust one counter, on the graceful path as well as the
+> forced one.
+
 **Issue**: #125 — "The agent cannot run a job on Windows: /bin/sh, os.killpg and SIGKILL are POSIX-only, and the stop event is never set"
 **Labels**: `agent`, `phase-2`, `ready-for-grooming` → `groomed`
 **Author**: PM
@@ -398,17 +421,14 @@ The POSIX design from #98 is kept and the Windows design is made its exact mirro
 | tier | POSIX (unchanged) | Windows (new) |
 |---|---|---|
 | **own the tree at launch** | `start_new_session=True` → `setsid` → new process group whose pgid is `proc.pid` | `creationflags=CREATE_NEW_PROCESS_GROUP`, **and** assign `proc.pid` to a Job Object created with `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` |
+| **remember the tree** | not needed: `killpg` addresses the group by pgid and keeps working after the leader is reaped | **[corrected, §12.1]** at the start of **each** tier, enumerate the live descendants of the launcher and assign each to the job. A launcher that breaks away from its job is a property of launchers, not a window (§1.6) |
 | **polite request** | `os.killpg(proc.pid, SIGTERM)` | `proc.send_signal(signal.CTRL_BREAK_EVENT)` → `GenerateConsoleCtrlEvent(CTRL_BREAK_EVENT, pgid)` |
-| **forced** | `os.killpg(proc.pid, SIGKILL)` | `TerminateJobObject(job, 1)` — **and then** `taskkill /T /F /PID <pid>` as an independent sweep |
-| **verify** | `proc.wait()` returns within `STOP_VERIFY_TIMEOUT_S` after the forced tier | `QueryInformationJobObject(JobObjectBasicAccountingInformation).ActiveProcesses == 0` **and** `proc.wait()` returns |
-| **a process that ignores the polite request** | survives `SIGTERM`, dies on `SIGKILL` | survives `CTRL_BREAK_EVENT` (§1.5), dies on `TerminateJobObject` |
+| **forced** | `os.killpg(proc.pid, SIGKILL)` | **[corrected, §12.1]** `taskkill /T /F /PID <pid>` **first**, then `TerminateJobObject(job, 1)` — the order in the original table makes the sweep inert, because `/T` walks from the launcher and the job kills the launcher |
+| **verify** | `proc.wait()` returns within `STOP_VERIFY_TIMEOUT_S`, after the forced tier | **[corrected, §12.1]** `ActiveProcesses == 0` **and** every remembered pid gone **and** `proc.wait()` returns — and the verification runs after the **graceful** tier as well, so "the launcher exited" is never taken as "the tree stopped" |
+| **a process that ignores the polite request** | survives `SIGTERM`, dies on `SIGKILL` | survives `CTRL_BREAK_EVENT` (§1.5), dies on the forced tier |
 | **the agent itself is killed** | the session survives the agent (orphaned) | **the job kills the tree**: `KILL_ON_JOB_CLOSE` fires when the last handle closes, which the OS does when the agent dies |
 
-**Why the Job Object alone is not enough** — measured, §1.6: `AssignProcessToJobObject` runs *after*
-`CreateProcess` returned, so a descendant created in that window is never in the job, and the job's
-accounting never counts it. The window is milliseconds and 13 measured runs produced 0 escapes, so
-this is structural, not observed. **Why `taskkill` alone is not enough**: it is an external binary
-(the issue's own objection — a stripped `PATH` loses the forced tier, which is the "command not
+**Why the Job Object alone is not enough** — measured, §1.6, and then measured harder: `AssignProcessToJobObject` runs *after* `CreateProcess` returned, so a descendant created in that window is never in the job, and the job's accounting never counts it. **[corrected, §12.1]** the original reading of that measurement — that the window is milliseconds and 13 runs produced no escape — does not hold on the host this spec was written on. A `uv` venv launcher creates its child with `CREATE_BREAKAWAY_FROM_JOB`, so every descendant past it is outside the job *permanently*: `ActiveProcesses` reads 1 with four live descendants, `TerminateJobObject` kills the launcher, and the grandchild survives. **Why `taskkill` alone is not enough**: it is an external binary (the issue's own objection — a stripped `PATH` loses the forced tier, which is the "command not
 found" failure this whole issue exists to eliminate), and `/T` walks parent/child links at kill time
 rather than being enforced by the kernel at creation time. **Two mechanisms, each covering the
 other's hole, is the answer**, and it is the one place where this spec overrides the issue's stated
@@ -447,8 +467,19 @@ resolve_working_dir(raw: str, syncthing_root: Path) -> Path
     p = Path(raw).expanduser()
     if p.is_absolute():                       # the host decides what "absolute" means
         return p
+    if p.anchor:                              # [corrected, §12.2] rooted but not absolute
+        p = p.relative_to(p.anchor)           # on Windows: "/sync" has a root, no drive
     return syncthing_root / p                 # NEVER the current working directory
 ```
+
+> **[corrected, §12.2]** The two lines above are the pseudocode as written, and
+> on Windows they produce `C:\sync\projects\new-run` — **outside** the Syncthing
+> root, on whatever drive the root happens to be on — because a Windows path
+> like `/sync/...` is *rooted but not absolute*: `is_absolute()` is `False`,
+> and `pathlib` treats a rooted right-hand operand as replacing everything to
+> its left. The table below is right; the pseudocode needed the anchor
+> stripped first. This is the default `working_dir`, so the defect defeats
+> this spec's own table.
 
 - **Absolute on this host** → used as-is. The agent creates it if it is inside the Syncthing root,
   and requires it to exist otherwise — exactly today's `validate_and_prepare_working_dir` contract.
@@ -528,6 +559,7 @@ the provenance while `exit_code` carries the number.** The full table, which is 
 | `launch_failed:input_missing` | `1` | pre-launch, `paths.input` absent | submitter | existing |
 | `launch_failed:insufficient_gpus` | `1` | pre-launch, fewer GPUs than requested | scheduling | existing |
 | **`launch_failed:shell_not_found`** | **`127`** | **pre-launch, `shutil.which` returned `None`, or `Popen` raised `FileNotFoundError`** | **the AGENT** | **new** |
+| `launch_failed:process_creation_failed: <e>` | `1` | pre-launch, `Popen` raised something else (a bad `cwd`, a denied handle, a resource limit) | the host | **in the code before this issue, and missing from this table [corrected, C6]** |
 | **`launch_failed:command_not_posix_not_found`** → see below | | | | |
 | `launch_failed:command_not_found` | `127` | the child exited **127**, which only a POSIX shell reports (§1.4) | submitter | existing, **now POSIX-only** |
 | `process_failed:exit_code=<N>` | `N` | the child ran and exited non-zero otherwise | submitter | existing |
@@ -636,8 +668,17 @@ the child's real exit code (§1.3, end-to-end).
 
 `psutil` is already a declared dependency and already on `THIRD_PARTY_ALLOWED`
 (`test_no_cluster_required.py:60`) and used by `agent/hardware.py`, so this adds no surface. AC-13
-pins the rule with an AST guard over `agent/tests/**`: **no `os.kill` call with a non-zero constant
-first-argument argument**, because #124 is exactly that mistake.
+pins the rule with an AST guard over `agent/tests/**`: **no `os.kill` call whose signal argument is
+anything but a literal `0`**, and no `os.killpg` at all, because #124 is exactly that mistake.
+
+> **[corrected, C3]** This paragraph said "a non-zero constant first-argument
+> argument". Two errors in one clause. The *signal* is the **second** argument
+> — the first is the pid — and a **constant** test misses the shape #124
+> actually has: `sig = signal.SIGTERM; os.kill(os.getpid(), sig)`, which is
+> `agent/tests/test_loop.py:144` verbatim and kills this host's pytest with
+> exit 15. The shipped guard flags every signal argument that is not a literal
+> `0`, plus `killpg`, and the only file it exempts is `test_loop.py` itself,
+> with an assertion that fails when #124 removes the exemption.
 
 **(c) Both platform arms are expressed, in both directions.** A Windows-only feature that is merely
 `if sys.platform == "win32":`-ed out on Linux is never exercised anywhere, which is how the current
@@ -825,8 +866,12 @@ class ProcessTree:
     def __init__(self, proc: subprocess.Popen, *, log: Callable[..., None]) -> None: ...
     @property
     def control_mode(self) -> str:
-        """'process group' | 'job object' | 'taskkill fallback' -- one token for
-        the launch log line, so an operator can see which mechanism is live."""
+        """'process group' | 'job object' | 'taskkill fallback' | 'leader only'
+        -- one token for the launch log line, so an operator can see which
+        mechanism is live. **[corrected, C1]** the original list had three; a
+        node with neither a usable job object nor taskkill.exe is a real
+        fourth state, and reporting it as either of the others would be a lie
+        in the only line an operator reads."""
     def stop_gracefully(self) -> None: ...
     def stop_forced(self) -> None: ...
     def verify(self, timeout_s: float) -> bool: ...   # True == the tree is gone
@@ -1137,6 +1182,16 @@ the code; each is an assertion with a named test. AC-16 … AC-19 are what this 
     with an injected clock, not on a real unstoppable process. Stated so the SWE does not write a
     test that cannot pass.
 
+> **[corrected, C4]** "an injected clock" is the wrong mechanism and there is
+> nothing to inject one into. `Popen.wait` raises `TimeoutExpired` itself; the
+> branch is reached by handing `verify()` a process whose `wait` cannot
+> complete, which is the property under test and needs no clock and no
+> production seam. Additionally, **[measured, §12.3]** the verification was
+> originally specified to run *after the forced tier only*, which left the
+> graceful path reporting `stopped:shutdown` on nothing more than the launcher
+> being reaped — the orphan QA reproduced. `verify()` now runs after **both**
+> tiers, which is why AC-15's bound is `STOP_GRACE_S + 2 * STOP_VERIFY_TIMEOUT_S`.
+
 - **AC-12** — **The fallback path is real and loud.** With the Job Object made unavailable (the
   `ProcessTree` constructor is given a `create_job` that raises, or `AssignProcessToJobObject` is
   stubbed to return 0), the launch still succeeds, the log at **WARNING** names the mechanism that
@@ -1262,8 +1317,19 @@ must report **≥ 271 collected**. An absolute "all green on Windows" is not ach
 - [ ] `pytest agent/tests -q --ignore=agent/tests/test_loop.py` reports **≥ 219 passed** and
       **the same 15 pre-existing failures**, no more
 - [ ] `agent/executor.py` contains no `import signal`, no `/bin/sh`, no `start_new_session=True`
-      literal, no `os.killpg`, no `os.sched_setaffinity`, and no `%%d`/`%%s`
-      *Verify:* `grep -nE "killpg|SIGKILL|sched_setaffinity|/bin/sh|start_new_session|%%[ds]" agent/executor.py` → **no output**
+      literal, no `os.killpg`, no `%%d`/`%%s`, and **no bare** `os.sched_setaffinity`
+      *Verify:* `grep -nE "killpg|SIGKILL|/bin/sh|start_new_session|%%[ds]" agent/executor.py` → **no output**,
+      and `agent/tests/test_execution.py::test_the_cpu_affinity_call_is_only_ever_probed` passes.
+
+> **[corrected, C5]** The original line also grepped for `sched_setaffinity`,
+> which §4 Q6 *requires* `agent/executor.py` to contain —
+> `getattr(os, "sched_setaffinity", None)` is both the capability probe and the
+> mypy fix. The two requirements cannot both be met by a substring search. The
+> intent, which is "no bare attribute reference", is now asserted over the
+> AST: the name may appear only as the second argument of a `getattr`. The
+> other five names are absent from the file entirely, **including from its
+> prose**, so the substring search stays meaningful for them.
+
 - [ ] PM acceptance
 
 ---
@@ -1309,3 +1375,87 @@ exposure to but must not fix.
 - `shared/file_ops/path_utils.py:15-36` — `normalize_path`, whose CWD behaviour Q3 removes from the
   `working_dir` path.
 - `shared/testing/signal_guard.py` — the #115/#114 guard the new tests must not defeat.
+
+---
+
+## 12. Corrections, and the two facts that changed the design
+
+QA's verdict on the first SWE cycle adjudicated six statements in this document
+as errors and two measurements as wrong. They are recorded here so the record
+and the code agree.
+
+### 12.1 [measured] The Job Object does not necessarily hold the tree
+
+§1.6 measured a post-`CreateProcess` assignment **window** — milliseconds wide,
+no escape in 13 runs — and built the whole Windows design on the assumption
+that a job holds the tree from the launcher down. On the same host, that
+assumption is false for one very common launcher:
+
+| leader | `ActiveProcesses` with 2 live descendants | after `TerminateJobObject` |
+|---|---|---|
+| `.venv\Scripts\python.exe` (a `uv` venv redirector, 47 KB) | **1** | the grandchild **survives** |
+| the real interpreter beside it (91 KB) | 2 | nothing survives |
+
+The redirector creates its child with `CREATE_BREAKAWAY_FROM_JOB`, so every
+descendant past it is outside the job for good — not for a window, for the
+life of the job. `uv` is what `AGENTS.md` tells contributors to build the venv
+with. Consequences, all three of them in the code:
+
+1. **`ActiveProcesses == 0` is not "the tree is gone".** `verify()` also checks
+   every pid it recorded at stop time against a live process snapshot
+   (`CreateToolhelp32Snapshot`, stdlib, behind the Windows guard). This is the
+   fix for the orphan QA reproduced: a cooperative launcher and a grandchild
+   that refuses the break, where the old code wrote `stopped:shutdown` while
+   the grandchild went on holding its pipes and its GPUs.
+2. **The job is fed the tree explicitly.** At the start of each tier the
+   launcher is still alive, so the descendants are enumerable; each is
+   assigned to the job, which is what makes `TerminateJobObject` mean "this
+   tree" rather than "this process".
+3. **The sweep runs first.** `taskkill /T` walks parent/child links *from the
+   launcher*, and `TerminateJobObject` kills the launcher — the order in §4 Q2
+   made the sweep return "no process found" and do nothing, in 10 runs out of
+   10. This is correction C1.
+
+On a node with neither mechanism the agent **cannot** finish such a stop, and
+says so: `stop_failed:tree_survived` at ERROR. That is §4 Q2's "loud rather
+than assumed-away" and it is now a test, not a hope.
+
+### 12.2 [corrected, C2] §4 Q3's pseudocode needed the anchor stripped
+
+`/sync/projects/new-run` — the schema's own default — is *rooted but not
+absolute* on Windows, and `pathlib` replaces everything to the left of a rooted
+right-hand operand. The pseudocode put the job at `C:\sync\projects\new-run`,
+outside the Syncthing root, defeating §4 Q3's own table. The implementation
+strips the anchor before the join; the table was always right.
+
+### 12.3 [corrected, C4] Verification runs after the graceful tier too
+
+AC-11 was written for the forced tier. That left the graceful path reporting
+success on nothing more than the launcher being reaped. `verify()` now runs
+after both tiers, and AC-15's bound is therefore
+`STOP_GRACE_S + 2 * STOP_VERIFY_TIMEOUT_S` = 15 s against a 30 s grace. A
+verification that is going to succeed resolves in microseconds, so the second
+one only costs anything on a stop that has already gone wrong.
+
+### 12.4 [not a defect] Two threads waiting on one `Popen`
+
+`agent/executor.py` parks a thread in `proc.wait()` and `verify()` asks a
+second. On POSIX the loser of `os.waitpid` takes `ChildProcessError`, which
+CPython translates to `sts = 0` — a forcibly killed job written down as
+`COMPLETED`. It cannot happen: since **CPython 3.9** `Popen._wait` holds
+`_waitpid_lock` and re-checks `self.returncode` under it, with the comment
+*"Another thread waited."* The evidence is in `subprocess.py` at
+`Popen._wait`/`_try_wait`, and the guard is a test that races four waiters on
+one real process and requires all four to agree. The floor here is 3.11, so
+every supported interpreter has the lock.
+
+### 12.5 Corrections index
+
+| # | statement | what it now says |
+|---|---|---|
+| C1 | §4 Q2 tier order; §6.1 token list | sweep first; four tokens, the fourth being `leader only` |
+| C2 | §4 Q3 pseudocode | strip the anchor before joining on a rooted-but-not-absolute path |
+| C3 | §4 Q8(b) | the **signal** is the second argument, and a *variable* signal must be caught too; `killpg` is banned outright |
+| C4 | AC-11 | the negative case is a `Popen` whose `wait` times out, not an injected clock; and verification covers the graceful tier |
+| C5 | §9's grep | dropped `sched_setaffinity` from the substring search and asserted "no bare reference" over the AST instead |
+| C6 | §4 Q5's table | `launch_failed:process_creation_failed: <e>` added; the table presented itself as complete |

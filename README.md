@@ -289,6 +289,15 @@ is one of those. Anything else is a startup error listing every accepted value, 
 `-NoProfile -NonInteractive -Command`) — a configurable flag set is how a quoting contract gets
 broken.
 
+> **Naming `bash` on Windows usually gets you WSL.** `sh`, `bash` and `dash` are resolved with
+> `shutil.which`, and on a stock Windows install the only `bash.exe` on `PATH` is
+> `C:\Windows\System32\bash.EXE` — the **WSL** launcher, not an argv `-c` shell. It will not
+> understand `E:\…` paths, and its output is a second distribution's, not this node's. The agent
+> will launch it, because that is what was asked for; the launch log line names the program it
+> resolved, so `shell=C:\Windows\system32\bash.EXE` is the thing to look for. If you want a real
+> POSIX shell on a Windows node, point `AGENT_SHELL` at Git's `sh.exe` by **path**:
+> `AGENT_SHELL = "C:\\Program Files\\Git\\bin\\sh.exe"`.
+
 > **The quoting contract.** The agent assembles `[shell program] + [fixed flags] + [command]` and
 > hands it to the operating system **verbatim**. It performs no `shlex.split`, no re-quoting,
 > no re-escaping and no environment substitution. The configured shell then parses the `command`
