@@ -566,15 +566,31 @@ async def test_a_degraded_node_says_it_could_not_confirm_the_stop(
         kill_anything_left_alive(recorded)
 
 
+def kill_anything_left_alive(recorded: list[int]) -> None:
+    """End any rank a test deliberately left running.
+
+    ``BoundedLineWriter`` and the stop path both end up waiting on a process
+    that has been told to sleep for five minutes, and a suite that leaks one
+    per run is a suite that fails on somebody else's machine next week.
+    """
+    for pid in recorded:
+        if not psutil.pid_exists(pid):
+            continue
+        try:
+            process = psutil.Process(pid)
+            process.terminate()
+            gone, _alive = psutil.wait_procs([process], timeout=5.0)
+            for survivor in gone:
+                survivor.kill()
+        except psutil.Error:
+            continue
+
+
 def _degraded_tree(proc: subprocess.Popen, *, log: Any, create_job: Any = None) -> Any:
     """A :class:`ProcessTree` with the job object taken away, as AC-12 makes it."""
     return ProcessTree(proc, log=log, create_job=lambda _log: None)
 
 
-def kill_anything_left_alive(recorded: list[int]) -> None:
-    """End any rank a test deliberately left running.
-
-    ``BoundedLineWriter`` and the stop path both end up waiting on a process
 def _unreadable_tree(
     proc: subprocess.Popen, *, log: Any, create_job: Any = None
 ) -> Any:
@@ -674,22 +690,6 @@ async def test_a_stop_cannot_be_confirmed_is_never_reported_as_a_clean_one(
         )
     finally:
         kill_anything_left_alive(recorded)
-
-
-    that has been told to sleep for five minutes, and a suite that leaks one
-    per run is a suite that fails on somebody else's machine next week.
-    """
-    for pid in recorded:
-        if not psutil.pid_exists(pid):
-            continue
-        try:
-            process = psutil.Process(pid)
-            process.terminate()
-            gone, _alive = psutil.wait_procs([process], timeout=5.0)
-            for survivor in gone:
-                survivor.kill()
-        except psutil.Error:
-            continue
 
 
 async def test_a_stop_before_launch_writes_a_terminal_state_with_no_exit_code(
