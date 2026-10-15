@@ -98,7 +98,12 @@ SHELL_NOT_FOUND_EXIT_CODE: Final[int] = 127
 
 
 class ExecutionResult:
-    """Result of a job execution."""
+    """Result of a job execution.
+
+    ``stdout_path`` and ``stderr_path`` are the log files that were **written**.
+    ``""`` means the job produced no output on that stream, and it is not a
+    path a caller is expected to open (issue #125 S6).
+    """
 
     def __init__(
         self,
@@ -312,6 +317,24 @@ def _reader_thread(
         logger.warning("log reader thread error: %s", e)
 
 
+def _log_path_if_written(path: Path) -> str:
+    """The log file's path, or ``""`` when the job never wrote to that stream.
+
+    ``BoundedLineWriter`` opens lazily, so a stream a job says nothing on has
+    no file -- and a caller handed a path to a file that does not exist has to
+    find that out with a ``stat`` and then decide what a missing log means.
+    Returning ``""`` for "this stream produced nothing" is the same convention
+    the pre-launch failures already use for "there is no output at all", and it
+    is honest about the fact that a command whose newlines ``cmd.exe`` swallowed
+    can still be ``COMPLETED`` with ``error: null`` and no captured output.
+
+    The writer's own lifecycle -- create on first write, or create up front --
+    is issue #127's to decide; changing it here would reopen that issue and put
+    two writers on one helper (issue #125 S6).
+    """
+    return str(path) if path.exists() else ""
+
+
 async def _stop_tree(
     tree: ProcessTree,
     job_id: str,
@@ -323,6 +346,24 @@ async def _stop_tree(
     sleep is a bet that the tree died by then, and the 100 ms poll loop it
     replaced was a race between the poll noticing and the timer firing.
 
+    **The graceful tier is verified too**, and that is the part that was
+    missing. A launcher that exits is not a tree that stopped: a descendant
+    which refused the polite request keeps running, re-parents, and is then
+    unreachable by every mechanism that walks parent/child links -- on a node
+    with a Job Object it is reaped by ``KILL_ON_JOB_CLOSE`` on ``close()``,
+    and on a node without one it is an orphan that holds its pipes, its
+    working directory and its GPUs forever. So "the launcher is gone" is never
+    taken as an answer; it is a precondition for looking, and if the
+    verification then fails the stop escalates rather than reporting success.
+
+    Cost, stated honestly: the worst case is the grace plus **two**
+    verifications, ``STOP_GRACE_S + 2 * STOP_VERIFY_TIMEOUT_S`` = 15 s against
+    a 30 s shutdown grace. A verification that is going to succeed resolves in
+    microseconds -- the accounting read is not free but it is not a sleep --
+    so the second one only ever costs anything on a stop that has already gone
+    wrong. ``test_process.py`` pins the invariant as a constant-to-constant
+    assertion so the two numbers cannot drift apart again.
+
     The two tiers are logged separately and differently on purpose. "Stopped
     after the graceful request" and "required the forced stop" are the
     difference between a job that checkpointed and one that had to be taken
@@ -331,10 +372,25 @@ async def _stop_tree(
     logger.info("stopping job %s: grace %.1fs", job_id, STOP_GRACE_S)
     tree.stop_gracefully()
     await asyncio.wait({exit_waiter}, timeout=STOP_GRACE_S)
-    if exit_waiter.done():
-        logger.info("job %s stopped after the graceful request", job_id)
-        return True
 
+    if exit_waiter.done():
+        if await asyncio.to_thread(tree.verify, STOP_VERIFY_TIMEOUT_S):
+            logger.info("job %s stopped after the graceful request", job_id)
+            return True
+        logger.warning(
+            "job %s stopped its launcher but the tree is still running after %.1fs",
+            job_id,
+            STOP_VERIFY_TIMEOUT_S,
+        )
+    else:
+        logger.warning(
+            "job %s did not stop within the %.1fs grace", job_id, STOP_GRACE_S
+        )
+
+    # One line for the escalation, whichever route led here: "required the
+    # forced stop" is the phrase an operator reads to learn a job was taken
+    # out rather than shut down, and a descendant that outlives its parent
+    # arrives by the first branch.
     logger.warning("job %s required the forced stop", job_id)
     tree.stop_forced()
     gone = await asyncio.to_thread(tree.verify, STOP_VERIFY_TIMEOUT_S)
@@ -721,6 +777,6 @@ async def execute_job(  # noqa: C901 - one function, many pre-launch validation 
     return ExecutionResult(
         exit_code=exit_code,
         error_code=error_code,
-        stdout_path=str(stdout_path),
-        stderr_path=str(stderr_path),
+        stdout_path=_log_path_if_written(stdout_path),
+        stderr_path=_log_path_if_written(stderr_path),
     )
