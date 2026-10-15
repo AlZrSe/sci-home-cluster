@@ -363,6 +363,20 @@ class Settings(BaseSettings):
             )
         return v
 
+    # Static frontend serving.
+    #
+    # Off by default. The backend is an API server; nothing about it should grow a
+    # dependency on a frontend build being present. It is switched on in the
+    # container image (docker/Dockerfile sets SERVE_FRONTEND=true), where the same
+    # process serves both halves on one origin so the browser needs no CORS.
+    #
+    # FRONTEND_DIR points at the *client output* of a TanStack Start SPA build -
+    # .output/public, which holds the hashed asset bundles plus the prerendered
+    # `_shell.html`. Not at .output, which also holds the nitro server bundle this
+    # process never runs.
+    SERVE_FRONTEND: bool = False
+    FRONTEND_DIR: str = str(_REPO_ROOT / "frontend" / ".output" / "public")
+
     # CORS origins
     BACKEND_CORS_ORIGINS: List[Union[str, AnyHttpUrl]] = [
         "http://localhost:3000",
