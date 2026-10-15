@@ -326,6 +326,40 @@ transport decision (#92) the folder is the only channel to a node:
   `/health` and `GET /syncthing/status` read — not from `os.environ`, so the backend has one
   folder rather than two.
 
+### Job execution: shell and process tree
+
+The frontend never launches anything, but it *renders* what a job did, and this section is
+here because #98's AC-2 asked for the execution model to be documented and it was not (issue
+#125 AC-19). The full decision record is `docs/specs/125-windows-job-execution.md`; the
+operator-facing version is the **"What shell runs a job"** section of the root `README.md`.
+
+A submitted `command` is a **shell command line**, not a program. The agent assembles
+`[shell] + [fixed flags] + [command]` and hands it to the operating system verbatim — no
+`shlex.split`, no re-quoting, no re-escaping. Which shell is a node-level setting
+(`AGENT_SHELL`, defaulting to `cmd.exe /d /s /c` on Windows and `/bin/sh -c` elsewhere), and on
+Windows the command line is assembled as a single string because `cmd.exe` does not use the
+`list2cmdline` quoting rules Python would apply to an argv list.
+
+The job runs in its own stoppable process group, so stopping it takes down the launcher **and
+everything it started** — `SIGTERM` then `SIGKILL` on POSIX; a Job Object armed with
+`KILL_ON_JOB_CLOSE` plus `CTRL_BREAK_EVENT` then `TerminateJobObject` and an independent
+`taskkill /T /F` sweep on Windows. Every stop is followed by a **verification**, and a
+verification that times out is recorded as `stop_failed:tree_survived` rather than reported as a
+clean stop.
+
+Two things the dashboard can therefore rely on:
+
+- `exit_code` is the **real** wait status. There is no sentinel: `-1` is the backend's cancel
+  marker, `0xC000013A` (3221225786) is what a Windows process killed by `CTRL_BREAK_EVENT`
+  actually returns, and `1` is what `TerminateJobObject` produces. A job stopped before it
+  launched has `exit_code: null` because no process ever ran.
+- `error` carries the provenance, one documented code, no free text: `launch_failed:*` for
+  something that prevented the start, `process_failed:exit_code=<N>` for a job that ran and
+  failed, `stopped:shutdown` for a job the agent stopped, and `stop_failed:tree_survived` when
+  the forced stop ran and could not be confirmed. **Security:** the agent holds no credential,
+  but a submitted `command` runs with the submitting user's privileges on that node. Only
+  trusted submitters.
+
 ---
 
 ## Open Questions for Implementation
