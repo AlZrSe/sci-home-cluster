@@ -66,6 +66,128 @@ def settings_for(root: Path, node_id: str = "node-01", **env: str) -> Any:
     )
 
 
+async def drive_a_shutdown(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    tree_script: Callable[..., Tree],
+    *,
+    shutdown_grace_s: float,
+    refuse_polite: bool = False,
+) -> tuple[int, float, list[int], str]:
+    """Claim a job, run the agent, stop it, and report what the stop cost.
+
+    The four things N4 needs from one drive: the agent's exit code, the wall
+    clock of the shutdown, the pids of the tree, and the node file afterwards.
+    Returned rather than asserted so a test can choose what it is claiming.
+    """
+    root = tmp_path / "syncthing"
+    (root / "jobs" / "job-1").mkdir(parents=True)
+    (root / "nodes").mkdir(parents=True)
+    monkeypatch.setenv("SYNCTHING_ROOT", str(root))
+
+    tree = tree_script(refuse_polite=refuse_polite)
+    _claim(root, tree.command)
+
+    agent = Agent(
+        settings_for(root, AGENT_SHUTDOWN_GRACE_S=str(shutdown_grace_s)),
+        watcher=RecordingWatcher(resolve_paths(root, "node-01")),
+    )
+    stop = asyncio.Event()
+    agent._stop = stop
+    running = asyncio.create_task(agent.run())
+    recorded: list[int] = []
+    try:
+        await wait_until(
+            lambda: agent.supervisor is not None,
+            "the supervisor never started",
+            timeout=TREE_TIMEOUT_S,
+        )
+        await agent._maybe_claim_job(root / "jobs" / "job-1" / "state.yaml")
+        await wait_until(
+            lambda: len(tree.recorded()) >= tree.expected_pids,
+            f"the tree never started; pids file {tree.pids_file}",
+            timeout=TREE_TIMEOUT_S,
+        )
+        recorded = tree.recorded()
+        started = time.monotonic()
+        stop.set()
+        exit_code = await asyncio.wait_for(running, timeout=TREE_TIMEOUT_S)
+        elapsed = time.monotonic() - started
+    finally:
+        if not running.done():
+            running.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await running
+        for pid in recorded:
+            if psutil.pid_exists(pid):
+                try:
+                    psutil.Process(pid).kill()
+                except psutil.Error:
+                    pass
+    node_file = (root / "nodes" / "node-01.yaml").read_text(encoding="utf-8")
+    return exit_code, elapsed, recorded, node_file
+
+
+@pytest.mark.parametrize("shutdown_grace_s", [0.5, 1.0])
+async def test_a_shutdown_never_exceeds_the_configured_grace(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    tree_script: Callable[..., Tree],
+    shutdown_grace_s: float,
+) -> None:
+    """N4: a legal ``AGENT_SHUTDOWN_GRACE_S`` is a bound, at every legal size.
+
+    Measured before the fix at 1.0 s: a 5.03 s shutdown, 5x over, because the
+    execution task's own ``STOP_GRACE_S`` was spent inside ``_stop_tree``
+    before ``wait_for`` around the task could cancel it. The stop is now sized
+    from the configured grace, so the promise AC-15 states -- *a single file
+    cannot make the agent exceed its own documented grace* -- holds for a value
+    the operator chose, not only for the default.
+    """
+    exit_code, elapsed, recorded, _node_file = await drive_a_shutdown(
+        tmp_path,
+        monkeypatch,
+        tree_script,
+        shutdown_grace_s=shutdown_grace_s,
+    )
+
+    assert exit_code == 0
+    assert elapsed < shutdown_grace_s + 0.5, (
+        f"a {shutdown_grace_s}s documented grace produced a {elapsed:.2f}s "
+        "shutdown (issue #125 N4)"
+    )
+    assert recorded, "the tree never started, so nothing was measured"
+
+
+@pytest.mark.parametrize("shutdown_grace_s", [0.5, 1.0])
+async def test_a_shutdown_whose_tree_refuses_still_fits_the_configured_grace(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    tree_script: Callable[..., Tree],
+    shutdown_grace_s: float,
+) -> None:
+    """N4's harder half: the stop has to *use* the budget it was given.
+
+    A cooperative tree exits inside the first wait, so it never reaches the
+    place the overrun happened. This one refuses the polite request, which is
+    what forces the grace to be spent.
+    """
+    exit_code, elapsed, recorded, _node_file = await drive_a_shutdown(
+        tmp_path,
+        monkeypatch,
+        tree_script,
+        shutdown_grace_s=shutdown_grace_s,
+        refuse_polite=True,
+    )
+
+    assert exit_code == 0
+    assert elapsed < shutdown_grace_s + 0.5, (
+        f"a tree that refused the stop overran a {shutdown_grace_s}s grace by "
+        f"{elapsed:.2f}s (issue #125 N4)"
+    )
+    assert recorded
+
+
 async def test_a_shutdown_with_a_job_in_flight_stops_the_tree_and_writes_the_state(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

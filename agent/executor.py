@@ -317,6 +317,34 @@ def _reader_thread(
         logger.warning("log reader thread error: %s", e)
 
 
+def stop_budget(shutdown_grace_s: float | None) -> tuple[float, float]:
+    """``(grace, verify)`` for one job stop, derived from the shutdown grace.
+
+    ``STOP_GRACE_S`` and ``STOP_VERIFY_TIMEOUT_S`` are the **documented
+    default**, sized for the default 30 s ``SHUTDOWN_GRACE_S``: 5 + 5 + 5 = 15,
+    half of it. They are not, however, a bound the agent may exceed -- and
+    ``AGENT_SHUTDOWN_GRACE_S`` is validated only as "greater than zero", so an
+    operator who set it to 1.0 got a shutdown that took 5.03 s: the execution
+    task's own grace is spent inside ``_stop_tree`` before ``wait_for`` around
+    the task can cancel it. Bounded and reported, so not an orphan -- but it is
+    the documented promise being exceeded 5x by one configuration
+    (issue #125 N4).
+
+    So the budget is derived rather than assumed: a stop may use at most **half**
+    the configured shutdown grace, split into the three waits it actually makes.
+    The default is unchanged -- half of 30 is the 15 the constants already
+    describe -- and every other value scales down, so a small grace produces a
+    small stop rather than an overrun.
+
+    ``None`` means "there is no agent around this job": the constants, which is
+    what every direct ``execute_job`` caller and the unit tests get.
+    """
+    if shutdown_grace_s is None:
+        return STOP_GRACE_S, STOP_VERIFY_TIMEOUT_S
+    total = min(STOP_GRACE_S + 2 * STOP_VERIFY_TIMEOUT_S, shutdown_grace_s / 2)
+    return total / 3, total / 3
+
+
 def _log_path_if_written(path: Path) -> str:
     """The log file's path, or ``""`` when the job never wrote to that stream.
 
@@ -339,6 +367,8 @@ async def _stop_tree(
     tree: ProcessTree,
     job_id: str,
     exit_waiter: "asyncio.Task[int]",
+    grace_s: float = STOP_GRACE_S,
+    verify_s: float = STOP_VERIFY_TIMEOUT_S,
 ) -> bool:
     """Escalate from polite to forced, then **verify**. ``True`` when it is gone.
 
@@ -357,35 +387,37 @@ async def _stop_tree(
     verification then fails the stop escalates rather than reporting success.
 
     Cost, stated honestly: the worst case is the grace plus **two**
-    verifications, ``STOP_GRACE_S + 2 * STOP_VERIFY_TIMEOUT_S`` = 15 s against
-    a 30 s shutdown grace. A verification that is going to succeed resolves in
-    microseconds -- the accounting read is not free but it is not a sleep --
-    so the second one only ever costs anything on a stop that has already gone
-    wrong. ``test_process.py`` pins the invariant as a constant-to-constant
-    assertion so the two numbers cannot drift apart again.
+    verifications. At the documented default that is 5 + 5 + 5 = 15 s against a
+    30 s shutdown grace, and ``grace_s``/``verify_s`` are what
+    :func:`stop_budget` derived from whatever the agent is actually configured
+    with -- a smaller ``SHUTDOWN_GRACE_S`` shrinks the stop rather than being
+    overrun by it (issue #125 N4). A verification that is going to succeed
+    resolves in microseconds -- the accounting read is not free but it is not a
+    sleep -- so the second one only ever costs anything on a stop that has
+    already gone wrong. ``test_process.py`` pins the invariant as a
+    constant-to-constant assertion and ``test_execution.py`` sweeps several
+    configured values.
 
     The two tiers are logged separately and differently on purpose. "Stopped
     after the graceful request" and "required the forced stop" are the
     difference between a job that checkpointed and one that had to be taken
     out, and an operator reading a stop needs to know which happened.
     """
-    logger.info("stopping job %s: grace %.1fs", job_id, STOP_GRACE_S)
+    logger.info("stopping job %s: grace %.1fs", job_id, grace_s)
     tree.stop_gracefully()
-    await asyncio.wait({exit_waiter}, timeout=STOP_GRACE_S)
+    await asyncio.wait({exit_waiter}, timeout=grace_s)
 
     if exit_waiter.done():
-        if await asyncio.to_thread(tree.verify, STOP_VERIFY_TIMEOUT_S):
+        if await asyncio.to_thread(tree.verify, verify_s):
             logger.info("job %s stopped after the graceful request", job_id)
             return True
         logger.warning(
             "job %s stopped its launcher but the tree is still running after %.1fs",
             job_id,
-            STOP_VERIFY_TIMEOUT_S,
+            verify_s,
         )
     else:
-        logger.warning(
-            "job %s did not stop within the %.1fs grace", job_id, STOP_GRACE_S
-        )
+        logger.warning("job %s did not stop within the %.1fs grace", job_id, grace_s)
 
     # One line for the escalation, whichever route led here: "required the
     # forced stop" is the phrase an operator reads to learn a job was taken
@@ -393,14 +425,12 @@ async def _stop_tree(
     # arrives by the first branch.
     logger.warning("job %s required the forced stop", job_id)
     tree.stop_forced()
-    gone = await asyncio.to_thread(tree.verify, STOP_VERIFY_TIMEOUT_S)
+    gone = await asyncio.to_thread(tree.verify, verify_s)
     if gone:
         logger.info("verified: 0 processes remain for job %s", job_id)
     else:
         logger.error(
-            "job %s: the tree still has processes after %.1fs",
-            job_id,
-            STOP_VERIFY_TIMEOUT_S,
+            "job %s: the tree still has processes after %.1fs", job_id, verify_s
         )
     return gone
 
@@ -445,6 +475,7 @@ async def execute_job(  # noqa: C901 - one function, many pre-launch validation 
     syncthing_root: Path,
     stop_event: asyncio.Event,
     shell: str = "auto",
+    shutdown_grace_s: float | None = None,
     watcher: FolderWatcher | None = None,
 ) -> ExecutionResult:
     """
@@ -466,8 +497,14 @@ async def execute_job(  # noqa: C901 - one function, many pre-launch validation 
     ``shell`` is the already-resolved ``AGENT_SHELL`` value rather than the
     settings object: one string is trivially overridable in a test without
     building a settings model, and it keeps this module importable without
-    :mod:`agent.config` (issue #125 §6.4.1).
+    :mod:`agent.config` (issue #125 §6.4.1). ``shutdown_grace_s`` is the
+    matching decision for the stop's own budget, for the same reason and
+    because ``SHUTDOWN_GRACE_S`` is validated only as "greater than zero" -- a
+    stop sized by the constants alone can overrun a small configured grace
+    several times over (issue #125 N4). ``None`` on both means "no agent around
+    this job", and the documented defaults apply.
     """
+    stop_grace, stop_verify = stop_budget(shutdown_grace_s)
     # Validate working directory
     working_dir, error = validate_and_prepare_working_dir(
         job_spec.working_dir, syncthing_root
@@ -717,7 +754,9 @@ async def execute_job(  # noqa: C901 - one function, many pre-launch validation 
         # its own terms; reporting it as stopped would be wrong.
         if stop_waiter.done() and not exit_waiter.done():
             stop_reason = "shutdown"
-            tree_verified = await _stop_tree(tree, job_id, exit_waiter)
+            tree_verified = await _stop_tree(
+                tree, job_id, exit_waiter, stop_grace, stop_verify
+            )
     finally:
         for waiter in (exit_waiter, stop_waiter):
             waiter.cancel()

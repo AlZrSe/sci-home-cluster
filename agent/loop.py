@@ -504,6 +504,12 @@ class Agent:
 
         The task runs concurrently with heartbeat, log shipping, and event drain.
         On completion, it clears _current_job_id and updates the node spec.
+
+        The stop a job gets is sized from ``SHUTDOWN_GRACE_S`` rather than from
+        a constant: the grace is validated only as "greater than zero", so a
+        stop bounded by the module constants can overrun a small configured
+        grace several times over (issue #125 N4). The agent passes its own
+        budget down and the executor derives the two waits from it.
         """
         from shared.file_ops.yaml_utils import read_yaml
         from shared.schemas.job_state import JobState
@@ -525,6 +531,7 @@ class Agent:
                     syncthing_root=self._paths.root,
                     stop_event=self._job_stop,
                     shell=self._settings.SHELL,
+                    shutdown_grace_s=self._settings.SHUTDOWN_GRACE_S,
                     watcher=self._watcher,
                 )
             except Exception as e:

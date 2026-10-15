@@ -24,6 +24,7 @@ import os
 import subprocess
 import sys
 import threading
+import time
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -35,9 +36,12 @@ import pytest
 from agent import executor as executor_module
 from agent.executor import (
     JOB_ERRORS,
+    STOP_GRACE_S,
+    STOP_VERIFY_TIMEOUT_S,
     ExecutionResult,
     execute_job,
     resolve_working_dir,
+    stop_budget,
     validate_and_prepare_working_dir,
 )
 from agent.paths import AgentPaths, resolve_paths
@@ -992,6 +996,81 @@ def test_the_vocabulary_and_the_exit_status_table_are_two_different_tables() -> 
     }
     assert statuses == {0, 1, 2, 3, 4}
     assert not statuses & set(JOB_ERRORS.values())
+
+
+@pytest.mark.parametrize(
+    "shutdown_grace_s",
+    [0.5, 1.0, 5.0, 10.0, 30.0, 300.0],
+)
+def test_a_stop_never_claims_more_than_half_the_configured_shutdown_grace(
+    shutdown_grace_s: float,
+) -> None:
+    """N4: AC-15's promise, checked against every grace an operator can set.
+
+    ``AGENT_SHUTDOWN_GRACE_S`` is validated only as "greater than zero", so
+    "the stop fits inside the shutdown grace" has to hold for *any* legal
+    value, not only the default. Before this, a grace of 1.0 bought a 5.03 s
+    shutdown: the execution task's own 5 s grace was spent inside
+    ``_stop_tree`` before ``wait_for`` around the task could cancel it.
+    """
+    grace, verify = stop_budget(shutdown_grace_s)
+
+    assert grace > 0, "a stop that cannot wait is not a stop"
+    assert verify > 0
+    assert grace + 2 * verify <= shutdown_grace_s + 1e-9, (
+        f"a stop may claim at most half of {shutdown_grace_s}s, and the worst "
+        f"case is grace + 2 verifies = {grace + 2 * verify:.3f}s"
+    )
+
+
+def test_the_documented_default_is_exactly_what_the_constants_describe() -> None:
+    """N4: deriving the budget must not quietly change the shipped default.
+
+    30 s configured, and ``STOP_GRACE_S``/``STOP_VERIFY_TIMEOUT_S`` are already
+    the numbers that fit inside it. If a future edit changes one of them, this
+    says whether the documented behaviour moved or the derivation did.
+    """
+    assert stop_budget(30.0) == (STOP_GRACE_S, STOP_VERIFY_TIMEOUT_S)
+
+
+def test_no_agent_around_the_job_means_the_documented_constants() -> None:
+    """``None`` is the "direct caller" case, and keeps the old behaviour."""
+    assert stop_budget(None) == (STOP_GRACE_S, STOP_VERIFY_TIMEOUT_S)
+
+
+async def test_a_job_stop_fits_the_budget_it_was_given(
+    harness: Harness,
+    tree_script: Callable[..., Tree],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """N4, at the level the executor spends the time: a refusing tree.
+
+    The module constants are monkeypatched *high* precisely so the test can see
+    which pair the executor used: with them at 5 s and a configured grace of
+    1 s, the stop must take well under a second, not five.
+    """
+    monkeypatch.setattr(executor_module, "STOP_GRACE_S", 5.0)
+    monkeypatch.setattr(executor_module, "STOP_VERIFY_TIMEOUT_S", 5.0)
+    tree = tree_script(refuse_polite=True)
+    spec = harness.spec(tree.command)
+    harness.claim(spec)
+    stop_event = asyncio.Event()
+
+    task = asyncio.create_task(run_job(harness, spec, stop_event, shutdown_grace_s=1.0))
+    recorded = await wait_for_tree(tree)
+    stop_event.set()
+    started = time.monotonic()
+    result = await task
+    elapsed = time.monotonic() - started
+
+    try:
+        assert result.error_code == "stopped:shutdown"
+        assert elapsed < 1.0, (
+            "a stop sized by the module constants overruns a 1.0s configured "
+            f"grace by {elapsed:.2f}s (issue #125 N4)"
+        )
+    finally:
+        kill_anything_left_alive(recorded)
 
 
 # --- AC-17/AC-18: the mechanical pins -------------------------------------
