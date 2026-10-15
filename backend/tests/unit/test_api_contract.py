@@ -19,7 +19,6 @@ from shared.schemas import (
     JobStatus,
     NodeSpec,
     Resources,
-    RetryPolicy,
     TokenValidationResponse,
 )
 
@@ -42,8 +41,6 @@ class TestJobSpecContract:
         assert spec.working_dir == "/sync/projects/new-run"
         assert spec.paths.input is None
         assert spec.paths.output is None
-        assert spec.retry.max_retries == 3
-        assert spec.retry.retry_delay_seconds == 60
         assert spec.env == {}
         assert spec.resources.vram_gb == 0
 
@@ -87,15 +84,6 @@ class TestJobSpecContract:
             self._resources(memory_gb=0)
         with pytest.raises(ValidationError):
             self._resources(gpus=99)
-
-    def test_retry_bounds_and_defaults(self):
-        assert RetryPolicy().max_retries == 3
-        with pytest.raises(ValidationError):
-            RetryPolicy(max_retries=-1)
-        with pytest.raises(ValidationError):
-            RetryPolicy(max_retries=99)
-        with pytest.raises(ValidationError):
-            RetryPolicy(retry_delay_seconds=999999)
 
 
 class TestResponseTypes:

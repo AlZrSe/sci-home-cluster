@@ -8,7 +8,6 @@ from pydantic import BaseModel, Field
 
 from .paths import Paths
 from .resources import Resources
-from .retry import RetryPolicy
 
 
 class JobSpec(BaseModel):
@@ -20,6 +19,5 @@ class JobSpec(BaseModel):
     env: Dict[str, str] = Field(default_factory=dict)
     resources: Resources
     paths: Paths = Field(default_factory=Paths)
-    retry: RetryPolicy = Field(default_factory=RetryPolicy)
 
     model_config = {"from_attributes": True}

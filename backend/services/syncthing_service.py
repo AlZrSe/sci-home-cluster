@@ -15,6 +15,7 @@ from watchdog.events import FileSystemEventHandler
 
 from shared.schemas.job_state import JobState
 from shared.schemas.node_spec import NodeSpec
+from shared.schemas.job_status import JobStatus
 from backend.store import get_store
 from shared.file_ops import read_yaml
 from backend.core.config import settings
@@ -281,6 +282,36 @@ class SyncthingService:
             store = get_store()
             existing_job = await store.get_job(job_id)
             if existing_job:
+                # MONOTONICITY: If existing job is in a terminal state, reject any write
+                # that would change status, exit_code, error, or completed_at.
+                if existing_job.status in (
+                    JobStatus.COMPLETED,
+                    JobStatus.FAILED,
+                    JobStatus.CANCELLED,
+                ):
+                    # Terminal states are final. Log and ignore.
+                    logger.warning(
+                        "Job %s is already %s; "
+                        "ignoring agent write attempting to set %s",
+                        job_id,
+                        existing_job.status.value,
+                        job_state.status.value,
+                    )
+                    return
+
+                # Allow PENDING -> RUNNING, RUNNING -> terminal
+                # But not RUNNING -> PENDING (that's retry_job's job)
+                if (
+                    existing_job.status == JobStatus.RUNNING
+                    and job_state.status == JobStatus.PENDING
+                ):
+                    logger.warning(
+                        "Job %s is RUNNING; ignoring agent write "
+                        "attempting to set PENDING",
+                        job_id,
+                    )
+                    return
+
                 # Update only fields from YAML
                 await store.update_job(
                     job_state.job_id,

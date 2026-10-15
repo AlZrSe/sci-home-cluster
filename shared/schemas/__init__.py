@@ -21,8 +21,6 @@ from .paths import Paths
 from .paths import Paths as JobPaths
 from .resources import Resources
 from .resources import Resources as JobResources
-from .retry import RetryPolicy
-from .retry import RetryPolicy as JobRetry
 from .token_validation import (
     TokenCreateRequest,
     TokenCreateResponse,
@@ -43,7 +41,6 @@ __all__ = [
     "JobPaths",
     "JobQuery",
     "JobResources",
-    "JobRetry",
     "JobSpec",
     "JobState",
     "JobStatus",
@@ -51,7 +48,6 @@ __all__ = [
     "NodeSpec",
     "Paths",
     "Resources",
-    "RetryPolicy",
     "TokenCreateRequest",
     "TokenCreateResponse",
     "TokenRefreshRequest",

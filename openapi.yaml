@@ -1262,9 +1262,6 @@
           },
           "paths": {
             "$ref": "#/components/schemas/Paths"
-          },
-          "retry": {
-            "$ref": "#/components/schemas/RetryPolicy"
           }
         },
         "type": "object",
@@ -1541,27 +1538,6 @@
         ],
         "title": "Resources",
         "description": "Computing resources required by a job."
-      },
-      "RetryPolicy": {
-        "properties": {
-          "max_retries": {
-            "type": "integer",
-            "maximum": 10.0,
-            "minimum": 0.0,
-            "title": "Max Retries",
-            "default": 3
-          },
-          "retry_delay_seconds": {
-            "type": "integer",
-            "maximum": 3600.0,
-            "minimum": 0.0,
-            "title": "Retry Delay Seconds",
-            "default": 60
-          }
-        },
-        "type": "object",
-        "title": "RetryPolicy",
-        "description": "Retry configuration for a job."
       },
       "TokenCreateRequest": {
         "properties": {

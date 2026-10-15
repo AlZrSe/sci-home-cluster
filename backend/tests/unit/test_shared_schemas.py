@@ -9,7 +9,6 @@ from shared.schemas.job_spec import JobSpec
 from shared.schemas.job_state import JobState
 from shared.schemas.job_resources import JobResources
 from shared.schemas.job_paths import JobPaths
-from shared.schemas.job_retry import JobRetry
 from shared.schemas.job_metrics import JobMetrics, JobMetricsSummary
 from shared.schemas.node_spec import NodeSpec, GPUInfo
 from shared.schemas.gpu_metric import GPUMetric
@@ -154,34 +153,10 @@ def test_job_paths():
     assert data["output"] == "/data/output"
 
 
-def test_job_retry():
-    """Test JobRetry model."""
-    retry = JobRetry(max_retries=5, retry_delay_seconds=120)
-    assert retry.max_retries == 5
-    assert retry.retry_delay_seconds == 120
-
-    # Test serialization
-    data = retry.model_dump()
-    assert data["max_retries"] == 5
-    assert data["retry_delay_seconds"] == 120
-
-    # Bounds are enforced.
-    with pytest.raises(ValidationError):
-        JobRetry(max_retries=-1, retry_delay_seconds=60)
-    with pytest.raises(ValidationError):
-        JobRetry(max_retries=3, retry_delay_seconds=99999)
-
-    # Defaults match the API contract.
-    defaults = JobRetry()
-    assert defaults.max_retries == 3
-    assert defaults.retry_delay_seconds == 60
-
-
 def test_job_spec():
     """Test JobSpec model."""
     resources = JobResources(gpus=1, cpus=4, memory_gb=16, vram_gb=8)
     paths = JobPaths(input="/tmp/input", output="/tmp/output")
-    retry = JobRetry(max_retries=3, retry_delay_seconds=60)
 
     job_spec = JobSpec(
         name="test-job",
@@ -190,7 +165,6 @@ def test_job_spec():
         env={"VAR": "value"},
         resources=resources,
         paths=paths,
-        retry=retry,
     )
 
     assert job_spec.name == "test-job"
@@ -199,7 +173,6 @@ def test_job_spec():
     assert job_spec.env == {"VAR": "value"}
     assert job_spec.resources == resources
     assert job_spec.paths == paths
-    assert job_spec.retry == retry
 
     # Test serialization
     data = job_spec.model_dump()
@@ -208,7 +181,7 @@ def test_job_spec():
     assert data["working_dir"] == "/workspace"
     assert data["env"] == {"VAR": "value"}
 
-    # working_dir, paths and retry are optional with defaults.
+    # working_dir and paths are optional with defaults.
     minimal = JobSpec(
         name="minimal-job",
         command="python train.py",
@@ -217,7 +190,6 @@ def test_job_spec():
     assert minimal.working_dir == "/sync/projects/new-run"
     assert minimal.paths.input is None
     assert minimal.paths.output is None
-    assert minimal.retry.max_retries == 3
     assert minimal.env == {}
 
     # name and command are validated.
@@ -258,7 +230,6 @@ def test_job_state():
         env={},
         resources=JobResources(gpus=1, cpus=1, memory_gb=1, vram_gb=1),
         paths=JobPaths(input="/tmp/in", output="/tmp/out"),
-        retry=JobRetry(max_retries=1, retry_delay_seconds=1),
     )
 
     state = JobState(
@@ -268,7 +239,7 @@ def test_job_state():
         node_id="node-01",
         created_at=datetime.now(),
         started_at=datetime.now(),
-        finished_at=None,
+        completed_at=None,
         exit_code=None,
         retry_count=0,
     )
@@ -412,7 +383,6 @@ def test_json_yaml_serialization():
 
     resources = JobResources(gpus=1, cpus=2, memory_gb=4, vram_gb=2)
     paths = JobPaths(input="/tmp/in", output="/tmp/out")
-    retry = JobRetry(max_retries=3, retry_delay_seconds=60)
 
     job_spec = JobSpec(
         name="serialization-test",
@@ -421,7 +391,6 @@ def test_json_yaml_serialization():
         env={},
         resources=resources,
         paths=paths,
-        retry=retry,
     )
 
     # Test JSON serialization

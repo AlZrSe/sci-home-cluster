@@ -17,6 +17,8 @@ from backend.core.database import get_session
 from shared.schemas.job_status import JobStatus
 from shared.schemas.job_state import JobState
 from shared.schemas.job_spec import JobSpec
+from shared.schemas.job_resources import Resources
+from shared.schemas.job_paths import Paths
 from shared.schemas.node_spec import NodeSpec, GPUInfo
 from shared.schemas.job_metrics import JobMetrics, JobMetricsSummary
 from shared.schemas.gpu_metric import GPUMetric
@@ -110,14 +112,13 @@ class DatabaseStore:
                 ),
                 working_dir=f"/sync/projects/{name}",
                 env={"PYTHONUNBUFFERED": "1", "CUDA_VISIBLE_DEVICES": "0"},
-                resources={
-                    "gpus": gpus,
-                    "cpus": rnd.choice([4, 8, 12, 16]),
-                    "memory_gb": rnd.choice([8, 16, 32, 64]),
-                    "vram_gb": rnd.choice([8, 12, 16, 24]),
-                },
-                paths={"input": f"data/{name}/in", "output": f"data/{name}/out"},
-                retry={"max_retries": 3, "retry_delay_seconds": 60},
+                resources=Resources(
+                    gpus=gpus,
+                    cpus=rnd.choice([4, 8, 12, 16]),
+                    memory_gb=rnd.choice([8, 16, 32, 64]),
+                    vram_gb=rnd.choice([8, 12, 16, 24]),
+                ),
+                paths=Paths(input=f"data/{name}/in", output=f"data/{name}/out"),
             )
 
         job_models = []

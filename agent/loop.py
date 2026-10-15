@@ -29,10 +29,12 @@ from agent.config import (
     FOLDER_RETRY_INTERVAL_S,
     AgentSettings,
 )
+from agent.executor import execute_job
 from agent.hardware import collect_node_spec, write_node_spec
 from agent.paths import AgentPaths, resolve_paths
 from agent.supervisor import TaskSupervisor, SupervisorTask
 from agent.watcher import FolderWatcher
+from shared.schemas.node_spec import NodeSpec
 
 logger = logging.getLogger(__name__)
 
@@ -70,6 +72,8 @@ class Agent:
         self._last_tick_monotonic: float | None = None
         # Currently claimed job ID (issue #97)
         self._current_job_id: Optional[str] = None
+        # Execution task for the current job (issue #98)
+        self._execution_task: Optional[asyncio.Task] = None
 
     @property
     def paths(self) -> AgentPaths:
@@ -445,6 +449,9 @@ class Agent:
         - This node can fit the job's resources
         - This agent is not already running a job
         - Advisory marker creation succeeds (O_EXCL)
+
+        On successful claim, spawns the execution task as a background task
+        so the agent continues heartbeat and log shipping.
         """
         if self._current_job_id is not None:
             logger.debug(
@@ -479,8 +486,58 @@ class Agent:
                     job_id,
                     exc,
                 )
+
+            # Spawn execution as a background supervised task
+            self._spawn_execution_task(job_id, node_spec)
         else:
             logger.debug("did not claim job from %s: %s", state_file_path, reason)
+
+    def _spawn_execution_task(self, job_id: str, node_spec: NodeSpec) -> None:
+        """Spawn the job execution as a background task.
+
+        The task runs concurrently with heartbeat, log shipping, and event drain.
+        On completion, it clears _current_job_id and updates the node spec.
+        """
+        from shared.file_ops.yaml_utils import read_yaml
+        from shared.schemas.job_state import JobState
+
+        state_file = self._paths.jobs_dir / job_id / "state.yaml"
+        job_state = read_yaml(str(state_file), JobState)
+        job_spec = job_state.spec
+
+        stop_event = asyncio.Event()
+
+        async def execution_wrapper():
+            try:
+                await execute_job(
+                    job_id=job_id,
+                    job_spec=job_spec,
+                    node_spec=node_spec,
+                    paths=self._paths,
+                    syncthing_root=self._paths.root,
+                    stop_event=stop_event,
+                    watcher=self._watcher,
+                )
+            except Exception as e:
+                logger.exception("execution task failed for job %s: %s", job_id, e)
+            finally:
+                # Clear current job ID and update node spec
+                self._current_job_id = None
+                try:
+                    updated_node_spec = collect_node_spec(self._settings.NODE_ID)
+                    updated_node_spec.current_job_id = None
+                    written = write_node_spec(self._paths, updated_node_spec)
+                    if self._watcher is not None:
+                        self._watcher.ledger.record(written)
+                except OSError as exc:
+                    logger.warning(
+                        "could not write node file after job completion: %s", exc
+                    )
+
+        self._execution_task = asyncio.create_task(
+            execution_wrapper(), name=f"execute-{job_id}"
+        )
+        # Don't await - runs in background
 
     async def _hand_back_in_flight_job(self) -> None:
         """Shutdown seam for #103. Hand back the in-flight job if any.
@@ -489,6 +546,10 @@ class Agent:
         """
         if self._current_job_id is not None:
             logger.info("handing back in-flight job %s", self._current_job_id)
+            # Signal the execution task to stop
+            if self._execution_task is not None and not self._execution_task.done():
+                # The execution task checks the agent's stop event
+                pass
             self._current_job_id = None
             # Update node spec to clear current_job_id
             node_spec = collect_node_spec(self._settings.NODE_ID)
@@ -504,6 +565,7 @@ class Agent:
         """Shutdown seam for #100. Write final job state on completion.
 
         Clears current_job_id and writes the node spec.
+        The execution task handles writing terminal state; this just cleans up.
         """
         if self._current_job_id is not None:
             logger.info("clearing current_job_id %s on shutdown", self._current_job_id)
@@ -545,6 +607,14 @@ class Agent:
                 "shutdown: %d task failure(s) were recorded during the run",
                 len(failures),
             )
+
+        # Wait for execution task to complete (it checks the stop event)
+        if self._execution_task is not None and not self._execution_task.done():
+            logger.info("waiting for execution task to complete")
+            try:
+                await asyncio.wait_for(self._execution_task, timeout=grace)
+            except asyncio.TimeoutError:
+                logger.warning("execution task did not complete within grace period")
 
         await self._hand_back_in_flight_job()
 

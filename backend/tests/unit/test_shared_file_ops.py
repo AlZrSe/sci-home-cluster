@@ -15,7 +15,6 @@ from shared.file_ops.yaml_utils import read_yaml, write_yaml, update_yaml
 from shared.schemas.job_spec import JobSpec
 from shared.schemas.job_resources import JobResources
 from shared.schemas.job_paths import JobPaths
-from shared.schemas.job_retry import JobRetry
 
 
 def test_write_and_read_yaml():
@@ -23,7 +22,6 @@ def test_write_and_read_yaml():
     # Create a test JobSpec
     resources = JobResources(gpus=1, cpus=2, memory_gb=4, vram_gb=2)
     paths = JobPaths(input="/tmp/input", output="/tmp/output")
-    retry = JobRetry(max_retries=3, retry_delay_seconds=60)
     original_spec = JobSpec(
         name="test-job",
         command="echo hello",
@@ -31,7 +29,6 @@ def test_write_and_read_yaml():
         env={"TEST": "value"},
         resources=resources,
         paths=paths,
-        retry=retry,
     )
 
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -51,14 +48,12 @@ def test_write_and_read_yaml():
         assert loaded_spec.env == original_spec.env
         assert loaded_spec.resources == original_spec.resources
         assert loaded_spec.paths == original_spec.paths
-        assert loaded_spec.retry == original_spec.retry
 
 
 def test_write_yaml_creates_directory():
     """Test that write_yaml creates directories if they don't exist."""
     resources = JobResources(gpus=1, cpus=1, memory_gb=1, vram_gb=1)
     paths = JobPaths(input="/tmp/in", output="/tmp/out")
-    retry = JobRetry(max_retries=1, retry_delay_seconds=1)
     job_spec = JobSpec(
         name="dir-test",
         command="test",
@@ -66,7 +61,6 @@ def test_write_yaml_creates_directory():
         env={},
         resources=resources,
         paths=paths,
-        retry=retry,
     )
 
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -123,7 +117,6 @@ def test_update_yaml():
     """Test atomic update operation."""
     resources = JobResources(gpus=1, cpus=2, memory_gb=4, vram_gb=2)
     paths = JobPaths(input="/tmp/in", output="/tmp/out")
-    retry = JobRetry(max_retries=3, retry_delay_seconds=60)
     original_spec = JobSpec(
         name="update-test",
         command="echo hello",
@@ -131,7 +124,6 @@ def test_update_yaml():
         env={"OLD": "value"},
         resources=resources,
         paths=paths,
-        retry=retry,
     )
 
     with tempfile.TemporaryDirectory() as tmpdir:

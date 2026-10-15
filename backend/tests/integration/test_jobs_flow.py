@@ -504,17 +504,3 @@ class TestJobValidation:
         data = response.json()
         assert data["spec"]["env"]["CUSTOM_VAR"] == "custom_value"
         assert data["spec"]["env"]["ANOTHER_VAR"] == "another_value"
-
-    @pytest.mark.asyncio
-    async def test_create_job_with_custom_retry(self, async_client):
-        """Test creating a job with custom retry policy."""
-        job_spec = create_job_spec(name="custom-retry-job")
-        job_spec.retry.max_retries = 5
-        job_spec.retry.retry_delay_seconds = 120
-        response = await async_client.post(
-            "/api/v1/jobs/", json=job_spec.model_dump(mode="json")
-        )
-        assert response.status_code == 201
-        data = response.json()
-        assert data["spec"]["retry"]["max_retries"] == 5
-        assert data["spec"]["retry"]["retry_delay_seconds"] == 120

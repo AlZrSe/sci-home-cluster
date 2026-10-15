@@ -941,7 +941,12 @@ async def test_agent_writes_heartbeat_immediately_on_startup(
     )
 
     assert paths.node_file.exists()
+    await wait_until(
+        lambda: agent.supervisor is not None,
+        "the agent never registered its supervisor",
+    )
 
+    assert agent.supervisor is not None
     agent.supervisor.stop_event.set()
     await asyncio.wait_for(running, 5.0)
 
@@ -982,6 +987,11 @@ async def test_agent_writes_heartbeat_immediately_on_resume(
         lambda: paths.node_file.exists(), "the agent never wrote its node file"
     )
 
+    await wait_until(
+        lambda: agent.supervisor is not None,
+        "the agent never registered its supervisor",
+    )
+
     first_content = paths.node_file.read_text()
     assert "last_heartbeat" in first_content
 
@@ -1000,6 +1010,7 @@ async def test_agent_writes_heartbeat_immediately_on_resume(
     second_content = paths.node_file.read_text()
     assert second_content != first_content, "New heartbeat should be written"
 
+    assert agent.supervisor is not None
     agent.supervisor.stop_event.set()
     await asyncio.wait_for(running, 5.0)
 
