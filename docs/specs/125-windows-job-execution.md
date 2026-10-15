@@ -1,27 +1,32 @@
 # Spec: Windows Job Execution — One Shell, One Tree-Stop, One Reachable Stop Event
 
-> **Amended after the SWE and QA cycles (2026-10-15).** Six statements in this
-> document were measured wrong or contradicted by the shipped code, and QA
-> adjudicated all six in the implementer's favour. Each is marked
-> **[corrected]** where it appears and collected in §12. This file is the
-> artifact of record, so a spec that disagrees with the code is a defect, not
-> a note. Nothing outside the corrections was changed.
+> **Amended after three SWE/QA cycles (2026-10-15).** This file is the artifact
+> of record, so a spec that disagrees with the code is a defect, not a note.
+> Nothing outside the corrections was changed.
 >
-> | # | where | what was wrong |
-> |---|---|---|
-> | C1 | §4 Q2, §6.1 | the forced tier's **order**, and a `control_mode` token list one short |
-> | C2 | §4 Q3 | the pseudocode puts the job outside the Syncthing root on Windows |
-> | C3 | §4 Q8(b) | says "first-argument" where it means the signal argument |
-> | C4 | AC-11 | says "injected clock" for a branch no clock can reach |
-> | C5 | §9 | a grep its own §4 Q6 makes unsatisfiable |
-> | C6 | §4 Q5 | a table that presents itself as the full vocabulary, missing one code |
+> **The corrections index is §12.9 and it is the only copy — 12 corrections,
+> C1 through C12.** The header does not restate it, because a summary that is
+> maintained by hand is a summary that is wrong: this header once stopped at C6
+> while §12.9 held C10, and once carried a claim §12.1 had withdrawn by name.
+> Both are now impossible rather than merely fixed —
+> `test_the_header_cannot_disagree_with_the_corrections_index` reads §12.9 and
+> fails if the header's count drifts, names a correction that is not in the
+> index, or omits one that is. Each correction is marked **[corrected]** where
+> it appears in the body.
 >
-> **Two further facts were measured during QA and change the design rather than
-> the wording.** They are set out in §12.1: the Job Object does **not**
-> necessarily hold the tree — §1.6's inheritance assumption fails on the very
-> host this spec was written on — and the stop therefore has to enumerate the
-> tree rather than trust one counter, on the graceful path as well as the
-> forced one.
+> **One measured claim in this document was withdrawn rather than corrected.**
+> An earlier revision of §12.1 asserted, as measured fact, that a `uv` venv
+> launcher creates its child with `CREATE_BREAKAWAY_FROM_JOB` and that
+> everything past it is outside the job for good. It does not reproduce with
+> the ordering production uses, and §12.1 now carries the runs that were
+> actually observed and says what they do and do not support. A reader who
+> remembers the old claim should read §12.1 rather than this header.
+>
+> **What survives from that work, and what carries the design:** the Job
+> Object's own accounting is not sufficient on its own, so `verify()` also
+> enumerates the tree — on the graceful path as well as the forced one, and a
+> probe that cannot read is reported as "cannot confirm" rather than as an
+> empty host.
 
 **Issue**: #125 — "The agent cannot run a job on Windows: /bin/sh, os.killpg and SIGKILL are POSIX-only, and the stop event is never set"
 **Labels**: `agent`, `phase-2`, `ready-for-grooming` → `groomed`
@@ -202,10 +207,11 @@ a **read-only** verification primitive — the only one that answers "is the tre
   and 13 measured runs here produced 0 escapes, so this is a **structural** residual rather than a
   reproduced failure — which is exactly why §4 Q2 pairs the job with an independent sweep instead of
   trusting one mechanism.
-  **[corrected, §12.1]** the window is real but *not* reliably missed: re-measured ten times with a
-  `uv` venv launcher, one run in ten has the redirector's child created before the assignment lands
-  and outside the job for good, and a *delayed* assignment loses the race every time. The job's
-  accounting alone is not sufficient, so `verify()` reads it **and** the enumerated tree.
+  **[corrected, §12.1]** the window is real but *not* reliably missed: with a `uv` venv launcher and
+  the immediate assignment production uses, the job held the whole tree in every run measured
+  (25/25 here, 0 escapes in QA's 7); a *delayed* assignment loses the race in 25 runs out of 25, with
+  a survivor every time. The job's accounting alone is not sufficient, so `verify()` reads it **and**
+  the enumerated tree.
 
 ### 1.7 The current Windows test baseline — 15 failures that predate this issue
 
@@ -425,14 +431,14 @@ The POSIX design from #98 is kept and the Windows design is made its exact mirro
 | tier | POSIX (unchanged) | Windows (new) |
 |---|---|---|
 | **own the tree at launch** | `start_new_session=True` → `setsid` → new process group whose pgid is `proc.pid` | `creationflags=CREATE_NEW_PROCESS_GROUP`, **and** assign `proc.pid` to a Job Object created with `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` |
-| **remember the tree** | not needed: `killpg` addresses the group by pgid and keeps working after the leader is reaped | **[corrected, §12.1]** at the start of **each** tier, enumerate the live descendants of the launcher, assign any the job does **not** already hold, and keep the pids for the verification. A launcher can lose the assignment race — one run in ten on this host — and asking the job's count alone then reads `0` over a live process |
+| **remember the tree** | not needed: `killpg` addresses the group by pgid and keeps working after the leader is reaped | **[corrected, §12.1]** at the start of **each** tier, enumerate the live descendants of the launcher, assign any the job does **not** already hold, and keep the pids for the verification. Insurance: with the immediate assignment production uses, the job held the tree in every run measured — but asking the job's count *alone* cannot see a rank it never held, which is the whole reason the enumeration leg exists |
 | **polite request** | `os.killpg(proc.pid, SIGTERM)` | `proc.send_signal(signal.CTRL_BREAK_EVENT)` → `GenerateConsoleCtrlEvent(CTRL_BREAK_EVENT, pgid)` |
 | **forced** | `os.killpg(proc.pid, SIGKILL)` | **[corrected, §12.1]** `taskkill /T /F /PID <pid>` **first**, then `TerminateJobObject(job, 1)` — the order in the original table makes the sweep inert, because `/T` walks from the launcher and the job kills the launcher |
 | **verify** | `proc.wait()` returns within `STOP_VERIFY_TIMEOUT_S`, after the forced tier | **[corrected, §12.1]** `ActiveProcesses == 0` **and** every remembered pid gone **and** `proc.wait()` returns — and the verification runs after the **graceful** tier as well, so "the launcher exited" is never taken as "the tree stopped" |
 | **a process that ignores the polite request** | survives `SIGTERM`, dies on `SIGKILL` | survives `CTRL_BREAK_EVENT` (§1.5), dies on the forced tier |
 | **the agent itself is killed** | the session survives the agent (orphaned) | **the job kills the tree**: `KILL_ON_JOB_CLOSE` fires when the last handle closes, which the OS does when the agent dies |
 
-**Why the Job Object alone is not enough** — measured, §1.6, and then measured harder: `AssignProcessToJobObject` runs *after* `CreateProcess` returned, so a descendant created in that window is never in the job, and the job's accounting never counts it. **[corrected, §12.1]** the window is real — **one run in ten on this host** with a `uv` venv launcher, and *every* run if the assignment is delayed — and the old code had no defence against it: it asked the job's accounting, which reads `0` over a live grandchild on the losing run, and wrote `stopped:shutdown`. **Why `taskkill` alone is not enough**: it is an external binary (the issue's own objection — a stripped `PATH` loses the forced tier, which is the "command not
+**Why the Job Object alone is not enough** — measured, §1.6, and then measured harder: `AssignProcessToJobObject` runs *after* `CreateProcess` returned, so a descendant created in that window is never in the job, and the job's accounting never counts it. **[corrected, §12.1]** the window is real, and a *delayed* assignment loses it in 25 runs out of 25 with a survivor every time — while the immediate assignment production uses held the tree in every run measured (25/25 here, 0 escapes in QA's 7). So the old code was one query away from being wrong: it asked the job's accounting and nothing else, and a rank it never held reads as zero. **Why `taskkill` alone is not enough**: it is an external binary (the issue's own objection — a stripped `PATH` loses the forced tier, which is the "command not
 found" failure this whole issue exists to eliminate), and `/T` walks parent/child links at kill time
 rather than being enforced by the kernel at creation time — and it only reaches
 anything while the launcher is still alive to walk from, which is why it runs
@@ -1230,10 +1236,15 @@ the code; each is an assertion with a named test. AC-16 … AC-19 are what this 
   the secrets — measured during PM's analysis (§1.3's probe leaked both because it bypassed the
   function). This AC goes through `execute_job`.
 
-- **AC-15** — **The settings invariant holds**: the worst-case stop
-  (`STOP_GRACE_S + STOP_VERIFY_TIMEOUT_S` = 10 s) is strictly less than the default
-  `SHUTDOWN_GRACE_S` (30 s), asserted as a constant-to-constant assertion so raising one without
-  the other fails a test. A single file cannot make the agent exceed its own documented grace.
+- **AC-15** — **The settings invariant holds**: the worst-case stop is
+  `STOP_GRACE_S + 2 * STOP_VERIFY_TIMEOUT_S + 2 * READER_JOIN_S` = 19 s against the default
+  `SHUTDOWN_GRACE_S` of 30 s, **and** for every *other* legal value of that setting the stop is
+  derived from it, so the relationship holds rather than merely the default. **[corrected,
+  §12.7]** The count is five waits, not two: a graceful grace, a verification per tier, and a
+  join allowance per reader thread. Asserted as a constant-to-constant assertion *and* as a sweep
+  over configured values, so raising one constant without the others fails a test — and the
+  surviving-tree path is driven at several graces, because that is the only path where the joins
+  cost anything. **A single file cannot make the agent exceed its own documented grace.**
 
 - **AC-16** — **`resources.cpus` is enforced or it says it is advisory — and the test asserts which.**
   Three cases, each asserting the **log record's rendered message**:
@@ -1390,60 +1401,70 @@ QA's verdict on the first SWE cycle adjudicated six statements in this document
 as errors and two measurements as wrong. They are recorded here so the record
 and the code agree.
 
-### 12.1 [corrected] The Job Object holds the tree *most* of the time
+### 12.1 [corrected, C7] The Job Object held the tree; the "permanent breakaway" does not reproduce
 
 §1.6 measured a post-`CreateProcess` assignment **window** — milliseconds wide,
 no escape in 13 runs — and the Windows design was built on the assumption that
 a job holds the tree from the launcher down.
 
-An earlier revision of this section over-corrected: it claimed, as measured
+An earlier revision of this section over-corrected. It claimed, as measured
 fact, that a `uv` venv launcher creates its child with
-`CREATE_BREAKAWAY_FROM_JOB` and that every descendant past it is outside the
-job *for good*, with `ActiveProcesses = 1` and a surviving grandchild. **That
-claim does not reproduce with production's ordering**, and it is withdrawn.
-Re-measured, ten runs each, two leader binaries, assignment immediately after
-`Popen` returns (which is what `ProcessTree` does) versus 2.5 s later:
+`CREATE_BREAKAWAY_FROM_JOB`, that every descendant past it is outside the job
+*for good*, and that the frequency was **one run in ten**. **The mechanism
+claim and the frequency claim are both withdrawn.** The frequency first: it was
+observed once, in a single ten-run sample, and it has not been reproduced since
+— QA got 0 escapes in 7 runs, and a later 25-run sample on the same host got 0
+as well. Nobody has managed to induce the failure since round 1, and a number
+neither party can reproduce is not a number. There is **no measured frequency**,
+and this section does not offer one.
 
-| leader | ordering | `ActiveProcesses` (10 runs) | descendants alive | survivors after `TerminateJobObject` |
+What *was* measured, and holds up across every sample taken, is the part that
+matters for the design. Assignment happens after `CreateProcess` returned, so a
+descendant created in that window is outside the job and the job's accounting
+never counts it. `ActiveProcesses` for a three-deep tree under a `uv` redirector,
+assignment immediately after `Popen` returns (which is what `ProcessTree` does):
+
+| leader | ordering | runs | `ActiveProcesses` | survivors after `TerminateJobObject` |
 |---|---|---|---|---|
-| `.venv\Scripts\python.exe` — a `uv` redirector, 47 KB | **immediate** | **1, 4, 4, 4, 4, 4, 4, 4, 4, 4** | 3 | **1, 0×9** |
-| the real interpreter beside it, 91 KB | immediate | 2 ×10 | 1 | 0 ×10 |
-| the `uv` redirector | delayed 2.5 s | 1 ×10 | 3 | 1 ×10 |
+| `.venv\Scripts\python.exe` — a `uv` redirector, 47 KB | **immediate** | **25** | **4 ×25** | **0 ×25** |
+| the real interpreter beside it, 91 KB | immediate | 25 | 2 ×25 | 0 ×25 |
+| the `uv` redirector | delayed 2.5 s | 25 | 1 ×25 | 25 ×25 |
 
-So, and this is the whole of what is actually true on this host:
+Three things follow, and only three:
 
-1. **Children do inherit the job.** The job holds the tree, `ActiveProcesses`
-   agrees with the process list, and `TerminateJobObject` leaves no survivor
-   nine times in ten.
-2. **The assignment window is real and the redirector widens it.** One run in
-   ten has the redirector's child created before the assignment lands, and
-   that child is outside the job for the life of the job. A *delayed*
-   assignment loses the race every time — which is the window §1.6 documented,
-   at a size that matters.
+1. **With the ordering production uses, the job held the whole tree in every
+   run measured** — 25/25 here, 0/7 escaped for QA, 9/10 in the one earlier
+   sample that produced the withdrawn number. The job's accounting and the
+   process list agree.
+2. **The window is real and its size is what the ordering controls.** Delay the
+   assignment by 2.5 s and the tree is outside the job in 25 runs out of 25,
+   with a survivor every time. That is §1.6's window, at a size that matters,
+   and it is why the assignment happens immediately after `Popen` rather than
+   after anything else.
 3. **The old code had no defence against any of it.** It asked the job's
-   accounting, and on the losing run that read `0` over a live grandchild, and
-   wrote `stopped:shutdown`.
+   accounting and nothing else, which is one query away from being wrong, and
+   `verify()` now checks the enumerated tree as well.
 
 What this changes about the design, honestly:
 
-* **The adopting leg is insurance, not the fix.** It closes the one-in-ten
-  race, and on a host that really did break away it would be the only thing
-  that worked — but on *this* host it is not what stops the orphan. The fix
-  that stops it is **verifying the graceful path**, plus the sweep-first
-  ordering (a `taskkill /T` that runs after the job has killed the launcher
-  finds nothing, 10 runs in 10).
-* **The enumeration leg is load-bearing.** If the job's own accounting is the
-  only source, a losing run reads zero and reports a clean stop. That is why
-  `verify()` checks the enumerated pids as well, and why a rank the job never
-  held is still counted.
+* **The adopting leg is insurance against a failure nobody has reproduced.**
+  It is correct, it is cheap, and on a host that really did break away it would
+  be the only thing that worked — but no such host has been observed. Keeping it
+  is a decision about the cost of being wrong, not a fix for a measured defect,
+  and it is recorded as that.
+* **The enumeration leg is the fix**, and it is independently right whatever
+  the job's accounting happens to say: a rank that is running must be reported
+  as running, whether the job holds it or not. Verifying the graceful path is
+  what closed round 1's S1, which QA reproduced twice.
 * **What remains genuinely unfixable** is stated in the code rather than
   glossed: a rank created *after* the stop begins *and* outside the job is
-  tracked by neither leg (issue #125 N5). It is the conjunction of two
-  one-in-ten events.
+  tracked by neither leg (issue #125 N5). It is the conjunction of two failures
+  that have each never been observed.
 
 On a node with neither mechanism the agent **cannot** finish such a stop, and
 says so: `stop_failed:tree_survived` at ERROR. That is §4 Q2's "loud rather
-than assumed-away" and it is now a test, not a hope.
+than assumed-away" and it is now a test, not a hope — the test builds the
+situation deliberately (AC-12's degraded node) rather than waiting for it.
 
 ### 12.2 [corrected, C2] §4 Q3's pseudocode needed the anchor stripped
 
@@ -1462,10 +1483,12 @@ after both tiers, and AC-15's bound is therefore
 verification that is going to succeed resolves in microseconds, so the second
 one only costs anything on a stop that has already gone wrong.
 
-That 15 s is the budget for the **default** grace only. **[corrected, §12.7]**
-it is now derived from whatever `SHUTDOWN_GRACE_S` actually says, because that
-setting is validated only as "greater than zero" and a 1.0 s grace used to
-produce a 5.03 s shutdown.
+That 15 s is the budget for the **default** grace only, and it did not count
+every wait. **[corrected, §12.7]** the budget is derived from whatever
+`SHUTDOWN_GRACE_S` actually says — that setting is validated only as "greater
+than zero", and a 1.0 s grace used to produce a 5.03 s shutdown — and it
+counts the reader-thread joins as well, which were 4 s of floor on the one path
+where a tree survives.
 
 ### 12.4 [not a defect] Two threads waiting on one `Popen`
 
@@ -1518,49 +1541,116 @@ readable — and it is never guessed either. It reaches `state.yaml` as
 `stop_failed:tree_survived`, which is the honest answer and the only thing
 between an operator and a job that is still holding its GPUs.
 
-### 12.6 [corrected, N2] The probe is resolved once and cannot raise
+### 12.6 [corrected, N2, F2] The probe is resolved once, cannot raise, and is not the expensive part
 
-Two separate costs on the same line. `WinDLL("kernel32")` and six prototypes
-were re-resolved on **every** call: measured, 560 ms across a five-second
-verification, ~11% of the stop budget for a call that is supposed to be free.
-Now resolved once, on first use, behind an `lru_cache`.
+Three separate facts, one of which this section previously got wrong.
 
-And an exception escaping the probe unwound `verify()` → `_stop_tree` →
-`execute_job` with **no terminal state written at all** — worse than any answer
+**The library is resolved once**, on first use, behind an `lru_cache`. It was
+re-resolved on every call before, with six prototypes re-declared each time.
+
+**The cache was not what made verification expensive, and the number this
+section used to quote was attributed to the wrong cause.** It said "560 ms
+across a five-second verification" and put that on `WinDLL`. The 560 ms was
+real; the attribution was not. QA measured the cache holding (1 resolution for
+50 probes — correct) and the per-call cost unchanged at 2.815 ms, which is the
+same defect class as §12.1: a number that reproduces, attached to a cause that
+does not. Measured properly, 25 runs each, on a host with **171** processes:
+
+| | ms per probe |
+|---|---|
+| probe with the cache | **2.296** |
+| probe with the cache off | 2.501 |
+| `CreateToolhelp32Snapshot` + `CloseHandle`, no walk | 1.168 |
+| the `Process32FirstW/NextW` walk over 171 processes | 1.022 |
+
+So: a probe costs ~2.3 ms; the kernel's snapshot is 53% of it and the walk is
+47%; `WinDLL` re-resolution was ~205 us, about **8%**, which is what the cache
+removed. Across a five-second verification at the 25 ms poll — 200 probes —
+that is **459 ms of enumeration**, and QA's 563 ms is the same figure from
+another sample.
+
+The cache is kept, because 8% of the slowest thing the agent does while
+shutting down should not be spent re-importing a module. It is no longer
+justified by a number that was wrong. **Enumeration is now the dominant term in
+a Windows verification**, which is worth stating plainly rather than hiding
+behind a DLL load: a host with a thousand processes would cost ~10 ms a probe.
+
+**And an exception escaping the probe unwound `verify()` → `_stop_tree` →
+`execute_job` with no terminal state written at all** — worse than any answer
 the probe can give, and the module docstring promised the opposite. A missing
 or unreadable `kernel32` (`OSError: [Errno 126]`) is now contained into the
 same "cannot confirm" answer as §12.5.
 
-### 12.7 [corrected, N4] The stop is sized from the configured grace
+### 12.7 [corrected, N4, F1] The stop is sized from the configured grace, joins included
 
 AC-15 asserted `STOP_GRACE_S + 2 * STOP_VERIFY_TIMEOUT_S` (15 s) against the
 **default** `SHUTDOWN_GRACE_S` of 30 s. But the grace is validated only as
-"greater than zero", and the 15 s of stop budget lives inside the execution
-task — where `wait_for` around the task cannot cancel it, because the
-`asyncio.wait` has already started. Driven for real: `AGENT_SHUTDOWN_GRACE_S =
-1.0`, a job in flight, and **5.03 s** of shutdown. Five times the documented
-grace, from a legal configuration.
+"greater than zero", and the stop's budget lives inside the execution task —
+where `wait_for` around the task cannot cancel it, because the `asyncio.wait`
+has already started. Driven for real: `AGENT_SHUTDOWN_GRACE_S = 1.0`, a job in
+flight, and **5.03 s** of shutdown (N4).
 
-Derived rather than assumed (`executor.stop_budget`): a stop may claim at most
-**half** the configured grace, split into the three waits it actually makes.
+**Round 2 fixed that and the bound was still false** (F1). The two
+reader-thread joins — `stdout_thread.join(timeout=2.0)` and the same for
+stderr — sat *outside* the budget entirely. They are invisible on a tree that
+stops, because a stopped tree closes its pipes and both joins return on EOF in
+microseconds. They are not invisible on a tree that **survives**: nothing will
+ever close the write end, `readline` never returns, and each join runs to its
+full allowance every time. Real `Agent.run`, AC-12's degraded node (no job
+object, no `taskkill`), tree that refuses the polite stop:
 
-| `SHUTDOWN_GRACE_S` | stop grace | verify | worst case |
+| grace | budget as claimed | measured | over |
 |---|---|---|---|
-| 0.5 | 0.167 | 0.167 | 0.50 |
-| 1.0 | 0.167 | 0.167 | 0.50 |
-| 5.0 | 0.83 | 0.83 | 2.50 |
-| 10.0 | 1.67 | 1.67 | 5.00 |
-| **30.0 (default)** | **5.0** | **5.0** | **15.0 — unchanged** |
-| 300.0 | 5.0 | 5.0 | 15.00 |
+| 0.5 s | 0.250 s | 4.250 s | 8.5× |
+| 1.0 s | 0.500 s | 4.391 s | 4.4× |
+| 5.0 s | 2.500 s | 5.718 s | 1.1× |
 
-The default is exactly what the constants already describe, so this is not a
-behaviour change for anyone on the default — it is the promise being kept for
-everyone else. The alternative — *refuse* a grace too small to hold 15 s — was
-rejected: `#93`'s lifecycle tests configure 0.05 s and 0.2 s on purpose, and a
-refusal would either break them or need an escape hatch worse than the defect.
-A tree that refuses the polite stop, at graces of 0.5 and 1.0, is the case
-that actually bites; a cooperative tree exits inside the first wait and never
-reaches it, which is why the test refuses on purpose.
+The same path **with** a job object — everything killed, both joins returning
+at once — measures 0.156 s / 0.250 s / 0.906 s, inside at every value. So the
+overrun is the joins and only the joins, and the arithmetic is only true once
+every wait a stop makes is inside it. This is also why round 2's mutation
+numbers did not move when the budget changed: they were the joins all along.
+
+**The shape.** A stop makes five waits — one graceful grace, one verification
+per tier, and one join allowance per reader thread — and the budget is
+**scaled**, not divided: the three constants are the documented shape, and a
+single factor multiplies all of them so their total fits the stop's share
+(`STOP_GRACE_SHARE` = two thirds) of the configured grace. Proportional rather
+than equal thirds, because equal thirds would shrink the documented 5 s
+graceful grace to 3 s **on the default** and would *lengthen* the 2 s join
+allowance to 3 s, which is the wrong direction for the one wait that only ever
+costs time.
+
+| `SHUTDOWN_GRACE_S` | grace | verify | join | total |
+|---|---|---|---|---|
+| 0.5 | 0.088 | 0.088 | 0.035 | 0.333 |
+| 1.0 | 0.175 | 0.175 | 0.070 | 0.667 |
+| 5.0 | 0.877 | 0.877 | 0.351 | 3.333 |
+| **30.0 (default)** | **5.0** | **5.0** | **2.0** | **19.0 — unchanged** |
+| 300.0 | 5.0 | 5.0 | 2.0 | 19.00 |
+
+Measured on the surviving-tree path after the fix: **0.297 s / 0.468 s / 2.063
+s** at graces of 0.5 / 1.0 / 5.0 — inside at every value, and each close to its
+budget rather than to a floor, which is what "the stop spent its allowance"
+looks like as opposed to "the stop gave up immediately".
+
+**And a floor, because arithmetic that small is worse than no answer at all**
+(F7). `stop_budget(1e-9)` is arithmetically positive and useless: a grace or a
+verification shorter than one `STOP_VERIFY_POLL_S` cannot make progress, so
+every such stop degenerates into "forced, and unconfirmed", which is a *worse*
+report than a stop that was allowed to try. No wait is derived below one poll.
+
+That makes the bound honest rather than unconditional, and the price is named:
+above `STOP_VERIFY_POLL_S * DOCUMENTED_STOP_S / (STOP_GRACE_SHARE *
+READER_JOIN_S)` — **0.356 s** at the shipped poll — no term is floored and the
+total is within the share; below it the floor wins and the total may exceed it.
+Both of `#93`'s lifecycle graces (0.05 s and 0.2 s) are below that crossover,
+so the floored regime is not hypothetical for this suite.
+
+The alternative to deriving — *refuse* a grace too small to hold the documented
+total — was rejected: `#93`'s lifecycle tests configure 0.05 s and 0.2 s on
+purpose, and a refusal would either break them or need an escape hatch worse
+than the defect.
 
 ### 12.8 [noted, N5/N6] The two legs of `verify()`, and their one gap
 
@@ -1577,8 +1667,37 @@ The one gap, stated rather than papered over: a rank created *after*
 `_remember_tree()` runs, by a process that also failed to inherit the job, is
 tracked by neither leg. It cannot be closed at stop time — once the launcher is
 gone its descendants re-parent and a later enumeration finds nothing — so it is
-the conjunction of two one-in-ten events, the same class as §12.1's race, and
-the forced tier's sweep catches it while the launcher is still alive.
+the conjunction of two failures that have each never been observed, the same
+class as §12.1's race, and the forced tier's sweep catches it while the
+launcher is still alive.
+
+### 12.10 [noted, F4/F5/F6] Three platform facts with no test on this host
+
+**F4.** `self._tracked: set[int] | None = set() if sys.platform != "win32" else
+None` is one line and it decides whether *every* job on a host reports cleanly
+or *every* job on a host reports a survivor. POSIX starting at `None` would
+write `stop_failed:tree_survived` for every job that ever stopped, forever.
+There was no test on either branch. There is now: one that asserts each
+platform's own initial state and runs on both, and one that asserts the POSIX
+contract specifically and is **skipped on Windows by name** — this issue has
+never been developed on a POSIX host, and saying so in a skip reason is the
+honest form of that.
+
+**F5.** `_live_processes()`'s non-Windows branch answers `{}` with a DEBUG line,
+not `None`. Both callers are behind a Windows guard and the branch is
+unreachable — but the two answers are not equivalent, and that is the point:
+`None` propagates to `_outstanding()` and becomes a fleet-wide false failure if
+a future refactor moves a guard. A guard whose unreachable answer is the
+destructive one is worse than no guard, so the answer is the safe one and the
+log line says the branch should not have been reached.
+
+**F6.** `members()` reads `NumberOfAssignedProcesses` and walks `ProcessIdList`
+by it, without consulting `AssignedProcessIdList`. That is only correct because
+`QueryInformationJobObject` **fails the call with `ERROR_MORE_DATA`** rather
+than truncating and reporting the smaller number — a property of the kernel, not
+of the struct, and unchecked. It is now recorded at the call site with the
+reason, because a maintainer reading "reads the count, ignores the list length"
+would reasonably try to fix it into silent corruption.
 
 ### 12.9 Corrections index
 
@@ -1590,7 +1709,9 @@ the forced tier's sweep catches it while the launcher is still alive.
 | C4 | AC-11 | the negative case is a `Popen` whose `wait` times out, not an injected clock; and verification covers the graceful tier |
 | C5 | §9's grep | dropped `sched_setaffinity` from the substring search and asserted "no bare reference" over the AST instead |
 | C6 | §4 Q5's table | `launch_failed:process_creation_failed: <e>` added; the table presented itself as complete |
-| C7 | §12.1, first draft | the permanent-`CREATE_BREAKAWAY_FROM_JOB` reading is **withdrawn**: it does not reproduce with production's ordering. It is a one-in-ten assignment race, and the adopting leg is insurance rather than the fix |
+| C7 | §12.1, first draft | the permanent-`CREATE_BREAKAWAY_FROM_JOB` reading is **withdrawn**: it does not reproduce with production's ordering, and **its "one run in ten" frequency is withdrawn too** — 0 escapes in 42 runs across three parties since. The adopting leg is insurance against a failure nobody has reproduced |
 | C8 | §12.5, first draft | `int(snapshot) == -1` never true with `restype = wintypes.HANDLE`; empty and unknown are separate answers, and unknown is reported |
 | C9 | §12.6, first draft | `kernel32` is resolved once; a load failure is contained instead of unwinding `execute_job` with no state written |
 | C10 | AC-15 | the stop's budget is derived from the configured grace, so the bound holds at every legal value and not only at the default |
+| C11 | AC-15, round 3 | the reader-thread joins were outside the budget; the stop makes **five** waits and the derivation covers all five, so the bound is a bound |
+| C12 | §12.6, round 3 | the probe's cost was attributed to `WinDLL` re-resolution. It is the kernel snapshot and the walk over the host's processes; the cache is worth ~8%, not the whole figure |
