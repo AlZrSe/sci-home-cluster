@@ -412,6 +412,24 @@ class Settings(BaseSettings):
     # Localhost bypass for development
     LOCALHOST_BYPASS: bool = True
 
+    # Heartbeat contract (issue #96)
+    HEARTBEAT_TIMEOUT_SECONDS: int = 90
+    HEARTBEAT_CHECK_INTERVAL_SECONDS: int = 30
+
+    @field_validator("HEARTBEAT_CHECK_INTERVAL_SECONDS")
+    @classmethod
+    def _check_heartbeat_interval_vs_timeout(cls, v: int, info) -> int:
+        """Ensure check_interval < timeout so a healthy node is observed
+        at least twice within the timeout."""
+        timeout = info.data.get("HEARTBEAT_TIMEOUT_SECONDS")
+        if timeout is not None and v >= timeout:
+            raise ValueError(
+                f"HEARTBEAT_CHECK_INTERVAL_SECONDS ({v}) must be < "
+                f"HEARTBEAT_TIMEOUT_SECONDS ({timeout}), otherwise a healthy "
+                f"node can be observed at delta >= timeout and flipped OFFLINE"
+            )
+        return v
+
     model_config = SettingsConfigDict(
         case_sensitive=True,
         env_file=_REPO_ROOT / ".env",

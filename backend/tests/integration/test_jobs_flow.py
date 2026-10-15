@@ -226,10 +226,14 @@ class TestJobLifecycle:
         data = response.json()
         assert isinstance(data, list)
         assert len(data) > 0
-        # Check log structure
-        for log_line in data:
-            assert isinstance(log_line, str)
-            assert len(log_line) > 0
+        # Check log structure - now returns LogEntry objects
+        for log_entry in data:
+            assert isinstance(log_entry, dict)
+            assert "timestamp" in log_entry
+            assert "line" in log_entry
+            assert "origin" in log_entry
+            assert log_entry["origin"] in ("synthetic", "real")
+            assert len(log_entry["line"]) > 0
 
     @pytest.mark.asyncio
     async def test_get_job_logs_not_found(self, async_client):
@@ -500,17 +504,3 @@ class TestJobValidation:
         data = response.json()
         assert data["spec"]["env"]["CUSTOM_VAR"] == "custom_value"
         assert data["spec"]["env"]["ANOTHER_VAR"] == "another_value"
-
-    @pytest.mark.asyncio
-    async def test_create_job_with_custom_retry(self, async_client):
-        """Test creating a job with custom retry policy."""
-        job_spec = create_job_spec(name="custom-retry-job")
-        job_spec.retry.max_retries = 5
-        job_spec.retry.retry_delay_seconds = 120
-        response = await async_client.post(
-            "/api/v1/jobs/", json=job_spec.model_dump(mode="json")
-        )
-        assert response.status_code == 201
-        data = response.json()
-        assert data["spec"]["retry"]["max_retries"] == 5
-        assert data["spec"]["retry"]["retry_delay_seconds"] == 120

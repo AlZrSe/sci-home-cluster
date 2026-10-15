@@ -151,6 +151,21 @@ def job_not_cancellable(job_id: str, current_status: str) -> APIError:
     )
 
 
+def job_id_collision(job_id: str, existing_path: str) -> APIError:
+    return APIError(
+        status.HTTP_409_CONFLICT,
+        (
+            f"Job {job_id} was not submitted because {existing_path} already "
+            "exists in the Syncthing folder, so writing it would overwrite "
+            "another job's state. The database and the folder disagree about "
+            "which job ids exist - the usual cause is a database that was "
+            "restored from a backup older than the folder. Reconcile the two "
+            "before submitting again."
+        ),
+        "JOB_ID_COLLISION",
+    )
+
+
 def syncthing_unavailable(detail: str) -> APIError:
     return APIError(
         status.HTTP_503_SERVICE_UNAVAILABLE, detail, "SYNCTHING_UNAVAILABLE"

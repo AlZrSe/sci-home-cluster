@@ -300,6 +300,32 @@ Done — the service layer is wired to the FastAPI backend:
    than "An unexpected error occurred".
 5. Not yet wired: node registration endpoint (`POST /nodes/register`) — the frontend only reads nodes.
 
+### Job submission enters the Syncthing folder
+
+The frontend only ever sees HTTP, so none of this is visible from `src/`. It is
+recorded here because it changes what a 201 means (issue #105,
+`docs/specs/105-job-submission-folder.md`).
+
+`POST /jobs/`, `POST /jobs/{id}/retry` and `DELETE /jobs/{id}` all act on the
+Syncthing shared folder as well as the database, because under the file-only
+transport decision (#92) the folder is the only channel to a node:
+
+- **Submit** commits the row, then writes `<SYNCTHING_ROOT>/jobs/<job_id>/state.yaml` before
+  returning 201. Database first because the `job-N` id is allocated inside `create_job`; the
+  file second, with a compensating `delete_job` if the write fails, so a job is never in one
+  place and not the other.
+- **Retry** re-emits the same file (for `FAILED`/`CANCELLED` jobs only), recreating the
+  directory if it was lost. It deliberately does not run the clobber guard that create does.
+- **Delete** removes the whole `jobs/<job_id>/` directory **before** the row. The reverse
+  order resurrects the job on the next ingestion scan.
+- A folder that cannot be written or removed is **`503 SYNCTHING_UNAVAILABLE`**, not a success
+  with a broken job. `error_code` is `SYNCTHING_UNAVAILABLE`; the 503s are raised inside the
+  handlers and are declared in no route's `responses={}`, so `openapi.yaml` is unchanged and
+  does not document them.
+- The root comes from the backend's `settings.SYNCTHING_ROOT` — the same value the watcher,
+  `/health` and `GET /syncthing/status` read — not from `os.environ`, so the backend has one
+  folder rather than two.
+
 ---
 
 ## Open Questions for Implementation

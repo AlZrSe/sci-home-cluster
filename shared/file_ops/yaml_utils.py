@@ -3,6 +3,7 @@ Atomic YAML read/write utilities for the Scientific Home Cluster.
 Provides thread-safe, atomic operations for YAML files with validation.
 """
 
+import json
 import os
 import yaml
 import tempfile
@@ -79,11 +80,31 @@ def write_yaml(file_path: str, data: PydanticBaseModel) -> None:
 
     # Serialize data to YAML string
     try:
-        # Use dict() method for Pydantic v1, model_dump() for v2
+        # JSON mode, never python mode, and the reason is a round trip
+        # rather than tidiness (issue #105). Pydantic v2's `model_dump()`
+        # hands back enum *members* and `datetime` objects, PyYAML
+        # represents those with a python-object tag -
+        #
+        #     status: !!python/object/apply:shared.schemas.job_status.JobStatus
+        #     - PENDING
+        #
+        # - and `read_yaml`'s `yaml.safe_load` refuses the document with
+        # `ConstructorError: could not determine a constructor for the tag`.
+        # Every caller here reads its file back through `read_yaml`, and the
+        # Syncthing watcher swallows that failure in a bare `except`, so the
+        # file is written and silently never seen by anything.
+        #
+        # It is also what keeps the two writers of `jobs/<id>/state.yaml`
+        # byte-comparable: Syncthing resolves a conflict by comparing
+        # content, so a backend that emitted a YAML timestamp and an agent
+        # that emitted an ISO one would conflict on every single write.
         if hasattr(data, "model_dump"):
-            yaml_data = data.model_dump()
+            yaml_data = data.model_dump(mode="json")
         else:
-            yaml_data = data.dict()
+            # Pydantic v1 has no json-mode `dict()`; `.json()` is its
+            # json-mode escape hatch, and it has to be parsed back because
+            # `yaml.dump` wants a Python object, not a JSON string.
+            yaml_data = json.loads(data.json())
 
         yaml_content = yaml.dump(yaml_data, default_flow_style=False, sort_keys=False)
     except Exception as e:

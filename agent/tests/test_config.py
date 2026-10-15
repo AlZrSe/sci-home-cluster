@@ -593,3 +593,73 @@ def test_published_root_is_not_read_back_in(syncthing_root: Path) -> None:
 
     with pytest.raises(ConfigError):
         build({"NODE_ID": "node-02"})
+
+
+# --- Issue #96: Heartbeat contract agent settings ----------------------------
+
+
+def test_agent_heartbeat_defaults(syncthing_root: Path) -> None:
+    """AC-4: Default agent heartbeat interval < backend timeout with margin."""
+    from backend.core.config import settings as backend_settings
+
+    settings = build(base_env(syncthing_root))
+    assert settings.HEARTBEAT_INTERVAL_S == 22.0
+    assert settings.HEARTBEAT_JITTER_S == 2.0
+    assert settings.HEARTBEAT_INTERVAL_S < backend_settings.HEARTBEAT_TIMEOUT_SECONDS
+    # Margin: at least 2x the interval fits in timeout
+    assert (
+        settings.HEARTBEAT_INTERVAL_S * 2 <= backend_settings.HEARTBEAT_TIMEOUT_SECONDS
+    )
+
+
+def test_agent_heartbeat_jitter_validation(syncthing_root: Path) -> None:
+    """Jitter must be < interval and >= 0."""
+    # jitter >= interval should fail
+    with pytest.raises(ConfigError, match="must be <"):
+        build(
+            {
+                **base_env(syncthing_root),
+                "AGENT_HEARTBEAT_INTERVAL_S": "22",
+                "AGENT_HEARTBEAT_JITTER_S": "22",
+            }
+        )
+    # jitter < 0 should fail
+    with pytest.raises(ConfigError, match="must be >= 0"):
+        build(
+            {
+                **base_env(syncthing_root),
+                "AGENT_HEARTBEAT_INTERVAL_S": "22",
+                "AGENT_HEARTBEAT_JITTER_S": "-1",
+            }
+        )
+    # interval <= 0 should fail
+    with pytest.raises(ConfigError, match="must be greater than 0"):
+        build(
+            {
+                **base_env(syncthing_root),
+                "AGENT_HEARTBEAT_INTERVAL_S": "0",
+                "AGENT_HEARTBEAT_JITTER_S": "2",
+            }
+        )
+    # Valid values
+    settings = build(
+        {
+            **base_env(syncthing_root),
+            "AGENT_HEARTBEAT_INTERVAL_S": "22",
+            "AGENT_HEARTBEAT_JITTER_S": "2",
+        }
+    )
+    assert settings.HEARTBEAT_INTERVAL_S == 22.0
+    assert settings.HEARTBEAT_JITTER_S == 2.0
+
+
+def test_agent_heartbeat_configurable_via_toml(syncthing_root: Path) -> None:
+    """Heartbeat settings can be set in the shared config file."""
+
+    write_config(
+        syncthing_root,
+        "AGENT_HEARTBEAT_INTERVAL_S = 15.0\nAGENT_HEARTBEAT_JITTER_S = 1.0\n",
+    )
+    settings = build(base_env(syncthing_root))
+    assert settings.HEARTBEAT_INTERVAL_S == 15.0
+    assert settings.HEARTBEAT_JITTER_S == 1.0

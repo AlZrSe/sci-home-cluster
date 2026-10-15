@@ -31,9 +31,13 @@ class TestJobLogsHistory:
         data = response.json()
         assert isinstance(data, list)
         assert len(data) > 0
-        for log_line in data:
-            assert isinstance(log_line, str)
-            assert len(log_line) > 0
+        for log_entry in data:
+            assert isinstance(log_entry, dict)
+            assert "timestamp" in log_entry
+            assert "line" in log_entry
+            assert "origin" in log_entry
+            assert log_entry["origin"] in ("synthetic", "real")
+            assert len(log_entry["line"]) > 0
 
     @pytest.mark.asyncio
     async def test_logs_history_not_found(self, auth_client):
@@ -92,7 +96,13 @@ class TestJobLogsHTTP:
         data = response.json()
 
         # Check first few lines have expected format
-        first_line = data[0]
+        first_entry = data[0]
+        assert isinstance(first_entry, dict)
+        assert "timestamp" in first_entry
+        assert "line" in first_entry
+        assert "origin" in first_entry
+        assert first_entry["origin"] in ("synthetic", "real")
+        first_line = first_entry["line"]
         assert (
             "INFO" in first_line
             or "DEBUG" in first_line

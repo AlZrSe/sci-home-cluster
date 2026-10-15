@@ -344,12 +344,88 @@ def dispose_database_engine(event_loop, isolated_database):
         event_loop.run_until_complete(close_database())
 
 
+@pytest.fixture(scope="session", autouse=True)
+def isolated_syncthing_root():
+    """
+    Point the *settings* Syncthing root at a throwaway directory too.
+
+    Issue #105 made `POST /jobs`, `POST /jobs/{id}/retry` and
+    `DELETE /jobs/{id}` write to `settings.SYNCTHING_ROOT` - the value the
+    watcher, `/health` and `/syncthing/status` all read, deliberately, so the
+    backend has one folder rather than two (spec Q4 / D5). The sibling
+    `set_syncthing_root` fixture below only sets `os.environ`, which nothing
+    on that write path reads, so without this every test that submits a job
+    would publish into the real default, `/tmp/syncthing`.
+
+    That is not merely untidy. The demo dataset hands out job ids
+    job-1041..job-1050 deterministically, so a second session re-issues
+    job-1051, finds last run's directory still on disk, and the create-time
+    clobber guard answers 409 - a green suite on Tuesday and a red one on
+    Wednesday, depending on nothing but the date the folders were left.
+
+    Mutated on the settings singleton rather than in `os.environ`, for the
+    same reason `isolated_database` mutates `settings.DATABASE_URL`: Settings
+    is constructed at import time, so the environment is too late.
+
+    Synchronous and session-scoped. It has no loop work to do, and a
+    session-scoped *async* fixture would be driven from a different loop
+    (`_session_event_loop`), which is the trap the `event_loop` docstring
+    describes.
+    """
+    previous = settings.SYNCTHING_ROOT
+    tmpdir = tempfile.mkdtemp(prefix="shc-test-syncthing-")
+    settings.SYNCTHING_ROOT = tmpdir
+    # The two sub-directories the backend's watcher creates at startup, so the
+    # fixture's root looks like the folder a real process would be watching.
+    (Path(tmpdir) / "jobs").mkdir()
+    (Path(tmpdir) / "nodes").mkdir()
+    try:
+        yield tmpdir
+    finally:
+        settings.SYNCTHING_ROOT = previous
+        shutil.rmtree(tmpdir, ignore_errors=True)
+
+
+@pytest.fixture(autouse=True)
+def reset_syncthing_folder(isolated_syncthing_root):
+    """
+    Empty the session Syncthing folder around every test.
+
+    The companion half of `reset_singleton_store`, and needed because of it:
+    that fixture calls `store.reset()`, which empties the database *and*
+    zeroes the in-memory job counter, so the next test's first submission is
+    handed the same `job-N` its predecessor was. Before #105 the folder was
+    never written and the id reuse was invisible; now the leftover directory
+    makes the create-time clobber guard answer 409, and a green suite goes
+    red for no reason other than test order.
+
+    Leaving the database reset but the folder populated is also the state the
+    clobber guard exists to catch (spec Q1), so the suite should never be the
+    thing that produces it by accident.
+    """
+    root = Path(isolated_syncthing_root)
+
+    def _clear() -> None:
+        for name in ("jobs", "nodes"):
+            shutil.rmtree(root / name, ignore_errors=True)
+            (root / name).mkdir(parents=True, exist_ok=True)
+
+    _clear()
+    yield
+    _clear()
+
+
 @pytest.fixture(autouse=True)
 def set_syncthing_root(monkeypatch):
     """
     Automatically set SYNCTHING_ROOT to a temporary directory for all tests.
     This ensures tests don't depend on external filesystem state.
     Only sets if not already set by the test (e.g., via _env_file).
+
+    This is the `os.environ` half; `isolated_syncthing_root` above is the
+    `settings` half. Issue #105 moved the backend's folder writes onto the
+    settings value, so both halves have to be temporary for the suite to be
+    hermetic.
     """
     # Only set if not already in environment (tests can override via .env file)
     if "SYNCTHING_ROOT" not in os.environ:

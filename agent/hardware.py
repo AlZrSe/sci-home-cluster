@@ -22,21 +22,15 @@ memory_gb       psutil.virtual_memory().total   // 1024**3, floored at 1
 gpus            gputil.getGPUs(), guarded       [] when unavailable
 os              platform.system().lower()       linux/darwin/windows
 status          literal "ONLINE"                monitor owns OFFLINE
-last_heartbeat  datetime.now()                  naive local, as the store is
+last_heartbeat  datetime.now(timezone.utc)      aware UTC, store is tz-aware
 current_job_id  None                            not set here (#97)
 
-**The clock is read naive and local, deliberately.** ``last_heartbeat`` lands in
-a SQLite ``DateTime`` column, which carries no timezone, and
-``SyncthingService._heartbeat_monitor`` compares it against a naive
-``datetime.now()`` -- local time. Every other writer in this repository already
-persists that way (``backend/services/job_service.py``,
-``backend/store/database_store.py``, the demo seeder), so writing anything else
-would be the odd one out: an aware UTC value round-trips as naive *UTC*, the
-monitor reads it as local, and on a node whose clock is not UTC the delta it
-computes is inflated by the offset -- a healthy node that rewrites every 30 s
-gets marked ``OFFLINE`` on every tick and can never come back. #121 tracks the
-backend's inconsistent timezone handling as the proper repair; until it lands,
-matching the store is what makes the monitor's arithmetic come out right.
+**The clock is read as aware UTC.** ``last_heartbeat`` lands in a SQLite
+``DateTime(timezone=True)`` column (via #121), which preserves the offset on
+write and expects it on read. ``SyncthingService._heartbeat_monitor`` compares
+it against ``datetime.now(timezone.utc)`` — both sides are aware UTC, so the
+delta is correct on any host timezone. The previous naive-local convention
+caused a healthy node to be marked ``OFFLINE`` on non-UTC hosts (#121).
 
 ``platform.node()`` rather than ``socket.gethostname()``: they answer the same
 question -- on POSIX the first is ``uname().nodename``, which is what
@@ -69,7 +63,7 @@ from __future__ import annotations
 
 import logging
 import platform
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Final, Sequence
 
@@ -148,11 +142,10 @@ def collect_node_spec(node_id: str, *, now: datetime | None = None) -> NodeSpec:
     ``now`` exists so a caller can pass a fixed instant; the loop does not,
     because the whole point of the file is that it says *now*.
 
-    Naive local, not aware UTC -- see the module docstring. Writing an aware
-    value is not a harmless extra piece of information here: it is silently
-    reinterpreted as local time by the store and then by the monitor, and the
-    result is a heartbeat that looks hours stale to a node that is perfectly
-    healthy.
+    Aware UTC — the store's column is ``DateTime(timezone=True)`` (via #121)
+    and the monitor compares against ``datetime.now(timezone.utc)``. Writing
+    naive local would be misread as UTC and inflate the delta by the host's
+    offset on non-UTC machines.
     """
     return probe_hardware(
         node_id=node_id,
@@ -161,7 +154,7 @@ def collect_node_spec(node_id: str, *, now: datetime | None = None) -> NodeSpec:
         memory_bytes=_total_memory_bytes(),
         gpus=_gpu_infos(),
         os_name=_os_name(),
-        now=datetime.now() if now is None else now,
+        now=datetime.now(timezone.utc) if now is None else now,
     )
 
 

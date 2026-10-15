@@ -484,7 +484,7 @@ async def test_service_start_log_stream_returns_none_when_flag_off(
     hanging on a socket that will never tick.
     """
     service = JobService()
-    job = await service.create_job(create_job_spec(name="service-ws-off"))
+    job = await service.submit_job(create_job_spec(name="service-ws-off"))
 
     monkeypatch.setattr(settings, "SEED_DEMO_DATA", False)
     assert service.log_stream_available() is False

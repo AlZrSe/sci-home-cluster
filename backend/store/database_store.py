@@ -17,10 +17,13 @@ from backend.core.database import get_session
 from shared.schemas.job_status import JobStatus
 from shared.schemas.job_state import JobState
 from shared.schemas.job_spec import JobSpec
+from shared.schemas.job_resources import Resources
+from shared.schemas.job_paths import Paths
 from shared.schemas.node_spec import NodeSpec, GPUInfo
 from shared.schemas.job_metrics import JobMetrics, JobMetricsSummary
 from shared.schemas.gpu_metric import GPUMetric
 from shared.schemas.cpu_metric import CPUMetric
+from shared.schemas.log_entry import LogEntry
 from backend.store.database import (
     JobModel,
     NodeModel,
@@ -105,19 +108,17 @@ class DatabaseStore:
             return JobSpec(
                 name=name,
                 command=(
-                    f"python -u scripts/{script_name}.py "
-                    f"--config configs/{name}.yaml"
+                    f"python -u scripts/{script_name}.py --config configs/{name}.yaml"
                 ),
                 working_dir=f"/sync/projects/{name}",
                 env={"PYTHONUNBUFFERED": "1", "CUDA_VISIBLE_DEVICES": "0"},
-                resources={
-                    "gpus": gpus,
-                    "cpus": rnd.choice([4, 8, 12, 16]),
-                    "memory_gb": rnd.choice([8, 16, 32, 64]),
-                    "vram_gb": rnd.choice([8, 12, 16, 24]),
-                },
-                paths={"input": f"data/{name}/in", "output": f"data/{name}/out"},
-                retry={"max_retries": 3, "retry_delay_seconds": 60},
+                resources=Resources(
+                    gpus=gpus,
+                    cpus=rnd.choice([4, 8, 12, 16]),
+                    memory_gb=rnd.choice([8, 16, 32, 64]),
+                    vram_gb=rnd.choice([8, 12, 16, 24]),
+                ),
+                paths=Paths(input=f"data/{name}/in", output=f"data/{name}/out"),
             )
 
         job_models = []
@@ -651,6 +652,7 @@ class DatabaseStore:
                         memory_total_mb=m.memory_total_mb,  # type: ignore[attr-defined]
                         utilization_percent=m.utilization_percent,  # type: ignore[attr-defined]
                         temperature_c=m.temperature_c,  # type: ignore[attr-defined]
+                        origin=m.origin,  # type: ignore[attr-defined]
                     )
                     for m in gpu_models
                 ]
@@ -661,6 +663,7 @@ class DatabaseStore:
                         memory_percent=m.memory_percent,  # type: ignore[attr-defined]
                         temperature_c=m.temperature_c,  # type: ignore[attr-defined]
                         memory_used_gb=m.memory_used_gb,  # type: ignore[attr-defined]
+                        origin=m.origin,  # type: ignore[attr-defined]
                     )
                     for m in cpu_models
                 ]
@@ -698,6 +701,7 @@ class DatabaseStore:
                     memory_total_mb=gpu_metric.memory_total_mb,
                     utilization_percent=gpu_metric.utilization_percent,
                     temperature_c=gpu_metric.temperature_c,
+                    origin="synthetic",
                 )
                 session.add(gpu_model)
             for cpu_metric in metrics.cpu_metrics:
@@ -708,6 +712,7 @@ class DatabaseStore:
                     memory_percent=cpu_metric.memory_percent,
                     temperature_c=cpu_metric.temperature_c,
                     memory_used_gb=cpu_metric.memory_used_gb,
+                    origin="synthetic",
                 )
                 session.add(cpu_model)
             await session.commit()
@@ -753,6 +758,7 @@ class DatabaseStore:
                         memory_total_mb=m.memory_total_mb,  # type: ignore[attr-defined]
                         utilization_percent=m.utilization_percent,  # type: ignore[attr-defined]
                         temperature_c=m.temperature_c,  # type: ignore[attr-defined]
+                        origin=m.origin,  # type: ignore[attr-defined]
                     )
                     for m in gpu_models
                 ]
@@ -763,6 +769,7 @@ class DatabaseStore:
                         memory_percent=m.memory_percent,  # type: ignore[attr-defined]
                         temperature_c=m.temperature_c,  # type: ignore[attr-defined]
                         memory_used_gb=m.memory_used_gb,  # type: ignore[attr-defined]
+                        origin=m.origin,  # type: ignore[attr-defined]
                     )
                     for m in cpu_models
                 ]
@@ -797,6 +804,7 @@ class DatabaseStore:
                     memory_total_mb=gpu_metric.memory_total_mb,
                     utilization_percent=gpu_metric.utilization_percent,
                     temperature_c=gpu_metric.temperature_c,
+                    origin="synthetic",
                 )
                 session.add(gpu_model)
             for cpu_metric in metrics.cpu_metrics:
@@ -807,6 +815,7 @@ class DatabaseStore:
                     memory_percent=cpu_metric.memory_percent,
                     temperature_c=cpu_metric.temperature_c,
                     memory_used_gb=cpu_metric.memory_used_gb,
+                    origin="synthetic",
                 )
                 session.add(cpu_model)
             await session.commit()
@@ -1008,7 +1017,7 @@ class DatabaseStore:
         )
 
     # Log operations
-    async def get_job_logs(self, job_id: str) -> Optional[List[str]]:
+    async def get_job_logs(self, job_id: str) -> Optional[List[LogEntry]]:
         """
         Get the stored log lines for a job.
 
@@ -1037,7 +1046,14 @@ class DatabaseStore:
             log_models = result.scalars().all()
 
             if log_models:
-                return [log.line for log in log_models]  # type: ignore[attr-defined]
+                return [
+                    LogEntry(
+                        timestamp=log.timestamp,  # type: ignore[attr-defined]
+                        line=log.line,  # type: ignore[attr-defined]
+                        origin=log.origin,  # type: ignore[attr-defined]
+                    )
+                    for log in log_models
+                ]
 
         # The job exists, but nothing has been logged for it yet. See the
         # matching gate in get_job_metrics (issue #35).
@@ -1045,7 +1061,22 @@ class DatabaseStore:
             # Demo data only - persists to the tables, as it always has.
             logs = self._generate_job_logs(job_id)
             await self._store_job_logs(job_id, logs)
-            return logs
+            # Read back from database to get the actual stored timestamps
+            async with get_session() as session:
+                result = await session.execute(
+                    select(LogEntryModel)
+                    .where(LogEntryModel.job_id == job_id)
+                    .order_by(LogEntryModel.timestamp)
+                )
+                log_models = result.scalars().all()
+                return [
+                    LogEntry(
+                        timestamp=log.timestamp,  # type: ignore[attr-defined]
+                        line=log.line,  # type: ignore[attr-defined]
+                        origin=log.origin,  # type: ignore[attr-defined]
+                    )
+                    for log in log_models
+                ]
 
         return []
 
@@ -1058,6 +1089,7 @@ class DatabaseStore:
                     job_id=job_id,
                     timestamp=now,
                     line=line,
+                    origin="synthetic",
                 )
                 session.add(log_entry)
             await session.commit()
@@ -1078,10 +1110,12 @@ class DatabaseStore:
 
         log_templates = [
             lambda s: f"INFO  step={s} loss={(2.4 - s * 0.0007):.4f} lr=3.0e-4",
-            lambda s: f"INFO  step={s} throughput="
-            f"{(180 + rnd.random() * 40):.1f} samples/s",
-            lambda s: "DEBUG allocator: "
-            f"reserved={(8 + rnd.random() * 6):.2f} GiB step={s}",
+            lambda s: (
+                f"INFO  step={s} throughput={(180 + rnd.random() * 40):.1f} samples/s"
+            ),
+            lambda s: (
+                f"DEBUG allocator: reserved={(8 + rnd.random() * 6):.2f} GiB step={s}"
+            ),
             lambda s: f"INFO  checkpoint written to data/out/ckpt-{s}.pt",
             lambda _: "WARN  syncthing folder scan delayed by 1.4s",
         ]
@@ -1186,7 +1220,7 @@ class DatabaseStore:
                                 f"reserved={(8 + rnd.random() * 6):.2f} GiB step={s}"
                             ),
                             lambda s: (
-                                f"INFO  checkpoint written to " f"data/out/ckpt-{s}.pt"
+                                f"INFO  checkpoint written to data/out/ckpt-{s}.pt"
                             ),
                             lambda _: "WARN  syncthing folder scan delayed by 1.4s",
                         ]
@@ -1196,7 +1230,10 @@ class DatabaseStore:
 
                     async with get_session() as session:
                         log_entry = LogEntryModel(
-                            job_id=job_id, timestamp=datetime.now(), line=line
+                            job_id=job_id,
+                            timestamp=datetime.now(),
+                            line=line,
+                            origin="synthetic",
                         )
                         session.add(log_entry)
                         await session.commit()

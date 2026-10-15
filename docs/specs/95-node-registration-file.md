@@ -139,9 +139,11 @@ A **pure** function plus its narrow helpers — no I/O beyond the probe itself, 
 with fakes and survives an HTTP transport:
 
 ```python
-def probe_hardware(*, hostname: str, cpus: int, memory_bytes: int,
-                   gpus: list[GPUInfo], os_name: str) -> NodeSpec:
+def probe_hardware(
+    *, hostname: str, cpus: int, memory_bytes: int, gpus: list[GPUInfo], os_name: str
+) -> NodeSpec:
     """Assemble a NodeSpec from already-collected facts. Pure: no syscalls."""
+
 
 def collect_node_spec(node_id: str, *, now: datetime | None = None) -> NodeSpec:
     """Probe this machine and return a NodeSpec. The only impure entry point."""

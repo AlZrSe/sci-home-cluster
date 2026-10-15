@@ -14,10 +14,13 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import random
 import signal
 import time
-from typing import Final
+from pathlib import Path
+from typing import Final, Optional
 
+from agent.claim import claim_job
 from agent.config import (
     EXIT_INTERNAL_ERROR,
     EXIT_OK,
@@ -26,10 +29,12 @@ from agent.config import (
     FOLDER_RETRY_INTERVAL_S,
     AgentSettings,
 )
+from agent.executor import execute_job
 from agent.hardware import collect_node_spec, write_node_spec
 from agent.paths import AgentPaths, resolve_paths
 from agent.supervisor import TaskSupervisor, SupervisorTask
 from agent.watcher import FolderWatcher
+from shared.schemas.node_spec import NodeSpec
 
 logger = logging.getLogger(__name__)
 
@@ -38,15 +43,6 @@ FOLDER_WATCH_TASK: Final[str] = "folder-watch"
 WATCHER_LIVENESS_TASK: Final[str] = "watcher-liveness"
 EVENT_DRAIN_TASK: Final[str] = "event-drain"
 NODE_SPEC_TASK: Final[str] = "node-registration"
-
-#: How often ``nodes/<node_id>.yaml`` is rewritten, and therefore how often the
-#: backend's heartbeat monitor sees a fresh ``last_heartbeat``. The monitor flips
-#: a node ``OFFLINE`` once the heartbeat is older than a hardcoded ``delta > 90``
-#: (``backend/services/syncthing_service.py``), so 30 s leaves room for two
-#: missed writes plus watcher latency; #96 makes that threshold configurable and
-#: is a separate change. It also matches the monitor's own 30 s tick, so a healthy
-#: node is never more than one tick stale in the monitor's eyes.
-HEARTBEAT_INTERVAL_S: Final[float] = 30.0
 
 
 class Agent:
@@ -70,6 +66,14 @@ class Agent:
         self._supervisor: TaskSupervisor | None = None
         self._watcher_started = False
         self._exit_code = EXIT_OK
+        # Heartbeat tick counter for jitter seeding (issue #96)
+        self._tick_count: int = 0
+        # Last monotonic time for resume detection (issue #96)
+        self._last_tick_monotonic: float | None = None
+        # Currently claimed job ID (issue #97)
+        self._current_job_id: Optional[str] = None
+        # Execution task for the current job (issue #98)
+        self._execution_task: Optional[asyncio.Task] = None
 
     @property
     def paths(self) -> AgentPaths:
@@ -79,6 +83,11 @@ class Agent:
     def supervisor(self) -> TaskSupervisor | None:
         """The task supervisor, once :meth:`run` has created it."""
         return self._supervisor
+
+    @property
+    def current_job_id(self) -> Optional[str]:
+        """The currently claimed job ID, or None if no job is in-flight."""
+        return self._current_job_id
 
     async def run(self) -> int:
         """Run until stopped, then return the process exit code."""
@@ -179,17 +188,20 @@ class Agent:
 
         Non-critical on purpose: a node that fails to register must cost a
         heartbeat, not the agent (issue #95 AC-10).
+
+        The interval is set to a small value; the actual heartbeat cadence with
+        jitter is managed inside ``_registration_tick`` itself (issue #96).
         """
         assert self._supervisor is not None
         self._supervisor.add_task(
             SupervisorTask(
                 name=NODE_SPEC_TASK,
-                coro_factory=lambda _stop: self._registration_tick(),
-                interval_s=HEARTBEAT_INTERVAL_S,
+                coro_factory=self._registration_tick,
+                interval_s=0.1,  # Actual cadence managed by _registration_tick
             )
         )
 
-    async def _registration_tick(self) -> None:
+    async def _registration_tick(self, stop_event: asyncio.Event) -> None:
         """One registration tick: probe this machine, rewrite the node file.
 
         The first tick runs as soon as the supervisor starts, which is why no
@@ -205,11 +217,33 @@ class Agent:
         exception that is *not* an ``OSError`` is a bug rather than a transient
         filesystem condition, so it is left to the supervisor's containment to be
         recorded and noticed.
+
+        Heartbeat cadence with jitter and resume detection (issue #96):
+        - Interval and jitter come from settings.
+        - Jitter is seeded from (node_id, tick_count) for test determinism.
+        - On resume from suspend (monotonic clock jump > 2 * interval), write
+          immediately and log the event.
         """
+        # Resume detection: if monotonic clock jumped forward by more than
+        # 2 * interval, we likely woke from suspend. The current tick writes
+        # immediately (which is the desired "immediate write on resume" behaviour).
+        now_mono = time.monotonic()
+        interval = self._settings.HEARTBEAT_INTERVAL_S
+        if self._last_tick_monotonic is not None:
+            delta_mono = now_mono - self._last_tick_monotonic
+            if delta_mono > 2 * interval:
+                logger.info(
+                    "resume detected (monotonic gap %.1fs > 2*interval %.1fs), "
+                    "writing immediate heartbeat",
+                    delta_mono,
+                    2 * interval,
+                )
+        self._last_tick_monotonic = now_mono
+
         try:
-            written = write_node_spec(
-                self._paths, collect_node_spec(self._settings.NODE_ID)
-            )
+            node_spec = collect_node_spec(self._settings.NODE_ID)
+            node_spec.current_job_id = self._current_job_id
+            written = write_node_spec(self._paths, node_spec)
         except OSError as exc:
             logger.warning(
                 "could not write the node file %s (%s); this heartbeat is lost "
@@ -224,6 +258,20 @@ class Agent:
             # which is what SelfWriteLedger exists for; without it every 30 s
             # tick produces a "observed modified nodes/node-01.yaml" line.
             self._watcher.ledger.record(written)
+
+        # Schedule next tick with jitter (issue #96)
+        self._tick_count += 1
+        jitter = self._settings.HEARTBEAT_JITTER_S
+        if jitter > 0:
+            # Seeded PRNG: hash(node_id + tick_count) -> uniform [-jitter, +jitter]
+            seed = hash((self._settings.NODE_ID, self._tick_count))
+            rng = random.Random(seed)
+            interval += rng.uniform(-jitter, jitter)
+        # Sleep with stop event awareness for clean shutdown
+        try:
+            await asyncio.wait_for(stop_event.wait(), timeout=max(0.1, interval))
+        except (asyncio.TimeoutError, TimeoutError):
+            return
 
     def _register_watcher_tasks(self) -> None:
         assert self._supervisor is not None
@@ -366,11 +414,20 @@ class Agent:
         await self._ensure_watcher_started()
         await self._activate_watcher_tasks()
 
-    async def _drain_events(self) -> None:
-        """Log every queued event, and nothing more.
+    def _is_job_state_file(self, path: Path | str) -> bool:
+        """Check if a path is a jobs/<job_id>/state.yaml file."""
+        path = Path(path)
+        return (
+            path.name == "state.yaml"
+            and path.parent.name.startswith("job-")
+            and path.parent.parent.name == "jobs"
+        )
 
-        This is the #97 boundary: the watcher observes, this logs, and parsing
-        or routing a job file does not exist yet.
+    async def _drain_events(self) -> None:
+        """Drain the event queue and route job events to the claim handler.
+
+        This is the #97 boundary: the watcher observes, this logs, and job
+        discovery/claiming is implemented here.
         """
         queue = self._watcher.events()
         while True:
@@ -379,14 +436,149 @@ class Agent:
             except asyncio.QueueEmpty:
                 return
             logger.info("observed %s %s", event.kind, event.path)
+            # Route job state file creation events to claim handler
+            if event.kind == "created" and self._is_job_state_file(event.path):
+                await self._maybe_claim_job(event.path)
+
+    async def _maybe_claim_job(self, state_file_path) -> None:
+        """Attempt to claim a job from a state.yaml file event.
+
+        Checks:
+        - Job status is PENDING
+        - Job has no node_id (unclaimed)
+        - This node can fit the job's resources
+        - This agent is not already running a job
+        - Advisory marker creation succeeds (O_EXCL)
+
+        On successful claim, spawns the execution task as a background task
+        so the agent continues heartbeat and log shipping.
+        """
+        if self._current_job_id is not None:
+            logger.debug(
+                "ignoring job event for %s: already running %s",
+                state_file_path,
+                self._current_job_id,
+            )
+            return
+
+        # Collect current node spec for resource check
+        node_spec = collect_node_spec(self._settings.NODE_ID)
+
+        success, reason = await claim_job(
+            self._paths,
+            state_file_path,
+            self._settings.NODE_ID,
+            node_spec,
+        )
+        if success:
+            job_id = state_file_path.parent.name
+            self._current_job_id = job_id
+            logger.info("claimed job %s", job_id)
+            # Immediately write node spec with current_job_id set
+            node_spec.current_job_id = job_id
+            try:
+                written = write_node_spec(self._paths, node_spec)
+                if self._watcher is not None:
+                    self._watcher.ledger.record(written)
+            except OSError as exc:
+                logger.warning(
+                    "could not write node file with current_job_id %s: %s",
+                    job_id,
+                    exc,
+                )
+
+            # Spawn execution as a background supervised task
+            self._spawn_execution_task(job_id, node_spec)
+        else:
+            logger.debug("did not claim job from %s: %s", state_file_path, reason)
+
+    def _spawn_execution_task(self, job_id: str, node_spec: NodeSpec) -> None:
+        """Spawn the job execution as a background task.
+
+        The task runs concurrently with heartbeat, log shipping, and event drain.
+        On completion, it clears _current_job_id and updates the node spec.
+        """
+        from shared.file_ops.yaml_utils import read_yaml
+        from shared.schemas.job_state import JobState
+
+        state_file = self._paths.jobs_dir / job_id / "state.yaml"
+        job_state = read_yaml(str(state_file), JobState)
+        job_spec = job_state.spec
+
+        stop_event = asyncio.Event()
+
+        async def execution_wrapper():
+            try:
+                await execute_job(
+                    job_id=job_id,
+                    job_spec=job_spec,
+                    node_spec=node_spec,
+                    paths=self._paths,
+                    syncthing_root=self._paths.root,
+                    stop_event=stop_event,
+                    watcher=self._watcher,
+                )
+            except Exception as e:
+                logger.exception("execution task failed for job %s: %s", job_id, e)
+            finally:
+                # Clear current job ID and update node spec
+                self._current_job_id = None
+                try:
+                    updated_node_spec = collect_node_spec(self._settings.NODE_ID)
+                    updated_node_spec.current_job_id = None
+                    written = write_node_spec(self._paths, updated_node_spec)
+                    if self._watcher is not None:
+                        self._watcher.ledger.record(written)
+                except OSError as exc:
+                    logger.warning(
+                        "could not write node file after job completion: %s", exc
+                    )
+
+        self._execution_task = asyncio.create_task(
+            execution_wrapper(), name=f"execute-{job_id}"
+        )
+        # Don't await - runs in background
 
     async def _hand_back_in_flight_job(self) -> None:
-        """Shutdown seam for #103. The agent starts no child process in #93."""
-        logger.debug("no in-flight job to hand back")
+        """Shutdown seam for #103. Hand back the in-flight job if any.
+
+        Clears current_job_id and writes the node spec to reflect the handoff.
+        """
+        if self._current_job_id is not None:
+            logger.info("handing back in-flight job %s", self._current_job_id)
+            # Signal the execution task to stop
+            if self._execution_task is not None and not self._execution_task.done():
+                # The execution task checks the agent's stop event
+                pass
+            self._current_job_id = None
+            # Update node spec to clear current_job_id
+            node_spec = collect_node_spec(self._settings.NODE_ID)
+            node_spec.current_job_id = None
+            try:
+                written = write_node_spec(self._paths, node_spec)
+                if self._watcher is not None:
+                    self._watcher.ledger.record(written)
+            except OSError as exc:
+                logger.warning("could not write node file after handoff: %s", exc)
 
     async def _write_final_state(self) -> None:
-        """Shutdown seam for #100. Nothing durable is written in #93."""
-        logger.debug("no durable state to write")
+        """Shutdown seam for #100. Write final job state on completion.
+
+        Clears current_job_id and writes the node spec.
+        The execution task handles writing terminal state; this just cleans up.
+        """
+        if self._current_job_id is not None:
+            logger.info("clearing current_job_id %s on shutdown", self._current_job_id)
+            self._current_job_id = None
+            # Update node spec to clear current_job_id
+            node_spec = collect_node_spec(self._settings.NODE_ID)
+            node_spec.current_job_id = None
+            try:
+                written = write_node_spec(self._paths, node_spec)
+                if self._watcher is not None:
+                    self._watcher.ledger.record(written)
+            except OSError as exc:
+                logger.warning("could not write node file after final state: %s", exc)
 
     def _on_fatal(self, task_name: str, exc: BaseException) -> None:
         logger.error("critical task %r failed", task_name, exc_info=exc)
@@ -415,6 +607,14 @@ class Agent:
                 "shutdown: %d task failure(s) were recorded during the run",
                 len(failures),
             )
+
+        # Wait for execution task to complete (it checks the stop event)
+        if self._execution_task is not None and not self._execution_task.done():
+            logger.info("waiting for execution task to complete")
+            try:
+                await asyncio.wait_for(self._execution_task, timeout=grace)
+            except asyncio.TimeoutError:
+                logger.warning("execution task did not complete within grace period")
 
         await self._hand_back_in_flight_job()
 

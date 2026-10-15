@@ -20,6 +20,27 @@ Distributed platform for running scientific workloads on a home GPU cluster.
 | API server | `uvicorn backend.main:app --reload` |
 | Worker agent | `run-agent --node-id node-01` (needs `SYNCTHING_ROOT` set; see README "Worker Agent") |
 
+### The gates are only meaningful on the pinned toolchain
+
+`pyproject.toml` pins `ruff==0.5.0`, `mypy==1.0.0`, `pytest==8.0.0`, `pytest-asyncio==0.23.8`.
+**A virtualenv that does not honour those pins reports a false red.** A venv on Python 3.14
+with current starlette yields "19 failed / 28 errors" in `test_cors`/`test_auth`/`test_main`/
+`test_websocket`, purely because `starlette.testclient.Client(app=...)` is no longer accepted —
+and on ruff 0.17 the formatter wants to reformat 14 already-correct files while mypy 2.4
+reports 17 errors in untouched code. None of that is real.
+
+Build the environment from the pins before trusting any gate result:
+
+```bash
+uv venv --python 3.12 .venv-gates
+uv pip install --python .venv-gates/bin/python -e ".[dev]"
+```
+
+`.venv-gates/`, `.venv/` and `venv/` are all excluded from mypy and gitignored. If a gate looks
+red, check the tool versions (`ruff --version`, `mypy --version`, `pytest --version`) **before**
+investigating the code — a version mismatch is the likeliest explanation and the most expensive
+one to chase.
+
 ---
 
 ## Agent-Team Workflow

@@ -18,13 +18,17 @@ AGENT_DIR = REPO_ROOT / "agent"
 PYPROJECT = REPO_ROOT / "pyproject.toml"
 
 SHIPPED_MODULES = [
+    "claim",
     "config",
+    "executor",
     "hardware",
     "logging_config",
+    "log_writer",
     "loop",
     "paths",
     "run_agent",
     "supervisor",
+    "terminal",
     "watcher",
 ]
 

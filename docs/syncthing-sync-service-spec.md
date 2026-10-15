@@ -237,6 +237,57 @@ scientific-home-cluster/
   - Log status changes
 - Alternative: update status directly when heartbeat file is modified
 
+### Heartbeat Contract (Issue #96)
+
+The heartbeat contract defines the relationship between the backend monitor
+and the agent's heartbeat cadence. It is fully configurable and documented
+here to prevent misconfiguration.
+
+**Backend Settings** (`backend.core.config.Settings`):
+
+- `HEARTBEAT_TIMEOUT_SECONDS` (default: 90): The offline threshold. A node
+  whose last heartbeat is older than this value (strictly greater) is marked
+  OFFLINE. A node with a heartbeat at or within this threshold is considered
+  ONLINE.
+- `HEARTBEAT_CHECK_INTERVAL_SECONDS` (default: 30): How often the monitor
+  wakes up to check node heartbeats.
+
+**Invariant**: `HEARTBEAT_CHECK_INTERVAL_SECONDS < HEARTBEAT_TIMEOUT_SECONDS`
+is enforced at startup. If violated, the service fails fast with a clear
+error message. This ensures a healthy node writing on schedule is observed
+at least twice within the timeout window.
+
+**Agent Settings** (`agent.config.AgentSettings`):
+
+- `AGENT_HEARTBEAT_INTERVAL_S` (default: 22.0): How often the agent writes
+  its node file (and thus updates `last_heartbeat`). The recommended value
+  is `timeout / 4` (22s at the default 90s timeout). This leaves room for
+  two missed writes plus watcher latency before the monitor could observe
+  a stale heartbeat.
+- `AGENT_HEARTBEAT_JITTER_S` (default: 2.0): Uniform jitter applied to the
+  sleep between heartbeat writes (`±jitter` seconds). Prevents a synchronized
+  fleet from overwhelming the watcher debounce on wake-up. Seeded from
+  `(node_id, tick_count)` for deterministic test behaviour.
+
+**Effective Deadline**: The practical offline threshold is the sum of:
+- Monitor check interval (30s default)
+- Agent heartbeat interval (22s default)
+- Watcher debounce latency (500ms)
+
+A healthy node at default settings can be stale by up to ~52.5s before the
+monitor observes it as stale, well within the 90s timeout.
+
+**Resume Behaviour**: On wake from suspend, the agent detects a monotonic
+clock jump > `2 * interval` and writes an immediate heartbeat rather than
+waiting for the next scheduled tick. This avoids a window of incorrect
+OFFLINE status for laptops that sleep for hours.
+
+**File Transport Asymmetry**: The agent writes `status: "ONLINE"` in its
+YAML file, but the monitor is the authority on node status. If the monitor
+marks a node OFFLINE between agent ticks, the next agent write will flip it
+back to ONLINE in the file, but the monitor's next tick will re-evaluate.
+This is existing behaviour; a future HTTP transport can eliminate it.
+
 ### Error Recovery
 - If database connection fails:
   - Log error and retry after backoff period

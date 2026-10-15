@@ -9,14 +9,16 @@ import logging
 import time
 from pathlib import Path
 from typing import Dict, Optional, Set, Any
-from datetime import datetime
+from datetime import datetime, timezone
 from watchdog.observers import Observer as ObserverType
 from watchdog.events import FileSystemEventHandler
 
 from shared.schemas.job_state import JobState
 from shared.schemas.node_spec import NodeSpec
+from shared.schemas.job_status import JobStatus
 from backend.store import get_store
 from shared.file_ops import read_yaml
+from backend.core.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -49,6 +51,30 @@ class SyncthingEventHandler(FileSystemEventHandler):
     def on_deleted(self, event):
         if not event.is_directory and self._is_relevant_file(event.src_path):
             self._schedule_delete(event.src_path)
+
+    def on_moved(self, event):
+        """
+        A file renamed INTO the folder is a delivery, and this is it.
+
+        The sibling of ``agent/watcher.py``'s ``on_moved``, added for the same
+        reason and kept in step with it on purpose: neither handler implemented
+        it, and without it every atomically published file is invisible.
+        ``write_yaml`` (``shared/file_ops/yaml_utils.py``) publishes by
+        writing a temp file and ``os.replace``-ing it into place, and Syncthing
+        does the same when it delivers a file from another node. Linux inotify
+        reports a rename-in as IN_MOVED_TO, watchdog surfaces that as
+        FileMovedEvent, and ``FileSystemEventHandler.dispatch`` routes it to
+        this method - which, absent, silently dropped it.
+
+        The destination is the path that matters: on a FileMovedEvent
+        ``src_path`` is the *old* name (the temp file the filter rejects) and
+        ``dest_path`` is the state file.
+        """
+        destination = getattr(event, "dest_path", None)
+        if destination is None or event.is_directory:
+            return
+        if self._is_relevant_file(destination):
+            self._schedule_process(destination)
 
     def _is_relevant_file(self, path: str) -> bool:
         """Check if the file is a relevant YAML state file."""
@@ -256,6 +282,36 @@ class SyncthingService:
             store = get_store()
             existing_job = await store.get_job(job_id)
             if existing_job:
+                # MONOTONICITY: If existing job is in a terminal state, reject any write
+                # that would change status, exit_code, error, or completed_at.
+                if existing_job.status in (
+                    JobStatus.COMPLETED,
+                    JobStatus.FAILED,
+                    JobStatus.CANCELLED,
+                ):
+                    # Terminal states are final. Log and ignore.
+                    logger.warning(
+                        "Job %s is already %s; "
+                        "ignoring agent write attempting to set %s",
+                        job_id,
+                        existing_job.status.value,
+                        job_state.status.value,
+                    )
+                    return
+
+                # Allow PENDING -> RUNNING, RUNNING -> terminal
+                # But not RUNNING -> PENDING (that's retry_job's job)
+                if (
+                    existing_job.status == JobStatus.RUNNING
+                    and job_state.status == JobStatus.PENDING
+                ):
+                    logger.warning(
+                        "Job %s is RUNNING; ignoring agent write "
+                        "attempting to set PENDING",
+                        job_id,
+                    )
+                    return
+
                 # Update only fields from YAML
                 await store.update_job(
                     job_state.job_id,
@@ -320,38 +376,59 @@ class SyncthingService:
         logger.info(f"Deleted node from store: {node_id}")
 
     async def _heartbeat_monitor(self):
-        """Monitor node heartbeats and mark offline nodes."""
+        """Monitor node heartbeats and mark offline nodes.
+
+        Uses HEARTBEAT_CHECK_INTERVAL_SECONDS for the check cadence and
+        HEARTBEAT_TIMEOUT_SECONDS for the offline threshold. The validator in
+        Settings ensures check_interval < timeout so a healthy node is observed
+        at least twice within the timeout window.
+        """
         while self._running:
             try:
-                await asyncio.sleep(30)  # Check every 30 seconds
-                store = get_store()
-                nodes = await store.list_nodes()
-                now = datetime.now()
-
-                for node in nodes:
-                    # Calculate time since last heartbeat
-                    if node.last_heartbeat:
-                        # Ensure timezone-aware comparison
-                        if node.last_heartbeat.tzinfo is None:
-                            last_hb = node.last_heartbeat.replace(tzinfo=now.tzinfo)
-                        else:
-                            last_hb = node.last_heartbeat
-
-                        delta = (now - last_hb).total_seconds()
-                        if delta > 90 and node.status == "ONLINE":
-                            await store.update_node(node.node_id, status="OFFLINE")
-                            logger.info(
-                                f"Node {node.node_id} marked OFFLINE "
-                                f"(last heartbeat {delta:.0f}s ago)"
-                            )
-                        elif delta <= 90 and node.status == "OFFLINE":
-                            await store.update_node(node.node_id, status="ONLINE")
-                            logger.info(f"Node {node.node_id} marked ONLINE")
+                await asyncio.sleep(settings.HEARTBEAT_CHECK_INTERVAL_SECONDS)
+                await self._heartbeat_monitor_iteration()
 
             except asyncio.CancelledError:
                 break
             except Exception as e:
                 logger.error(f"Error in heartbeat monitor: {e}")
+
+    async def _heartbeat_monitor_iteration(self, now: datetime | None = None):
+        """Run one iteration of the heartbeat monitor.
+
+        This method is factored out for testability. It uses the current time
+        by default but accepts a fixed `now` for deterministic testing.
+
+        Args:
+            now: The reference time to compare heartbeats against. Defaults to
+                ``datetime.now(timezone.utc)``.
+        """
+        store = get_store()
+        nodes = await store.list_nodes()
+        if now is None:
+            now = datetime.now(timezone.utc)
+        timeout = settings.HEARTBEAT_TIMEOUT_SECONDS
+
+        for node in nodes:
+            # Calculate time since last heartbeat
+            if node.last_heartbeat:
+                # Both now and node.last_heartbeat are aware UTC
+                # (column is timezone=True). No coercion needed —
+                # comparing aware-to-aware UTC.
+                last_hb = node.last_heartbeat
+                delta = (now - last_hb).total_seconds()
+                if delta > timeout and node.status == "ONLINE":
+                    await store.update_node(node.node_id, status="OFFLINE")
+                    logger.info(
+                        f"Node {node.node_id} marked OFFLINE "
+                        f"(last heartbeat {delta:.0f}s ago, timeout={timeout}s)"
+                    )
+                elif delta <= timeout and node.status == "OFFLINE":
+                    await store.update_node(node.node_id, status="ONLINE")
+                    logger.info(
+                        f"Node {node.node_id} marked ONLINE "
+                        f"(last heartbeat {delta:.0f}s ago, timeout={timeout}s)"
+                    )
 
     async def manual_scan(self) -> Dict[str, int]:
         """Manually trigger a full scan of the Syncthing folder."""

@@ -12,9 +12,11 @@ from typing import Any, cast
 import pytest
 from watchdog.events import (
     DirCreatedEvent,
+    DirMovedEvent,
     FileCreatedEvent,
     FileDeletedEvent,
     FileModifiedEvent,
+    FileMovedEvent,
 )
 
 from agent.config import CONFIG_FILE_NAME, build_settings
@@ -116,6 +118,121 @@ def test_all_three_event_kinds_are_reported(
 
     kinds = [event.kind for event in drain(queue)]
     assert kinds == [EVENT_CREATED, EVENT_MODIFIED, EVENT_DELETED]
+
+
+# --- delivery by rename (issue #105) --------------------------------------
+#
+# `shared.file_ops.write_yaml` publishes by writing a temp file and
+# `os.replace`-ing it into place, and so does Syncthing. On Linux that is
+# IN_MOVED_TO, which watchdog surfaces as FileMovedEvent and dispatches to
+# `on_moved`. With no `on_moved`, every atomically written state file was
+# invisible: measured over 20 identical submissions through
+# `POST /api/v1/jobs/`, 7 produced no event at all and 13 produced a
+# `created` event only as a side effect of watchdog synthesising events for
+# the newly created job directory.
+
+
+def test_a_file_renamed_into_the_folder_is_reported(
+    watcher: RecordingWatcher, tmp_paths: AgentPaths
+) -> None:
+    """The delivery the backend's ``submit_job`` performs."""
+    handler = handler_for(watcher)
+    temp = tmp_paths.jobs_dir / "job-1" / "state.yaml.a1b2c3.tmp"
+    delivered = tmp_paths.jobs_dir / "job-1" / "state.yaml"
+
+    handler.on_moved(FileMovedEvent(str(temp), str(delivered)))
+
+    events = drain(watcher.events())
+    assert [event.kind for event in events] == [EVENT_CREATED]
+    assert [event.path for event in events] == [delivered]
+
+
+def test_the_source_of_a_rename_is_never_what_is_reported(
+    watcher: RecordingWatcher, tmp_paths: AgentPaths
+) -> None:
+    """
+    On a FileMovedEvent ``src_path`` is the *old* name.
+
+    Reporting it would report the temp file, which the filter rejects, and
+    which is not the thing that exists when the event is handled.
+    """
+    handler = handler_for(watcher)
+    temp = tmp_paths.jobs_dir / "job-1" / "state.yaml.a1b2c3.tmp"
+    delivered = tmp_paths.jobs_dir / "job-1" / "state.yaml"
+
+    handler.on_moved(FileMovedEvent(str(temp), str(delivered)))
+
+    assert all(
+        event.path != temp for event in drain(watcher.events())
+    ), "the temp file was reported"
+
+
+def test_a_rename_onto_an_irrelevant_name_is_still_filtered(
+    watcher: RecordingWatcher, tmp_paths: AgentPaths
+) -> None:
+    """The filter applies to a destination exactly as it does to a creation."""
+    handler = handler_for(watcher)
+
+    for name in ("agent.toml", "state.yaml.tmp", ".state.yaml", "node-01.json"):
+        handler.on_moved(
+            FileMovedEvent(
+                str(tmp_paths.nodes_dir / "staging"),
+                str(tmp_paths.nodes_dir / name),
+            )
+        )
+
+    assert drain(watcher.events()) == []
+
+
+def test_the_agents_own_rename_is_still_suppressed(
+    watcher: RecordingWatcher, tmp_paths: AgentPaths
+) -> None:
+    """
+    The ledger records the destination, so the agent's own ``write_yaml`` -
+    which also delivers by rename - does not re-enter its control loop.
+    """
+    handler = handler_for(watcher)
+    target = paths_node_file(tmp_paths)
+    watcher.ledger.record(target)
+
+    handler.on_moved(FileMovedEvent(str(target) + ".xy12ab.tmp", str(target)))
+
+    assert drain(watcher.events()) == []
+
+
+def test_a_directory_rename_is_not_reported(
+    watcher: RecordingWatcher, tmp_paths: AgentPaths
+) -> None:
+    handler = handler_for(watcher)
+
+    handler.on_moved(
+        DirMovedEvent(str(tmp_paths.jobs_dir / "old"), str(tmp_paths.jobs_dir / "new"))
+    )
+    # Named `state.yaml` on purpose: a directory passes the suffix filter, and
+    # only the is-directory check keeps it out of the queue.
+    handler.on_moved(
+        DirMovedEvent(
+            str(tmp_paths.jobs_dir / "job-1" / "staging"),
+            str(tmp_paths.jobs_dir / "job-1" / "state.yaml"),
+        )
+    )
+
+    assert drain(watcher.events()) == []
+
+
+def test_a_move_without_a_destination_is_ignored(
+    watcher: RecordingWatcher, tmp_paths: AgentPaths
+) -> None:
+    """Defensive: a platform event with no ``dest_path`` must not crash."""
+    handler = handler_for(watcher)
+
+    handler.on_moved(FileCreatedEvent(str(tmp_paths.nodes_dir / "node-01.yaml")))
+
+    assert drain(watcher.events()) == []
+
+
+def paths_node_file(paths: AgentPaths) -> Path:
+    return paths.node_file
 
 
 # --- the self-write ledger ------------------------------------------------
