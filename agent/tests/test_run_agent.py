@@ -298,6 +298,55 @@ def test_readme_states_the_config_file_is_read_once() -> None:
     assert "restart" in text
 
 
+def test_readme_documents_the_shell_and_its_quoting_contract() -> None:
+    """AC-8: the key, the per-platform default and the contract, in one place.
+
+    Asserted the way this repository asserts documentation -- a substring, as
+    ``test_readme_documents_the_worker_agent`` does for ``nodes/agent.toml``
+    -- so a later edit that drops the section fails CI instead of passing
+    review by inertia. The quoting contract is the sentence that decides what
+    a submitted ``command`` means, so it is pinned verbatim rather than
+    paraphrased.
+    """
+    text = README_MD.read_text(encoding="utf-8")
+
+    assert "AGENT_SHELL" in text
+    assert "What shell runs a job" in text
+    assert "cmd.exe /d /s /c" in text
+    assert "/bin/sh -c" in text
+    assert "verbatim" in text
+    assert "If it does not work when typed at a prompt, it does not work here" in text
+
+
+def test_readme_states_the_job_error_vocabulary() -> None:
+    """AC-8: the codes an operator reads in the dashboard, and whose fault.
+
+    A stop the agent performed is a terminal state like any other, and an
+    operator who cannot tell ``stopped:shutdown`` from a submitter's typo is
+    reading the same table for two different problems.
+    """
+    text = README_MD.read_text(encoding="utf-8")
+
+    for code in (
+        "launch_failed:shell_not_found",
+        "launch_failed:command_not_found",
+        "process_failed:exit_code=<N>",
+        "stopped:shutdown",
+        "stop_failed:tree_survived",
+    ):
+        assert code in text, code
+    assert "These are **not** the agent's own exit codes" in text
+
+
+def test_readme_states_that_cpu_count_is_advisory() -> None:
+    """AC-16 as documentation: a field that reports itself as advisory is fine,
+    one that hides behind a DEBUG line is not."""
+    text = README_MD.read_text(encoding="utf-8").lower()
+
+    assert "resources.cpus` is advisory" in text
+    assert "memory_gb" in text
+
+
 def test_help_output_exits_zero() -> None:
     completed = subprocess.run(
         [sys.executable, "-m", "agent.run_agent", "--help"],

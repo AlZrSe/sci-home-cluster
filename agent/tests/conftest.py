@@ -270,5 +270,120 @@ __all__ = [
     "signal_name",
     "wait_for",
     "wait_until",
+    "read_recorded_pids",
+    "tree_command",
+    "write_tree_script",
     "sys",
 ]
+
+
+# --- the real process tree ------------------------------------------------
+
+#: A three-process tree: this script (as ``parent``) spawns the same script as
+#: ``child``, and every one of them appends its pid to a file before it does
+#: anything else. "The tree is gone" is then a question about **pids** rather
+#: than about the launcher's ``poll()``, which is the assertion that
+#: distinguishes a real tree-stop from a launcher-only kill (issue #125 Q8d).
+#:
+#: ``sys.executable`` and ``__file__`` are both quoted at the call site
+#: because a Windows install under ``C:\Program Files\Python312\`` contains a
+#: space, and preserving the operator's quotes is exactly what the
+#: single-string command line exists for.
+TREE_SCRIPT = """\
+import os
+import subprocess
+import sys
+import time
+
+role, pids_file = sys.argv[1], sys.argv[2]
+
+@@REFUSE_POLITE@@
+
+with open(pids_file, "a", encoding="utf-8") as handle:
+    handle.write(f"{os.getpid()}\\n")
+    if role == "parent" and sys.platform == "win32":
+        # cmd.exe is a real, separate process on Windows and its pid is worth
+        # asserting on. On POSIX `/bin/sh -c` execs its only command, so the
+        # python parent *is* the launcher and getppid() would name the test
+        # process itself -- which this suite must never assert is dead.
+        handle.write(f"{os.getppid()}\\n")
+    handle.flush()
+
+if role == "parent":
+    subprocess.Popen([sys.executable, __file__, "child", pids_file])
+
+time.sleep(300)
+"""
+
+#: The same tree with the polite request refused. Cooperative stops are
+#: defeatable on both platforms -- ``SetConsoleCtrlHandler(..., TRUE)`` /
+#: ``SIG_IGN`` for ``SIGBREAK`` on Windows, a ``SIGTERM`` handler on POSIX --
+#: which is the whole reason a forced tier exists.
+REFUSE_POLITE_POSIX = "signal.signal(signal.SIGTERM, signal.SIG_IGN)"
+REFUSE_POLITE_WINDOWS = "signal.signal(signal.SIGBREAK, signal.SIG_IGN)"
+
+REFUSE_POLITE_SNIPPET = """\
+import signal
+
+if sys.platform == "win32":
+    {windows}
+else:
+    {posix}
+"""
+
+
+def read_recorded_pids(pids_file: Path) -> list[int]:
+    """Every pid the tree has written so far, in the order it wrote them."""
+    if not pids_file.exists():
+        return []
+    return [
+        int(line)
+        for line in pids_file.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+
+
+def write_tree_script(
+    directory: Path, *, refuse_polite: bool = False
+) -> tuple[Path, Path]:
+    """Write the tree script into ``directory``; return ``(script, pids_file)``.
+
+    The snippet is substituted with ``str.replace`` and not ``str.format``:
+    the script is full of f-strings, and ``format`` would try to resolve
+    ``{os.getpid()}`` against *this* module's namespace.
+    """
+    refuse = ""
+    if refuse_polite:
+        refuse = REFUSE_POLITE_SNIPPET.format(
+            windows=REFUSE_POLITE_WINDOWS, posix=REFUSE_POLITE_POSIX
+        )
+    script = directory / f"tree-{int(refuse_polite)}.py"
+    script.write_text(
+        TREE_SCRIPT.replace("@@REFUSE_POLITE@@", refuse), encoding="utf-8"
+    )
+    return script, directory / f"pids-{int(refuse_polite)}.txt"
+
+
+def tree_command(script: Path, pids_file: Path) -> str:
+    """The command line an operator would have typed for that tree.
+
+    Quoted throughout, because a Windows install under
+    ``C:\\Program Files\\Python312\\`` contains a space and preserving the
+    operator's quotes is exactly what the single-string command line exists
+    for. One program on both platforms, not a shell built-in: ``echo hello``
+    is a ``cmd`` built-in *and* an ``sh`` built-in with different escape
+    processing, and a test that only passes under one of them is not testing
+    the thing the agent does (issue #125 Q8a).
+    """
+    return f'"{sys.executable}" "{script}" parent "{pids_file}"'
+
+
+@pytest.fixture
+def tree_script(tmp_path: Path) -> Callable[..., tuple[str, Path]]:
+    """Build a runnable three-process tree; return ``(command, pids_file)``."""
+
+    def build(*, refuse_polite: bool = False) -> tuple[str, Path]:
+        script, pids = write_tree_script(tmp_path, refuse_polite=refuse_polite)
+        return tree_command(script, pids), pids
+
+    return build
