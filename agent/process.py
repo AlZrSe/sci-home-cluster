@@ -604,6 +604,29 @@ class _JobObject:
         ``None`` is a real answer and means *unknown*, which the caller must
         not confuse with "empty" for the same reason
         :func:`_live_processes` does not.
+
+        **A dependency on the kernel's refusal, recorded here so nobody
+        "fixes" it (issue #125 F6).** The struct has two counters --
+        ``NumberOfAssignedProcesses`` is how many pids the job holds, and
+        ``AssignedProcessIdList`` is how many of them were written into the
+        buffer. This reads only the first and then walks ``ProcessIdList`` by the
+        first, which is only correct because
+        ``QueryInformationJobObject`` **fails the whole call with
+        ``ERROR_MORE_DATA``** rather than truncating and reporting the smaller
+        number. That is documented for the ``*_INFOLAST``-free information
+        classes, and it is what makes the silent-corruption answer unreachable
+        today -- but it is a property of the kernel, not of this struct, and it
+        is not checked here.
+
+        So the buffer is sized for 8192 pids (:data:`JOB_ID_LIST_CAPACITY`),
+        which is 64 KiB and far past anything this agent launches, and if a host
+        ever did exceed it the query returns False, ``members()`` answers
+        ``None``, and the caller reports "cannot confirm" -- the loud direction,
+        which is the whole point of the ``None`` answer. Adding
+        ``AssignedProcessIdList`` to the loop bound would make this correct
+        *without* relying on the refusal, and would cost one comparison per
+        member; it is deliberately not done, because the loud path is already
+        correct and a smaller bound is a change nobody asked for.
         """
         if sys.platform != "win32":
             return None
@@ -790,29 +813,6 @@ def _live_processes() -> dict[int, int] | None:
     still running (issue #125 N1). The caller turns ``None`` into "cannot
     confirm", which the executor records as ``stop_failed:tree_survived``.
 
-    Every failure mode is contained here. An exception escaping this function
-    would unwind ``verify()`` and ``execute_job`` with no terminal state
-    written at all, which is worse than any answer this function can give
-    (issue #125 N2).
-    """
-    if sys.platform != "win32":
-        return {}
-    try:
-        resolved = _toolhelp()
-        if resolved is None:
-            logger.error("the process snapshot is unavailable on this platform")
-            return None
-        ctypes, wintypes, kernel32, entry_class, invalid_handle = resolved
-        snapshot = kernel32.CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0)
-        # NULL is an empty snapshot and is a legitimate answer; the unsigned
-        # INVALID_HANDLE_VALUE is the failure, and it is not -1 (see _toolhelp).
-        if snapshot is None or int(snapshot) == invalid_handle:
-            logger.warning(
-                "CreateToolhelp32Snapshot failed (winerror %d); the tree cannot "
-                "be enumerated and the stop cannot be confirmed",
-                ctypes.get_last_error(),
-            )
-            return None
     Cost, because it is the dominant term in a Windows verification: **2.296 ms
     per probe** on this host (25 runs), 459 ms across a five-second
     verification at the 25 ms poll. ``_toolhelp``'s docstring has the split.
@@ -832,6 +832,37 @@ def _live_processes() -> dict[int, int] | None:
     An earlier draft answered ``None`` here, which would have turned a
     hypothetical refactor into a fleet-wide false failure.
 
+    Every failure mode is contained here. An exception escaping this function
+    would unwind ``verify()`` and ``execute_job`` with no terminal state
+    written at all, which is worse than any answer this function can give
+    (issue #125 N2).
+    """
+    if sys.platform != "win32":
+        # Not an ERROR: see the docstring. Both callers are behind a Windows
+        # guard, so this is a statement that the guard held, and the only
+        # question worth logging is why it was asked at all.
+        logger.debug(
+            "the process snapshot was asked for on %s, which has no such "
+            "primitive; answering with an empty host",
+            sys.platform,
+        )
+        return {}
+    try:
+        resolved = _toolhelp()
+        if resolved is None:
+            logger.error("the process snapshot is unavailable on this platform")
+            return None
+        ctypes, wintypes, kernel32, entry_class, invalid_handle = resolved
+        snapshot = kernel32.CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0)
+        # NULL is an empty snapshot and is a legitimate answer; the unsigned
+        # INVALID_HANDLE_VALUE is the failure, and it is not -1 (see _toolhelp).
+        if snapshot is None or int(snapshot) == invalid_handle:
+            logger.warning(
+                "CreateToolhelp32Snapshot failed (winerror %d); the tree cannot "
+                "be enumerated and the stop cannot be confirmed",
+                ctypes.get_last_error(),
+            )
+            return None
         processes: dict[int, int] = {}
         try:
             entry = entry_class()
