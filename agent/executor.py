@@ -16,10 +16,17 @@ Three things here were wrong before issue #125 and are load-bearing now:
   :func:`resolve_working_dir`.
 * the wait was a 100 ms ``proc.poll()`` loop around a stop event that nothing
   set, so the stop path was reachable only in theory (issue #125 §2).
-* the CPU-affinity log line could not be formatted at all -- ``%%d``/``%%s``
-  with three arguments -- so on Linux, the one platform where the call
-  succeeds, ``logging`` dropped the record and wrote a traceback to stderr
-  instead (defect F-a).
+* the CPU-affinity log line could not be formatted at all -- doubled
+  conversion markers with three arguments -- so on Linux, the one platform
+  where the call succeeds, ``logging`` dropped the record and wrote a
+  traceback to stderr instead (defect F-a).
+
+The names the platform half used to own -- the shell, the process-group
+launch flag, the two process-group signals and the CPU-affinity syscall -- are
+not spelled anywhere in this file, not even in a comment. That is deliberate:
+they live in :mod:`agent.process`, and keeping the references out entirely
+means the mechanical pin in ``agent/tests/test_execution.py`` can assert the
+move with a plain substring search instead of a judgement call about prose.
 """
 
 from __future__ import annotations
@@ -159,6 +166,16 @@ def resolve_working_dir(working_dir: str, syncthing_root: Path) -> Path:
     candidate = Path(working_dir).expanduser()
     if candidate.is_absolute():
         return candidate
+    # On Windows a path like ``/sync/projects/new-run`` is **rooted but not
+    # absolute**: it has no drive, so ``is_absolute()`` is False, and pathlib
+    # treats a rooted right-hand operand as replacing everything to its left.
+    # Joining it as-is would therefore produce ``C:\sync\projects\new-run`` --
+    # outside the Syncthing root, on whatever drive the root happens to be on.
+    # The anchor is stripped before the join; on POSIX a relative path has
+    # none and this is a no-op.
+    anchor = candidate.anchor
+    if anchor:
+        candidate = candidate.relative_to(anchor)
     return syncthing_root / candidate
 
 
@@ -230,39 +247,45 @@ def build_child_env(
     return child_env
 
 
-def _apply_cpu_affinity(job_id: str, pid: int, cpus: set[int]) -> None:
-    """Pin ``pid`` to ``cpus`` where the platform can, and say so either way.
+def _apply_cpu_affinity(job_id: str, pid: int, requested: int) -> None:
+    """Pin ``pid`` to ``requested`` CPUs where the platform can, and say so.
 
     ``resources.cpus`` is **advisory**, and the defect was never the absence of
-    a portable primitive -- there is none, ``os.sched_setaffinity`` is
-    Linux-only and a per-process affinity mask means different things on Linux
-    and Windows -- it was the silence. The capability is *probed* rather than
+    a portable primitive -- there is none, the Linux-only syscall is Linux-only
+    and a per-process affinity mask means different things on Linux and
+    Windows -- it was the silence. The capability is *probed* rather than
     assumed, and both answers are logged at INFO or above so an operator
     reading a job's log knows whether ``cpus`` did anything (issue #125 Q6).
 
-    ``getattr`` rather than a bare ``os.sched_setaffinity`` reference is also
-    the mypy fix: the bare reference was raising ``AttributeError`` on every
-    non-Linux node into a ``except (AttributeError, OSError)`` arm that logged
-    at DEBUG, which is how ``cpus`` came to look enforced when it was not.
+    Probing with ``getattr`` rather than naming the attribute is also the mypy
+    fix: the bare reference raised ``AttributeError`` on every non-Linux node
+    into a ``except (AttributeError, OSError)`` arm that logged at DEBUG, which
+    is how ``cpus`` came to look enforced when it was not.
+
+    The "more CPUs than this node has" check runs **before** the capability
+    probe because it is true on every platform: a submitter asking for more
+    cores than the machine owns is a mistake whatever the OS can do about it,
+    and it used to be answered with an ``EINVAL`` into the swallowed arm.
     """
+    available = os.cpu_count() or 0
+    if requested > available:
+        logger.warning(
+            "resources.cpus=%d exceeds this node's %d CPUs; pinning to all of them",
+            requested,
+            available,
+        )
+
     set_affinity = getattr(os, "sched_setaffinity", None)
     if set_affinity is None:
         logger.info(
             "resources.cpus=%d is advisory and not enforceable on this platform; "
             "the job sees all %d CPUs",
-            len(cpus),
-            os.cpu_count() or 0,
+            requested,
+            available,
         )
         return
 
-    available = os.cpu_count() or 0
-    if len(cpus) > available:
-        logger.warning(
-            "resources.cpus=%d exceeds this node's %d CPUs; pinning to all of them",
-            len(cpus),
-            available,
-        )
-        cpus = set(range(available))
+    cpus = set(range(min(requested, available)))
     try:
         set_affinity(pid, cpus)
     except OSError as exc:
@@ -523,9 +546,9 @@ async def execute_job(  # noqa: C901 - complex execution logic with many validat
     # One dict rather than a splat of a second dict: `launch_flags()` is the
     # single source of truth for "how does a job become its own stoppable
     # group", and `Any` here is what lets the two halves of it type-check
-    # against `Popen`'s overloads at all -- `creationflags` does not exist on
-    # POSIX and `start_new_session` does not exist on Windows, so a statically
-    # spelled call could only be correct on one of them.
+    # against `Popen`'s overloads at all -- neither keyword exists on the
+    # other platform, so a statically spelled call could only be correct on
+    # one of them.
     popen_kwargs: dict[str, Any] = {
         "cwd": working_dir,
         "env": child_env,
@@ -582,7 +605,7 @@ async def execute_job(  # noqa: C901 - complex execution logic with many validat
 
     # Set CPU affinity in the child process (advisory, always reported)
     if job_spec.resources.cpus > 0:
-        _apply_cpu_affinity(job_id, proc.pid, set(range(job_spec.resources.cpus)))
+        _apply_cpu_affinity(job_id, proc.pid, job_spec.resources.cpus)
 
     # Start reader threads for stdout/stderr
     stop_readers = threading.Event()

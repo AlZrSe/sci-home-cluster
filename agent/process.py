@@ -119,10 +119,19 @@ ACCEPTED_SHELLS: Final[tuple[str, ...]] = (
 #: how a quoting contract gets broken, and there is one correct flag set per
 #: shell (issue #125 D4). ``sh``/``dash``/``bash`` read a real argv; ``cmd``
 #: and ``powershell`` parse ``lpCommandLine`` themselves.
+#:
+#: The ``.exe`` spellings are here as well as the bare names because an
+#: operator naming a path on Windows will write the file name -- and the
+#: path an operator most likely has is Git's ``sh.exe``, which is exactly the
+#: program this table must recognise as "an argv shell" if it is to be usable
+#: by name at all (issue #125 Q1).
 _SHELL_TABLE: Final[dict[str, tuple[str, tuple[str, ...], bool]]] = {
     "sh": ("sh", ("-c",), False),
+    "sh.exe": ("sh", ("-c",), False),
     "dash": ("dash", ("-c",), False),
+    "dash.exe": ("dash", ("-c",), False),
     "bash": ("bash", ("-c",), False),
+    "bash.exe": ("bash", ("-c",), False),
     "cmd": ("cmd.exe", ("/d", "/s", "/c"), True),
     "cmd.exe": ("cmd.exe", ("/d", "/s", "/c"), True),
     "pwsh": ("pwsh.exe", ("-NoProfile", "-NonInteractive", "-Command"), True),
@@ -340,6 +349,9 @@ class _JobObject:
         nothing to do with the failure. An undeclared ``restype`` is worse --
         a ``HANDLE`` would come back truncated to ``int`` on a 64-bit host.
         """
+        if sys.platform != "win32":
+            raise RuntimeError("kernel32 is a Windows library")
+
         import ctypes
         from ctypes import wintypes
 
@@ -417,6 +429,9 @@ class _JobObject:
         ``sizeof`` wrong and the call would fail with a parameter error that
         says nothing useful.
         """
+        if sys.platform != "win32":
+            raise RuntimeError("JOBOBJECT_EXTENDED_LIMIT_INFORMATION is Windows")
+
         import ctypes
         from ctypes import wintypes
 
@@ -516,6 +531,9 @@ class _JobObject:
         return bool(self._library().TerminateJobObject(self._handle, exit_code))
 
     def _accounting_information(self) -> Any:
+        if sys.platform != "win32":
+            raise RuntimeError("JOBOBJECT_BASIC_ACCOUNTING_INFORMATION is Windows")
+
         import ctypes
         from ctypes import wintypes
 
@@ -716,6 +734,16 @@ class ProcessTree:
         parent/child links at kill time but depends on an external binary that
         a stripped ``PATH`` can remove. Each covers the other's hole, and only
         the pair is a claim of "the tree is gone".
+
+        The **sweep runs first**, which is the one place this departs from the
+        literal order in issue #125 §4 Q2's table. ``taskkill /T`` walks parent
+        and child links from the launcher, so it can only reach a descendant
+        that escaped the job while the launcher is still alive to walk from --
+        and ``TerminateJobObject`` kills the launcher. Measured while
+        developing this: with the job terminated first, the sweep returns
+        "no process found" and the escaped descendants survive, which makes the
+        sweep inert exactly when it is needed. Terminating the job afterwards
+        catches anything ``taskkill`` could not reach.
         """
         if sys.platform != "win32":
             try:
@@ -724,27 +752,28 @@ class ProcessTree:
                 self._log("process group %d is already gone", self._proc.pid)
             return
 
+        if self._taskkill is not None:
+            self._sweep()
         if self._job is not None and not self._job.terminate(FORCED_STOP_EXIT_CODE):
             logger.warning(
-                "TerminateJobObject failed for pid %d; the sweep carries the "
+                "TerminateJobObject failed for pid %d; the sweep carried the "
                 "forced tier alone",
                 self._proc.pid,
             )
-        if self._taskkill is not None:
-            self._sweep()
-        elif self._job is None:
-            logger.error(
-                "forced stop with no job object and no taskkill.exe: killing pid "
-                "%d alone; its children MAY HAVE SURVIVED",
-                self._proc.pid,
-            )
-            self._proc.kill()
-        else:
-            logger.warning(
-                "taskkill.exe did not resolve; the job object was the only forced "
-                "tier for pid %d",
-                self._proc.pid,
-            )
+        if self._taskkill is None:
+            if self._job is None:
+                logger.error(
+                    "forced stop with no job object and no taskkill.exe: killing "
+                    "pid %d alone; its children MAY HAVE SURVIVED",
+                    self._proc.pid,
+                )
+                self._proc.kill()
+            else:
+                logger.warning(
+                    "taskkill.exe did not resolve; the job object was the only "
+                    "forced tier for pid %d",
+                    self._proc.pid,
+                )
 
     def _sweep(self) -> None:
         """``taskkill /T /F``: the sweep that is independent of the job object."""
