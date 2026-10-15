@@ -21,7 +21,9 @@ import ast
 import asyncio
 import logging
 import os
+import subprocess
 import sys
+import threading
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -42,7 +44,7 @@ from agent.paths import AgentPaths, resolve_paths
 from agent.process import ProcessTree
 from agent.tests.conftest import (
     REPO_ROOT,
-    read_recorded_pids,
+    Tree,
     wait_until,
 )
 
@@ -58,18 +60,21 @@ pytestmark = pytest.mark.integration
 EXECUTOR_SOURCE = REPO_ROOT / "agent" / "executor.py"
 AGENT_TESTS = REPO_ROOT / "agent" / "tests"
 
+#: The one file allowed to signal the pytest process, and why.
+#:
+#: ``agent/tests/test_loop.py`` is the only one, and signalling the runner is
+#: **issue #124's own subject** -- "the agent suite kills pytest on Windows",
+#: measured, exit 15. Flagging it from here would add a sixteenth failure to a
+#: fifteen-failure baseline and bury the change that matters, and the fix
+#: belongs to #124. The entry is not a standing waiver:
+#: :func:`test_the_exemption_does_not_outlive_the_defect_it_exists_for` fails
+#: the moment the file stops signalling itself.
+SIGNAL_SELF_EXEMPT: frozenset[str] = frozenset({"test_loop.py"})
+
 #: Generous, and deliberately not tight: the tree is waited on by property, so
 #: a slow machine costs nothing here while a hard-coded fraction of a second
 #: would make this the flakiest test in the suite.
 JOB_TIMEOUT_S = 30.0
-
-#: Enough pids for the launcher → parent → grandchild tree. On Windows the
-#: launcher is ``cmd.exe`` and records its own pid, so three; on POSIX
-#: ``/bin/sh -c`` execs its only command, so the python parent *is* the
-#: launcher and only two are recorded. The assertion is ``>= 2`` so a POSIX
-#: shell that does not exec still passes -- the point of the test is that
-#: every recorded process is gone, not how many there were.
-MIN_TREE_PIDS = 2
 
 
 @dataclass
@@ -343,12 +348,21 @@ async def test_an_absolute_working_dir_outside_the_root_must_exist(
 # --- AC-9/AC-10: the tree, both platforms, never skipped -------------------
 
 
-async def wait_for_tree(pids_file: Path) -> list[int]:
+async def wait_for_tree(tree: Tree) -> list[int]:
+    """Wait for every rank the tree should have, not for a floor.
+
+    Three on Windows -- ``cmd.exe``, the python parent, the python grandchild
+    -- and two on POSIX, where ``/bin/sh -c`` execs its only command so the
+    parent *is* the launcher. Waiting for the exact count is what stops the
+    Windows arm from passing on two ranks while the third, the one that
+    orphans, is never looked at (issue #125 S3).
+    """
     await wait_until(
-        lambda: len(read_recorded_pids(pids_file)) >= MIN_TREE_PIDS,
-        f"the tree recorded fewer than {MIN_TREE_PIDS} pids in {pids_file}",
+        lambda: len(tree.recorded()) >= tree.expected_pids,
+        f"the tree recorded {len(tree.recorded())} of {tree.expected_pids} "
+        f"pids in {tree.pids_file}",
     )
-    return read_recorded_pids(pids_file)
+    return tree.recorded()
 
 
 async def assert_gone(recorded: list[int]) -> None:
@@ -381,7 +395,7 @@ async def survivors(recorded: list[int]) -> list[int]:
 
 async def test_stopping_a_job_leaves_no_process_in_its_tree(
     harness: Harness,
-    tree_script: Callable[..., tuple[str, Path]],
+    tree_script: Callable[..., Tree],
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     """AC-9: three processes, zero survivors, on whichever platform this is.
@@ -391,18 +405,19 @@ async def test_stopping_a_job_leaves_no_process_in_its_tree(
     code that only ever worked on POSIX reached the agent in the first place
     (issue #125 Q8c).
     """
-    command, pids = tree_script()
+    tree = tree_script()
+    command = tree.command
     spec = harness.spec(command)
     harness.claim(spec)
     stop_event = asyncio.Event()
 
     with caplog.at_level(logging.INFO, logger="agent.executor"):
         task = asyncio.create_task(run_job(harness, spec, stop_event))
-        recorded = await wait_for_tree(pids)
+        recorded = await wait_for_tree(tree)
         stop_event.set()
         result = await task
 
-    assert len(recorded) >= MIN_TREE_PIDS, recorded
+    assert len(recorded) == tree.expected_pids, recorded
     assert result.error_code == "stopped:shutdown"
     assert result.exit_code is not None
     await assert_gone(recorded)
@@ -416,7 +431,7 @@ async def test_stopping_a_job_leaves_no_process_in_its_tree(
 
 async def test_a_tree_that_refuses_the_polite_request_is_forced_and_says_so(
     harness: Harness,
-    tree_script: Callable[..., tuple[str, Path]],
+    tree_script: Callable[..., Tree],
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
@@ -432,14 +447,15 @@ async def test_a_tree_that_refuses_the_polite_request_is_forced_and_says_so(
     unchanged and is asserted separately in ``test_process.py``.
     """
     monkeypatch.setattr(executor_module, "STOP_GRACE_S", 0.5)
-    command, pids = tree_script(refuse_polite=True)
+    tree = tree_script(refuse_polite=True)
+    command = tree.command
     spec = harness.spec(command)
     harness.claim(spec)
     stop_event = asyncio.Event()
 
     with caplog.at_level(logging.INFO, logger="agent.executor"):
         task = asyncio.create_task(run_job(harness, spec, stop_event))
-        recorded = await wait_for_tree(pids)
+        recorded = await wait_for_tree(tree)
         stop_event.set()
         result = await task
 
@@ -449,6 +465,126 @@ async def test_a_tree_that_refuses_the_polite_request_is_forced_and_says_so(
     messages = [record.getMessage() for record in caplog.records]
     assert any("job job-1 required the forced stop" in m for m in messages), messages
     assert any("verified: 0 processes remain" in m for m in messages), messages
+
+
+async def test_a_grandchild_that_outlives_its_parent_is_not_a_clean_stop(
+    harness: Harness,
+    tree_script: Callable[..., Tree],
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """S1: a launcher that exits is not a tree that stopped.
+
+    The reproduction, not a paraphrase of it: the parent cooperates and the
+    grandchild does not, so ``cmd.exe`` and the parent both exit inside the
+    grace. The graceful path used to declare the job finished on exactly that
+    basis -- ``verify()`` ran only after the forced tier -- and wrote
+    ``stopped:shutdown`` while the grandchild went on holding its pipes, its
+    working directory and its GPUs.
+
+    Before the fix this test fails twice over: the escalation is not logged,
+    and the grandchild is still alive at the end.
+    """
+    monkeypatch.setattr(executor_module, "STOP_GRACE_S", 0.5)
+    monkeypatch.setattr(executor_module, "STOP_VERIFY_TIMEOUT_S", 0.5)
+    tree = tree_script(refuse_polite_child=True)
+    spec = harness.spec(tree.command)
+    harness.claim(spec)
+    stop_event = asyncio.Event()
+
+    with caplog.at_level(logging.INFO, logger="agent.executor"):
+        task = asyncio.create_task(run_job(harness, spec, stop_event))
+        recorded = await wait_for_tree(tree)
+        stop_event.set()
+        result = await task
+
+    try:
+        assert result.error_code == "stopped:shutdown"
+        await assert_gone(recorded)
+
+        messages = [record.getMessage() for record in caplog.records]
+        assert any(
+            "job job-1 stopped its launcher but the tree is still running" in m
+            for m in messages
+        ), (
+            "the launcher exiting must not be read as the tree stopping; that "
+            f"is the whole defect. Got: {messages}"
+        )
+        assert any(
+            "job job-1 required the forced stop" in m for m in messages
+        ), messages
+        assert any("verified: 0 processes remain" in m for m in messages), messages
+    finally:
+        kill_anything_left_alive(recorded)
+
+
+async def test_a_degraded_node_says_it_could_not_confirm_the_stop(
+    harness: Harness,
+    tree_script: Callable[..., Tree],
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """S1 on AC-12's own fallback mode: report, do not assume.
+
+    With no job object the only mechanism that can reach a descendant is
+    ``taskkill /T``, which walks parent/child links **from the launcher** --
+    and the launcher is exactly what has already exited. So on such a node the
+    agent genuinely cannot finish this stop, and the contract is that it says
+    so: ``stop_failed:tree_survived`` and an ERROR, never
+    ``stopped:shutdown`` on a guess.
+
+    The grandchild genuinely survives here, and the test cleans it up rather
+    than pretending otherwise. This is the honest edge of the design and it is
+    recorded as a test so it cannot be quietly closed.
+    """
+    monkeypatch.setattr(executor_module, "STOP_GRACE_S", 0.5)
+    monkeypatch.setattr(executor_module, "STOP_VERIFY_TIMEOUT_S", 0.5)
+    monkeypatch.setattr(executor_module, "ProcessTree", _degraded_tree)
+    tree = tree_script(refuse_polite_child=True)
+    spec = harness.spec(tree.command)
+    harness.claim(spec)
+    stop_event = asyncio.Event()
+
+    with caplog.at_level(logging.INFO, logger="agent.executor"):
+        task = asyncio.create_task(run_job(harness, spec, stop_event))
+        recorded = await wait_for_tree(tree)
+        stop_event.set()
+        result = await task
+
+    try:
+        assert result.error_code == "stop_failed:tree_survived"
+        assert harness.read_state().error == "stop_failed:tree_survived"
+        messages = [record.getMessage() for record in caplog.records]
+        assert any(
+            "job job-1: the tree still has processes" in m for m in messages
+        ), messages
+    finally:
+        kill_anything_left_alive(recorded)
+
+
+def _degraded_tree(proc: subprocess.Popen, *, log: Any, create_job: Any = None) -> Any:
+    """A :class:`ProcessTree` with the job object taken away, as AC-12 makes it."""
+    return ProcessTree(proc, log=log, create_job=lambda _log: None)
+
+
+def kill_anything_left_alive(recorded: list[int]) -> None:
+    """End any rank a test deliberately left running.
+
+    ``BoundedLineWriter`` and the stop path both end up waiting on a process
+    that has been told to sleep for five minutes, and a suite that leaks one
+    per run is a suite that fails on somebody else's machine next week.
+    """
+    for pid in recorded:
+        if not psutil.pid_exists(pid):
+            continue
+        try:
+            process = psutil.Process(pid)
+            process.terminate()
+            gone, _alive = psutil.wait_procs([process], timeout=5.0)
+            for survivor in gone:
+                survivor.kill()
+        except psutil.Error:
+            continue
 
 
 async def test_a_stop_before_launch_writes_a_terminal_state_with_no_exit_code(
@@ -473,7 +609,7 @@ async def test_a_stop_before_launch_writes_a_terminal_state_with_no_exit_code(
 
 async def test_a_cancelled_execution_task_forces_the_tree_and_re_raises(
     harness: Harness,
-    tree_script: Callable[..., tuple[str, Path]],
+    tree_script: Callable[..., Tree],
 ) -> None:
     """Q9: cancellation is not the stop event, and it must not leak a tree.
 
@@ -481,12 +617,13 @@ async def test_a_cancelled_execution_task_forces_the_tree_and_re_raises(
     this, so a cancelled execution task that leaves a tree behind would be the
     defect this issue exists to remove, reintroduced by the plumbing.
     """
-    command, pids = tree_script()
+    tree = tree_script()
+    command = tree.command
     spec = harness.spec(command)
     harness.claim(spec)
 
     task = asyncio.create_task(run_job(harness, spec, asyncio.Event()))
-    recorded = await wait_for_tree(pids)
+    recorded = await wait_for_tree(tree)
     task.cancel()
 
     with pytest.raises(asyncio.CancelledError):
@@ -511,7 +648,7 @@ class NeverVerifyingTree(ProcessTree):
 
 async def test_a_timed_out_verification_is_not_reported_as_a_clean_stop(
     harness: Harness,
-    tree_script: Callable[..., tuple[str, Path]],
+    tree_script: Callable[..., Tree],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """AC-11's negative case: ``stop_failed:tree_survived``, not ``stopped``.
@@ -523,13 +660,14 @@ async def test_a_timed_out_verification_is_not_reported_as_a_clean_stop(
     """
     monkeypatch.setattr(executor_module, "ProcessTree", NeverVerifyingTree)
     monkeypatch.setattr(executor_module, "STOP_GRACE_S", 0.5)
-    command, pids = tree_script(refuse_polite=True)
+    tree = tree_script(refuse_polite=True)
+    command = tree.command
     spec = harness.spec(command)
     harness.claim(spec)
     stop_event = asyncio.Event()
 
     task = asyncio.create_task(run_job(harness, spec, stop_event))
-    recorded = await wait_for_tree(pids)
+    recorded = await wait_for_tree(tree)
     stop_event.set()
     result = await task
 
@@ -539,6 +677,42 @@ async def test_a_timed_out_verification_is_not_reported_as_a_clean_stop(
         "the stub lied about the verification, but the real forced tier still "
         "ran, so nothing should be left behind"
     )
+
+
+async def test_a_log_path_is_only_reported_when_the_stream_wrote_something(
+    harness: Harness,
+) -> None:
+    """S6: ``""`` for a stream that produced no file, never a path to nothing.
+
+    ``BoundedLineWriter`` opens lazily, so a job that writes to one stream has
+    no file for the other. Handing back a path to a file that does not exist
+    makes the caller ``stat`` it and then decide what a missing log means --
+    and a command whose newlines ``cmd.exe`` swallows lands here with
+    ``COMPLETED``, ``error: null`` and two paths that 404.
+    """
+    command = python_command("print('only stdout')")
+    spec = harness.spec(command)
+    harness.claim(spec)
+
+    result = await run_job(harness, spec)
+
+    assert result.exit_code == 0
+    assert result.error_code is None
+    assert result.stdout_path, "the stream that wrote must name its file"
+    assert Path(result.stdout_path).exists()
+    assert result.stderr_path == "", "the silent stream has no file to name"
+
+
+async def test_a_silent_job_reports_no_log_paths_at_all(harness: Harness) -> None:
+    """The degenerate case, so the convention is pinned at both ends."""
+    spec = harness.spec(python_command("pass"))
+    harness.claim(spec)
+
+    result = await run_job(harness, spec)
+
+    assert result.exit_code == 0
+    assert result.stdout_path == ""
+    assert result.stderr_path == ""
 
 
 # --- AC-14: no per-node secret reaches the child, end to end ---------------
@@ -759,38 +933,121 @@ def test_the_cpu_affinity_call_is_only_ever_probed() -> None:
 
 
 def test_no_agent_test_can_kill_the_runner() -> None:
-    """AC-18: ``os.kill``'s second argument is the **signal**, not the pid.
+    """S4/AC-18: the guard has to cover the shapes #124 actually is.
 
-    ``os.kill(pid, 9)`` is ``TerminateProcess(handle, 9)`` on Windows, which is
-    how issue #124's test takes the pytest process down mid-file with no
-    traceback and no summary. ``os.kill(pid, 0)`` is fine -- it is the POSIX
-    liveness probe and terminates nothing -- so the ban is on the signal
-    argument being a non-zero constant.
+    ``os.kill``'s **second** argument is the signal, not the pid. Everything
+    except a literal ``0`` is fatal to this process: at ``SIG_DFL`` the kernel
+    kills pytest mid-file with no traceback and no summary on POSIX, and
+    ``os.kill(pid, 9)`` is literally ``TerminateProcess(handle, 9)`` on Windows.
+    A **variable** signal is the shape that matters, because
+    ``agent/tests/test_loop.py`` sends ``os.kill(os.getpid(), sig)`` with
+    ``sig`` in hand -- and a guard that only reads integer constants sees
+    nothing there. ``os.killpg`` is banned outright: a group-directed signal
+    from a test reaches the runner's own group, and the only way to be sure it
+    does not is to not send one.
     """
     offenders: list[str] = []
     for path in sorted(AGENT_TESTS.rglob("*.py")):
-        tree = ast.parse(path.read_text(encoding="utf-8"))
-        for node in ast.walk(tree):
-            if not (
-                isinstance(node, ast.Call)
-                and isinstance(node.func, ast.Attribute)
-                and node.func.attr == "kill"
-                and isinstance(node.func.value, ast.Name)
-                and node.func.value.id == "os"
-                and len(node.args) == 2
-            ):
-                continue
-            signal = node.args[1]
-            if (
-                isinstance(signal, ast.Constant)
-                and isinstance(signal.value, int)
-                and signal.value != 0
-            ):
-                offenders.append(f"{path.name}:{node.lineno}")
+        if path.name in SIGNAL_SELF_EXEMPT:
+            continue
+        offenders.extend(f"{path.name}:{line}" for line in _self_signals(path))
 
     assert offenders == [], (
-        "a non-zero constant signal terminates the pytest process on Windows "
-        f"(issue #124): {offenders}"
+        "a test must not signal the process running the suite: at SIG_DFL that "
+        f"is TerminateProcess on Windows and a silent mid-file death on POSIX "
+        f"(issue #124). Offenders: {offenders}"
+    )
+
+
+def _self_signals(path: Path) -> list[int]:
+    """Lines in ``path`` that send this process a terminating signal."""
+    found: list[int] = []
+    for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+        if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute):
+            continue
+        owner = node.func.value
+        if not isinstance(owner, ast.Name) or owner.id != "os":
+            continue
+        if node.func.attr == "killpg":
+            found.append(node.lineno)
+        elif node.func.attr == "kill":
+            signal_arg = _signal_argument(node)
+            if signal_arg is None:
+                found.append(node.lineno)
+            elif not (
+                isinstance(signal_arg, ast.Constant)
+                and signal_arg.value == 0
+                and isinstance(signal_arg.value, int)
+            ):
+                found.append(node.lineno)
+    return found
+
+
+def _signal_argument(node: ast.Call) -> ast.expr | None:
+    """The signal argument of an ``os.kill`` call, positional or by keyword."""
+    if len(node.args) >= 2:
+        return node.args[1]
+    for keyword in node.keywords:
+        if keyword.arg == "sig":
+            return keyword.value
+    return None
+
+
+def test_the_exemption_does_not_outlive_the_defect_it_exists_for() -> None:
+    """The one exemption is self-cancelling, so it cannot become a loophole.
+
+    ``test_loop.py`` is exempt because signalling the runner *is* issue #124's
+    subject and its own defect; flagging it here would add a sixteenth failure
+    to a fifteen-failure baseline and bury the change that matters. When #124
+    lands, this assertion fails and says so.
+    """
+    for name in sorted(SIGNAL_SELF_EXEMPT):
+        path = AGENT_TESTS / name
+        assert path.exists(), f"{name} is exempt from the #124 guard but is gone"
+        assert _self_signals(path), (
+            f"{name} is exempt but no longer signals the runner; drop it from "
+            "SIGNAL_SELF_EXEMPT so the guard covers it again"
+        )
+
+
+def test_two_threads_waiting_on_one_process_agree_on_its_status() -> None:
+    """S8: the loser of a ``Popen.wait`` race must not invent a status.
+
+    The executor parks one thread in ``proc.wait()`` and :meth:`ProcessTree.verify`
+    asks a second one. On POSIX, ``Popen._wait`` reaches ``os.waitpid``, whose
+    losing thread would take ``ChildProcessError`` -- which CPython translates
+    to ``sts = 0``, i.e. **a forcibly killed job reported as ``COMPLETED``**.
+
+    It cannot happen, and the reason is worth pinning because it is a library
+    invariant rather than a property of this code: since CPython 3.9
+    (``subprocess.py``, ``Popen._wait``) every caller holds ``_waitpid_lock`` and
+    re-checks ``self.returncode`` under it -- ``break  # Another thread waited.``
+    -- so the loser never reaches ``_try_wait`` at all. This test passes on
+    Windows by construction (handle-based waiting) and is the guard that proves
+    it on a POSIX host, which is where the failure would land.
+    """
+    proc = subprocess.Popen(
+        [sys.executable, "-c", "import sys; sys.exit(7)"],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    statuses: list[int] = []
+    start = threading.Barrier(5)
+
+    def wait() -> None:
+        start.wait(timeout=30)
+        statuses.append(proc.wait())
+
+    waiters = [threading.Thread(target=wait) for _ in range(4)]
+    for thread in waiters:
+        thread.start()
+    start.wait(timeout=30)
+    for thread in waiters:
+        thread.join(timeout=30)
+
+    assert sorted(statuses) == [7, 7, 7, 7], (
+        "a losing Popen.wait fabricated a status; a forced job would be "
+        f"written down as COMPLETED. Got: {statuses}"
     )
 
 

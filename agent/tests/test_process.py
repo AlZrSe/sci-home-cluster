@@ -41,9 +41,9 @@ from agent.process import (
 )
 from agent.tests.conftest import (
     REPO_ROOT,
-    read_recorded_pids,
+    Tree,
+    build_tree,
     wait_until,
-    write_tree_script,
 )
 
 pytestmark = pytest.mark.unit
@@ -415,14 +415,20 @@ def _root(node: ast.AST) -> str:
 def test_the_worst_case_stop_fits_inside_the_default_shutdown_grace() -> None:
     """AC-15: a constant-to-constant assertion, so raising one alone fails.
 
-    A job that refuses the polite request costs ``STOP_GRACE_S`` plus the
-    verification. If that ever exceeds ``SHUTDOWN_GRACE_S`` the agent would
+    A job whose descendants refuse the polite request costs the grace plus
+    **two** verifications: one after the polite tier, which is what turns
+    "the launcher exited" into an answer about the tree, and one after the
+    forced tier. If that ever exceeds ``SHUTDOWN_GRACE_S`` the agent would
     abandon a job it had promised to stop inside its own documented grace, and
     the promise would be a comment.
+
+    Two, not one, is the price of the graceful path being verified rather than
+    assumed (issue #125 S1). It is still 15 s against 30 s, and a verification
+    that is going to pass resolves in microseconds.
     """
     grace = node_settings().SHUTDOWN_GRACE_S
 
-    assert STOP_GRACE_S + STOP_VERIFY_TIMEOUT_S < grace
+    assert STOP_GRACE_S + 2 * STOP_VERIFY_TIMEOUT_S < grace
     assert STOP_VERIFY_POLL_S < STOP_VERIFY_TIMEOUT_S
 
 
@@ -439,7 +445,7 @@ class StubJob:
         self.terminated: list[int] = []
         self.closed = False
 
-    def assign(self, pid: int) -> bool:
+    def assign(self, pid: int, what: str = "the launched process") -> bool:
         self.assigned.append(pid)
         return not self.refuse_assign
 
@@ -491,6 +497,38 @@ def test_a_live_job_object_is_the_mode_on_windows() -> None:
     assert job.assigned, "the launched process was never assigned to the job"
     tree.close()
     assert job.closed
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason=NO_JOB_OBJECTS)
+def test_a_refused_assignment_downgrades_to_the_sweep(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """S2: a job the kernel would not take must not be reported as holding the tree.
+
+    A job with no members answers every accounting query with zero, so keeping
+    one makes :meth:`ProcessTree.verify` report an empty tree because nothing
+    was ever in it -- a vacuous success, and the most expensive kind, because
+    the grandchild holding the GPUs is still running. Issue #125 §4 Q2 requires
+    a WARNING and a fall back to ``taskkill /T /F``; nothing tested that, and
+    ``StubJob(refuse_assign=...)`` existed unused.
+    """
+    job = StubJob(refuse_assign=True)
+
+    with caplog.at_level("WARNING", logger="agent.process"):
+        tree = ProcessTree(
+            a_finished_process(), log=lambda *_a: None, create_job=_stub_job(job)
+        )
+
+    assert tree.control_mode == CONTROL_MODE_TASKKILL
+    assert job.closed, "an empty job handle is still a handle, and still leaks"
+    warnings = [r.getMessage() for r in caplog.records if r.levelname == "WARNING"]
+    assert any("refused" in line and "taskkill" in line for line in warnings), warnings
+
+    # And the vacuous leg is gone: the forced tier no longer asks a job that
+    # holds nothing, because the only thing it would have terminated is itself.
+    tree.stop_forced()
+    assert job.terminated == [], "the empty job was still asked to terminate"
+    tree.close()
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason=NO_JOB_OBJECTS)
@@ -635,36 +673,45 @@ def test_the_forced_tier_runs_the_job_and_the_independent_sweep(
 # --- the tiers, against a real tree (Q8c: both arms, both directions) -----
 
 
-def spawn_tree(script: Path, pids_file: Path, **flags: Any) -> subprocess.Popen:
-    """A launcher → parent → grandchild, in its own stoppable group."""
+def spawn_tree(tree: Tree, **flags: Any) -> subprocess.Popen:
+    """Run a tree's script directly, with no shell in between.
+
+    The tree is built with ``with_shell=False`` for this path, so its parent
+    records no ``getppid()`` and the pid it would have written -- **pytest
+    itself** -- is never among the pids a test asserts is dead (issue #125 S5).
+    """
     return subprocess.Popen(
-        [sys.executable, str(script), "parent", str(pids_file)],
+        [sys.executable, str(tree.script), "parent", str(tree.pids_file)],
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
         **flags,
     )
 
 
-async def wait_for_recorded(pids_file: Path, count: int) -> list[int]:
-    """Block until the tree has written ``count`` pids, then read them all.
+async def wait_for_recorded(tree: Tree) -> list[int]:
+    """Block until the tree has written ``expected_pids`` of them, then read all.
 
     Waiting on the *property* rather than sleeping a fixed fraction of a
     second: the sleep would have to outlast the grandchild's interpreter
-    start-up, and a fixed sleep that is too short produces a test that fails
-    on a loaded machine and passes on an idle one.
+    start-up, and a fixed sleep that is too short produces a test that fails on
+    a loaded machine and passes on an idle one. Waiting for the **exact** count
+    rather than a floor is what stops the Windows arm from quietly asserting
+    on two of the three ranks -- the rank that orphans is the rank nobody
+    checks (issue #125 S3).
     """
     await wait_until(
-        lambda: len(read_recorded_pids(pids_file)) >= count,
-        f"the tree recorded fewer than {count} pids in {pids_file}",
+        lambda: len(tree.recorded()) >= tree.expected_pids,
+        f"the tree recorded {len(tree.recorded())} of {tree.expected_pids} "
+        f"pids in {tree.pids_file}",
     )
-    return read_recorded_pids(pids_file)
+    return tree.recorded()
 
 
 async def assert_no_survivors(recorded: list[int]) -> None:
     """Every recorded pid must be gone, load-safely and then hard.
 
     ``psutil.pid_exists`` is the one probe that works on both platforms.
-    ``os.kill(pid, 0)`` works but its sibling ``os.kill(pid, 9)`` is
+    ``os.kill(pid, 0)`` works but the sibling ``os.kill(pid, 9)`` is
     ``TerminateProcess(handle, 9)`` on Windows, and ``OpenProcess`` hands back
     a handle for a pid that has already been reaped -- so neither is a
     liveness question (issue #125 C4).
@@ -683,22 +730,20 @@ async def test_killpg_reaches_a_process_that_ignored_sigterm(
     tmp_path: Path,
 ) -> None:
     """The POSIX arm of AC-10: SIGTERM is cooperative, SIGKILL is not."""
-    script, pids = write_tree_script(tmp_path, refuse_polite=True)
-    proc = spawn_tree(script, pids, start_new_session=True)
+    tree = build_tree(tmp_path, refuse_polite=True, with_shell=False)
+    proc = spawn_tree(tree, start_new_session=True)
     # The tree is constructed **before** waiting for the descendants, which is
-    # the order execute_job uses and the only order in which the mechanism
-    # under test exists: job membership is inherited by children created after
-    # the parent joins, so a ProcessTree built once the grandchild is already
-    # running owns nothing but the launcher (issue #125 §1.6).
-    tree = ProcessTree(proc, log=lambda *_a: None)
-    recorded = await wait_for_recorded(pids, 2)
+    # the order execute_job uses and the only order in which the mechanism under
+    # test exists.
+    stop = ProcessTree(proc, log=lambda *_a: None)
+    recorded = await wait_for_recorded(tree)
 
-    tree.stop_gracefully()
-    tree.stop_forced()
+    stop.stop_gracefully()
+    stop.stop_forced()
 
-    assert tree.verify(5.0) is True
+    assert stop.verify(5.0) is True
     await assert_no_survivors(recorded)
-    tree.close()
+    stop.close()
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason=NO_JOB_OBJECTS)
@@ -714,25 +759,24 @@ async def test_ctrl_break_is_cooperative_and_the_job_object_is_not(
     second one meaningful: otherwise a test where the polite tier happened to
     work would pass either way.
     """
-    script, pids = write_tree_script(tmp_path, refuse_polite=True)
-    proc = spawn_tree(script, pids, creationflags=CREATE_NEW_PROCESS_GROUP)
-    # Constructed before the descendants exist, exactly as execute_job does:
-    # job membership is inherited by children created after the parent joins,
-    # so a tree built later would own the launcher and nothing else.
-    tree = ProcessTree(proc, log=lambda *_a: None)
-    recorded = await wait_for_recorded(pids, 3)
+    tree = build_tree(tmp_path, refuse_polite=True, with_shell=False)
+    proc = spawn_tree(tree, creationflags=CREATE_NEW_PROCESS_GROUP)
+    # Constructed before the descendants exist, exactly as execute_job does.
+    stop = ProcessTree(proc, log=lambda *_a: None)
+    recorded = await wait_for_recorded(tree)
+    assert len(recorded) >= 2, recorded
     try:
-        tree.stop_gracefully()
+        stop.stop_gracefully()
         await asyncio.sleep(0.5)
 
-        assert tree.verify(0.2) is False, (
+        assert stop.verify(0.2) is False, (
             "a tree that ignores CTRL_BREAK_EVENT must not verify as gone; if "
             "this fails the polite tier is stopping something it had no "
             "business stopping"
         )
 
-        tree.stop_forced()
-        assert tree.verify(5.0) is True
+        stop.stop_forced()
+        assert stop.verify(5.0) is True
         await assert_no_survivors(recorded)
     finally:
-        tree.close()
+        stop.close()

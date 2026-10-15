@@ -34,7 +34,7 @@ from agent.loop import Agent
 from agent.paths import resolve_paths
 from agent.tests.conftest import (
     RecordingWatcher,
-    read_recorded_pids,
+    Tree,
     wait_until,
 )
 
@@ -69,7 +69,7 @@ def settings_for(root: Path, node_id: str = "node-01", **env: str) -> Any:
 async def test_a_shutdown_with_a_job_in_flight_stops_the_tree_and_writes_the_state(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
-    tree_script: Callable[..., tuple[str, Path]],
+    tree_script: Callable[..., Tree],
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     """AC-13, driven through a real ``Agent.run`` with no signal involved.
@@ -84,8 +84,8 @@ async def test_a_shutdown_with_a_job_in_flight_stops_the_tree_and_writes_the_sta
     (root / "nodes").mkdir(parents=True)
     monkeypatch.setenv("SYNCTHING_ROOT", str(root))
 
-    command, pids = tree_script()
-    _claim(root, command)
+    tree = tree_script()
+    _claim(root, tree.command)
 
     agent = Agent(
         settings_for(root), watcher=RecordingWatcher(resolve_paths(root, "node-01"))
@@ -107,11 +107,11 @@ async def test_a_shutdown_with_a_job_in_flight_stops_the_tree_and_writes_the_sta
             # is the shutdown, not the event plumbing that would reach it.
             await agent._maybe_claim_job(root / "jobs" / "job-1" / "state.yaml")
             await wait_until(
-                lambda: len(read_recorded_pids(pids)) >= 2,
-                f"the tree never started; pids file {pids}",
+                lambda: len(tree.recorded()) >= tree.expected_pids,
+                f"the tree never started; pids file {tree.pids_file}",
                 timeout=TREE_TIMEOUT_S,
             )
-            recorded = read_recorded_pids(pids)
+            recorded = tree.recorded()
             started = time.monotonic()
             stop.set()
             exit_code = await asyncio.wait_for(running, timeout=TREE_TIMEOUT_S)

@@ -20,7 +20,7 @@ import logging
 import os
 import sys
 from pathlib import Path
-from typing import Any, Callable, Iterator
+from typing import Any, Callable, Iterator, NamedTuple
 
 import pytest
 from watchdog.events import FileSystemEventHandler
@@ -270,6 +270,8 @@ __all__ = [
     "signal_name",
     "wait_for",
     "wait_until",
+    "Tree",
+    "build_tree",
     "read_recorded_pids",
     "tree_command",
     "write_tree_script",
@@ -278,17 +280,21 @@ __all__ = [
 
 
 # --- the real process tree ------------------------------------------------
-
 #: A three-process tree: this script (as ``parent``) spawns the same script as
 #: ``child``, and every one of them appends its pid to a file before it does
 #: anything else. "The tree is gone" is then a question about **pids** rather
 #: than about the launcher's ``poll()``, which is the assertion that
 #: distinguishes a real tree-stop from a launcher-only kill (issue #125 Q8d).
 #:
-#: ``sys.executable`` and ``__file__`` are both quoted at the call site
-#: because a Windows install under ``C:\Program Files\Python312\`` contains a
-#: space, and preserving the operator's quotes is exactly what the
-#: single-string command line exists for.
+#: The launcher -- ``cmd.exe`` on Windows -- records **nothing** about itself.
+#: It cannot: it has no pid it knows and no way to be asked for one. Instead the
+#: parent records ``os.getppid()`` *only* when the fixture says a real shell
+#: sits between the agent and the script, and only on Windows, because that is
+#: the only combination in which the parent link names the launcher rather
+#: than the test runner (issue #125 S5). On POSIX ``/bin/sh -c`` execs its only
+#: command, so the python parent *is* the launcher and there is no third pid
+#: to record; a test that recorded the runner's own pid there would spend ten
+#: seconds polling for pytest to die.
 TREE_SCRIPT = """\
 import os
 import subprocess
@@ -301,18 +307,23 @@ role, pids_file = sys.argv[1], sys.argv[2]
 
 with open(pids_file, "a", encoding="utf-8") as handle:
     handle.write(f"{os.getpid()}\\n")
-    if role == "parent" and sys.platform == "win32":
-        # cmd.exe is a real, separate process on Windows and its pid is worth
-        # asserting on. On POSIX `/bin/sh -c` execs its only command, so the
-        # python parent *is* the launcher and getppid() would name the test
-        # process itself -- which this suite must never assert is dead.
-        handle.write(f"{os.getppid()}\\n")
+@@RECORD_LAUNCHER@@
     handle.flush()
 
 if role == "parent":
     subprocess.Popen([sys.executable, __file__, "child", pids_file])
 
 time.sleep(300)
+"""
+
+#: Written by the parent, and only for the reason in :data:`TREE_SCRIPT`.
+RECORD_LAUNCHER_SNIPPET = """\
+    if role == "parent":
+        # The shell is a real, separate process here, and its pid is the one
+        # rank a launcher-only kill leaves behind. Anything else -- a venv
+        # redirector, a test runner -- would record a pid this suite must
+        # never assert is dead.
+        handle.write(f"{os.getppid()}\\n")
 """
 
 #: The same tree with the polite request refused. Cooperative stops are
@@ -331,6 +342,48 @@ else:
     {posix}
 """
 
+#: The same refusal, armed **only in the grandchild**. The launcher and the
+#: parent then cooperate and exit inside the grace, which is the case the
+#: graceful stop path used to read as "the tree stopped" -- a descendant that
+#: outlives its parent is invisible to anything that watches the launcher.
+REFUSE_POLITE_CHILD_SNIPPET = """\
+import signal
+
+if role == "child":
+    if sys.platform == "win32":
+        {windows}
+    else:
+        {posix}
+"""
+
+
+class Tree(NamedTuple):
+    """One runnable process tree, and what it should have recorded.
+
+    ``expected_pids`` is the number of **live processes** the tree should have
+    written once it has settled: three on Windows, where ``cmd.exe`` is a
+    separate launcher, and two on POSIX, where ``/bin/sh -c`` execs its only
+    command and the python parent *is* the launcher. A test waits for exactly
+    this many and then asserts on every one of them, because the rank that
+    orphans is the rank nobody checks (issue #125 S3).
+    """
+
+    command: str
+    script: Path
+    pids_file: Path
+    expected_pids: int
+    refuse_polite: bool
+
+    def recorded(self) -> list[int]:
+        """Every pid the tree has written so far, in the order it wrote them."""
+        if not self.pids_file.exists():
+            return []
+        return [
+            int(line)
+            for line in self.pids_file.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+
 
 def read_recorded_pids(pids_file: Path) -> list[int]:
     """Every pid the tree has written so far, in the order it wrote them."""
@@ -344,24 +397,40 @@ def read_recorded_pids(pids_file: Path) -> list[int]:
 
 
 def write_tree_script(
-    directory: Path, *, refuse_polite: bool = False
+    directory: Path,
+    *,
+    refuse_polite: bool = False,
+    refuse_polite_child: bool = False,
+    with_shell: bool = True,
 ) -> tuple[Path, Path]:
     """Write the tree script into ``directory``; return ``(script, pids_file)``.
 
-    The snippet is substituted with ``str.replace`` and not ``str.format``:
-    the script is full of f-strings, and ``format`` would try to resolve
-    ``{os.getpid()}`` against *this* module's namespace.
+    ``with_shell`` says whether a real shell is between the agent and the
+    script, which is the only thing that decides whether the launcher is a
+    pid this suite may assert about. The snippets are substituted with
+    ``str.replace`` and not ``str.format``: the script is full of f-strings and
+    ``format`` would try to resolve ``{os.getpid()}`` against *this* module's
+    namespace.
     """
     refuse = ""
-    if refuse_polite:
+    if refuse_polite_child:
+        refuse = REFUSE_POLITE_CHILD_SNIPPET.format(
+            windows=REFUSE_POLITE_WINDOWS, posix=REFUSE_POLITE_POSIX
+        )
+    elif refuse_polite:
         refuse = REFUSE_POLITE_SNIPPET.format(
             windows=REFUSE_POLITE_WINDOWS, posix=REFUSE_POLITE_POSIX
         )
-    script = directory / f"tree-{int(refuse_polite)}.py"
+    launcher = RECORD_LAUNCHER_SNIPPET if with_shell and sys.platform == "win32" else ""
+    name = f"tree-{int(refuse_polite)}-{int(refuse_polite_child)}-{int(with_shell)}"
+    script = directory / f"{name}.py"
     script.write_text(
-        TREE_SCRIPT.replace("@@REFUSE_POLITE@@", refuse), encoding="utf-8"
+        TREE_SCRIPT.replace("@@REFUSE_POLITE@@", refuse).replace(
+            "@@RECORD_LAUNCHER@@", launcher
+        ),
+        encoding="utf-8",
     )
-    return script, directory / f"pids-{int(refuse_polite)}.txt"
+    return script, directory / f"pids-{name}.txt"
 
 
 def tree_command(script: Path, pids_file: Path) -> str:
@@ -378,12 +447,44 @@ def tree_command(script: Path, pids_file: Path) -> str:
     return f'"{sys.executable}" "{script}" parent "{pids_file}"'
 
 
-@pytest.fixture
-def tree_script(tmp_path: Path) -> Callable[..., tuple[str, Path]]:
-    """Build a runnable three-process tree; return ``(command, pids_file)``."""
+def build_tree(
+    directory: Path,
+    *,
+    refuse_polite: bool = False,
+    refuse_polite_child: bool = False,
+    with_shell: bool = True,
+) -> Tree:
+    """The script, the command that runs it, and what it should record."""
+    script, pids = write_tree_script(
+        directory,
+        refuse_polite=refuse_polite,
+        refuse_polite_child=refuse_polite_child,
+        with_shell=with_shell,
+    )
+    return Tree(
+        command=tree_command(script, pids),
+        script=script,
+        pids_file=pids,
+        expected_pids=3 if with_shell and sys.platform == "win32" else 2,
+        refuse_polite=refuse_polite or refuse_polite_child,
+    )
 
-    def build(*, refuse_polite: bool = False) -> tuple[str, Path]:
-        script, pids = write_tree_script(tmp_path, refuse_polite=refuse_polite)
-        return tree_command(script, pids), pids
+
+@pytest.fixture
+def tree_script(tmp_path: Path) -> Callable[..., Tree]:
+    """Build a runnable process tree, launched through the configured shell."""
+
+    def build(
+        *,
+        refuse_polite: bool = False,
+        refuse_polite_child: bool = False,
+        with_shell: bool = True,
+    ) -> Tree:
+        return build_tree(
+            tmp_path,
+            refuse_polite=refuse_polite,
+            refuse_polite_child=refuse_polite_child,
+            with_shell=with_shell,
+        )
 
     return build
