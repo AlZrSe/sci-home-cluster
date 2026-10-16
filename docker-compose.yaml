@@ -113,15 +113,19 @@ services:
     ports:
       - "8000:8000"
 
-    # Exactly three keys. That is a decision, not an omission.
+    # Exactly two keys. That is a decision, not an omission.
     #
     # The image bakes five values (docker/Dockerfile:126-130). SERVE_FRONTEND,
-    # FRONTEND_DIR, SHC_DATA_DIR and PYTHONPATH are INHERITED on purpose:
-    # re-stating them here would make this file a second source of truth for
-    # values the image owns, and the two would drift silently. SHC_DATA_DIR in
-    # particular is coupled to the /app/data mount below - backend/core/config.py
+    # FRONTEND_DIR, SHC_DATA_DIR, PYTHONPATH and DB_POOL are all INHERITED on
+    # purpose: re-stating them here would make this file a second source of truth
+    # for values the image owns, and the two would drift silently. SHC_DATA_DIR
+    # in particular is coupled to the /app/data mount below - backend/core/config.py
     # redirects DATABASE_URL only while it is still the default - so the mount
     # target is pinned here (AC-13) and nothing under /app is overlaid.
+    #
+    # DB_POOL in particular: see the comment on its absence below. Overriding it
+    # is the single easiest way to break this deployment, and the value that
+    # looks correct is the one that does not boot.
     environment:
       # `${VAR:?message}` rather than `${VAR}`: an empty interpolation would let
       # the container boot and report itself healthy while
@@ -153,29 +157,44 @@ services:
       # variable name - the part worth saying out loud.
       SYNCTHING_ROOT: "/tmp/syncthing"
 
-      # This is the ONE place compose deliberately disagrees with the image.
-      # docker/Dockerfile:128 bakes DB_POOL=null, and the rationale for null is
-      # recorded at backend/core/config.py:327-330 - "null opens a fresh
-      # connection per session, which the test suite uses so that connections
-      # are never shared between event loops" - and applied at
-      # backend/core/database.py:104-108, where the test session asks for
-      # NullPool (backend/tests/conftest.py:181 sets it for itself).
+      # DB_POOL is deliberately ABSENT - inherited from the image, which bakes
+      # DB_POOL=null (docker/Dockerfile:128). Do not "fix" this by adding
+      # DB_POOL=pooled, which is Settings.DB_POOL's own default value
+      # (backend/core/config.py:330) and looks like the right answer.
       #
-      # That justification does not transfer to this container. The image runs
-      # exactly one uvicorn process (docker/Dockerfile:139), so there is one
-      # event loop and no second loop for NullPool to protect against. And
-      # pool_pre_ping (backend/core/database.py:103) is a no-op under NullPool -
-      # there is no pool to pre-ping - so stale-connection detection is silently
-      # switched off, while every session opens and closes its own SQLite
-      # connection on the API's hottest path.
+      # It is not an answer. It does not start. backend/core/database.py:108
+      # reads
       #
-      # `pooled` is Settings.DB_POOL's own default (backend/core/config.py:330).
-      # Fixing the Dockerfile rather than overriding here would be the better
-      # change, but it is issue #123's file and out of scope for #129; until it
-      # is filed, this override is the fix. So if you `docker inspect` and find
-      # DB_POOL=null in the image config, this line is why the running container
-      # says pooled - the file is not wrong.
-      DB_POOL: "pooled"
+      #     poolclass=NullPool if settings.DB_POOL == "null" else QueuePool
+      #
+      # and SQLAlchemy 2.0 REJECTS a bare QueuePool on an async engine:
+      #
+      #     sqlalchemy.exc.ArgumentError: Pool class QueuePool cannot be used
+      #     with asyncio engine
+      #
+      # thrown from create_async_engine during the lifespan handler, so the
+      # process dies on startup and restart: unless-stopped turns that into a
+      # crash loop. This was observed on a real `docker compose up`, not
+      # inferred: the first version of this file set DB_POOL=pooled and the
+      # container never reached /health.
+      #
+      # So `null` here is not a testing accommodation that leaked into the
+      # image, which is what it looks like from backend/core/config.py:327-330
+      # ("the test suite uses" it). It is the only value this code path can
+      # currently produce. The real bug is one level up: `pooled` was never
+      # implemented for an async engine - it needs AsyncAdaptedQueuePool from
+      # sqlalchemy.ext.asyncio, not QueuePool - which means Settings.DB_POOL's
+      # DEFAULT crashes any deployment that does not override it, including a
+      # bare `uvicorn backend.main:app`. Filed as its own issue; fixing
+      # database.py is not something a compose file is allowed to paper over.
+      #
+      # pool_pre_ping (backend/core/database.py:103) is indeed a no-op under
+      # NullPool - there is no pool to pre-ping - but that is a performance
+      # footnote, not the reason to leave this alone. The reason is that the
+      # alternative does not boot.
+      #
+      # To verify what the container actually runs:
+      #     docker compose exec backend printenv DB_POOL
 
     volumes:
       # Three mounts, and the count is the point. /app/data and /app/.shc are
