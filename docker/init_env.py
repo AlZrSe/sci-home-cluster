@@ -54,7 +54,9 @@ DEFAULT_SYNCTHING_ROOT = "./syncthing"
 # shown and it cannot produce a value that needs quoting in a .env file.
 TOKEN_BYTES = 32
 
-_ASSIGNMENT = re.compile(r"^(?P<prefix>#\s*)?(?P<key>[A-Z_][A-Z0-9_]*)\s*=(?P<value>.*)$")
+_ASSIGNMENT = re.compile(
+    r"^(?P<prefix>#\s*)?(?P<key>[A-Z_][A-Z0-9_]*)\s*=(?P<value>.*)$"
+)
 
 
 def _is_commented(match: re.Match[str]) -> bool:
@@ -104,7 +106,10 @@ def _seed_from_example() -> bool:
     if ENV_FILE.exists():
         return False
     if not ENV_EXAMPLE.exists():
-        print(f"error: {ENV_EXAMPLE} not found; run this from a complete checkout.", file=sys.stderr)
+        print(
+            f"error: {ENV_EXAMPLE} not found; run this from a complete checkout.",
+            file=sys.stderr,
+        )
         raise SystemExit(1)
     ENV_FILE.write_text(ENV_EXAMPLE.read_text(encoding="utf-8"), encoding="utf-8")
     return True
@@ -115,7 +120,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--rotate-token",
         action="store_true",
-        help="generate a new SHARED_TOKEN even if one is already set (logs every user out)",
+        help=(
+            "generate a new SHARED_TOKEN even if one is already set "
+            "(logs every user out)"
+        ),
     )
     parser.add_argument(
         "--show",
@@ -162,24 +170,29 @@ def main(argv: list[str] | None = None) -> int:
     # If the operator had already pointed SYNCTHING_ROOT somewhere real, the
     # default is not what their cluster will use, and saying otherwise would
     # send them looking in a directory nothing is using.
-    effective = next(
-        (
-            value
-            for line in lines
-            if (match := _ASSIGNMENT.match(line))
-            and match.group("key") == "SYNCTHING_ROOT"
-            and not _is_commented(match)
-            and (value := _value_of(line))
-        ),
-        None,
-    ) or DEFAULT_SYNCTHING_ROOT
+    effective = (
+        next(
+            (
+                value
+                for line in lines
+                if (match := _ASSIGNMENT.match(line))
+                and match.group("key") == "SYNCTHING_ROOT"
+                and not _is_commented(match)
+                and (value := _value_of(line))
+            ),
+            None,
+        )
+        or DEFAULT_SYNCTHING_ROOT
+    )
 
     # Create the folder so the bind mount has something to mount and the
     # backend's mkdir of {jobs,nodes} lands in the real shared directory rather
     # than somewhere Docker invents. A relative value resolves against the
     # repository root, which is what compose does with it.
     candidate = Path(effective).expanduser()
-    syncthing_dir = candidate if candidate.is_absolute() else (REPO_ROOT / candidate).resolve()
+    syncthing_dir = (
+        candidate if candidate.is_absolute() else (REPO_ROOT / candidate).resolve()
+    )
     try:
         syncthing_dir.mkdir(parents=True, exist_ok=True)
         location = str(syncthing_dir)

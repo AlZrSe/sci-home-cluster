@@ -65,10 +65,7 @@ folder, publishes port 8000, and restarts the container if the host reboots.
 From the repository root:
 
 ```bash
-# Seed .env: generates SHARED_TOKEN if absent, defaults SYNCTHING_ROOT to
-# ./syncthing and creates it. Idempotent - an existing token is never rotated.
-python docker/init_env.py
-
+# Nothing to configure. No .env is required.
 docker compose up -d      # builds the image on first run
 docker compose ps         # expect "(healthy)" within about 10 seconds
 ```
@@ -76,28 +73,42 @@ docker compose ps         # expect "(healthy)" within about 10 seconds
 Then open <http://localhost:8000>. The API is at `/api/v1`, the docs at `/docs`,
 and the SPA is served from `/` and every client-side route.
 
-Two variables are needed, and `init_env.py` sets both, so there is normally
-nothing to edit:
+**`SHARED_TOKEN` is generated, not demanded.** If it is unset or empty the
+application creates one on first start, saves it to `/app/.shc/shared_token`
+(the `shc-state` volume) and logs a `WARNING` naming that file — never the
+value. So:
 
-| Variable | What `init_env.py` does |
-| --- | --- |
-| `SHARED_TOKEN` | Generates 32 bytes (`secrets.token_hex` — 64 hex chars) when absent or empty. Unset, the container would still boot and report itself healthy while `POST /api/v1/auth/token` answered `SHARED_TOKEN_NOT_CONFIGURED` to every login (issue #56). |
-| `SYNCTHING_ROOT` | Defaults to `./syncthing`, a folder inside this checkout, which it creates. Bind-mounted to `/tmp/syncthing` inside the container. |
+```bash
+docker compose exec backend cat /app/.shc/shared_token
+```
 
-`SHARED_TOKEN` is the one compose still insists on: if it is unset **or empty**,
-`docker compose up` stops immediately with exit 1 and a message naming the
-variable, and nothing is created — no image built, no volume made, no container
-started. That guard is the backstop for anyone who skips `init_env.py`, and it is
-deliberate. `SYNCTHING_ROOT` no longer has that guard, because it now has a
-default that is a real folder rather than nothing.
+The token is stable across restarts, and reading it back on a normal restart is
+silent — the `WARNING` is for first start only.
+
+This replaced a `${SHARED_TOKEN:?...}` guard that refused to start. That guard
+was right as a refusal of a *guessable* token and useless as a refusal of an
+unconfigured one: the cluster came up, the dashboard opened, and every login
+answered `SHARED_TOKEN_NOT_CONFIGURED` with no hint what to do. Worse, on a
+machine with no Python there was nothing available to generate the token with
+except the image itself.
+
+The cost, stated plainly: **a typo in an intended `SHARED_TOKEN` is no longer a
+startup failure.** It yields a working cluster with a token nobody else has. The
+`WARNING` exists to make that visible. Set the variable explicitly when more
+than one machine authenticates against the same cluster, or when you want the
+value in your own dotenv rather than in a volume — an explicit value always wins
+and is never persisted.
+
+`SYNCTHING_ROOT` defaults to `./syncthing`, a folder inside this checkout that
+is created for you. See below.
 
 Both are read from the repository-root `.env` automatically — compose interpolates
 `${...}` from it without any `env_file:` key — or from your shell environment.
 
 ```bash
-make env-init     # same as python docker/init_env.py
-make env-token    # print the current SHARED_TOKEN without writing anything
-python docker/init_env.py --rotate-token   # generate a new one (logs everyone out)
+make env-init     # seed .env yourself (needs Python on the host)
+make env-token    # print the current SHARED_TOKEN
+python docker/init_env.py --rotate-token   # generate a new one
 ```
 
 One thing compose does that the `docker run` line below does not:

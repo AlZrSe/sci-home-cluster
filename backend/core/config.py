@@ -44,6 +44,10 @@ DEFAULT_DATABASE_URL: Final[str] = "sqlite:///" + CANONICAL_DATABASE_PATH.as_pos
 # into whatever directory the process happened to be launched from.
 DEFAULT_STATE_DIR: Final[Path] = _REPO_ROOT / ".shc"
 
+# Where a generated SHARED_TOKEN is persisted, for the same reason
+# SECRET_KEY is generated rather than demanded. See _resolve_shared_token().
+SHARED_TOKEN_FILENAME: Final[str] = "shared_token"
+
 # SHA-256 digests of the JWT signing keys that were committed to this public
 # repository and are therefore known to anyone who has cloned it:
 #
@@ -155,6 +159,44 @@ class _Unset:
 _UNSET = _Unset()
 
 
+def _write_state_secret(state_path: Path, value: str) -> Optional[str]:
+    """
+    Write a generated secret to ``state_path`` atomically and owner-only.
+
+    Returns the absolute path on success, or None if it could not be written -
+    in which case the caller still has the value in memory and must say so,
+    because the whole point of persisting is that it survives a restart.
+
+    Atomic write: temp file -> close (which flushes) -> ``os.replace``. The
+    rename is atomic on POSIX and Windows (since Python 3.3), so a crash or a
+    concurrent reader never sees a half-written secret. ``chmod`` runs on the
+    temp file BEFORE the rename so the final file is never briefly
+    world-readable.
+    """
+    try:
+        state_path.parent.mkdir(parents=True, exist_ok=True)
+        tmp_path = state_path.with_suffix(".tmp")
+        tmp_path.write_text(value, encoding="utf-8")
+        try:
+            tmp_path.chmod(0o600)
+        except OSError:
+            # chmod may fail on some filesystems (FAT, network mounts); log
+            # at debug and continue - the key in memory is still usable.
+            logger.debug(
+                "Could not set 0o600 permissions on %s; continuing anyway.",
+                tmp_path,
+            )
+        os.replace(tmp_path, state_path)
+    except OSError:
+        return None
+
+    # Log the absolute location, not just the configured one: SHC_STATE_DIR is
+    # used verbatim and may be relative, and "which file is my secret?" is
+    # unanswerable from a relative line (issue #56, mirroring the database
+    # path log in backend/core/database.py).
+    return str(state_path if state_path.is_absolute() else Path.cwd() / state_path)
+
+
 def _resolve_secret_key(shc_state_dir: Union[Optional[str], _Unset] = _UNSET) -> str:
     """
     Resolve the JWT signing key.
@@ -205,36 +247,14 @@ def _resolve_secret_key(shc_state_dir: Union[Optional[str], _Unset] = _UNSET) ->
         published = False
 
     generated = secrets.token_urlsafe(32)
-    try:
-        state_path.parent.mkdir(parents=True, exist_ok=True)
-        # Atomic write: temp file -> fsync (via close) -> rename.
-        # os.replace is atomic on POSIX and Windows (since Python 3.3).
-        tmp_path = state_path.with_suffix(".tmp")
-        tmp_path.write_text(generated, encoding="utf-8")
-        # Restrict to the owner before the rename so the final file has 0o600.
-        try:
-            tmp_path.chmod(0o600)
-        except OSError:
-            # chmod may fail on some filesystems (FAT, network mounts); log
-            # at debug and continue - the key in memory is still usable.
-            logger.debug(
-                "Could not set 0o600 permissions on %s; continuing anyway.",
-                tmp_path,
-            )
-        os.replace(tmp_path, state_path)
-    except OSError:
+    absolute_path = _write_state_secret(state_path, generated)
+    if absolute_path is None:
         logger.warning(
             "Could not persist the generated SECRET_KEY to %s; "
             "tokens will not survive a restart.",
             state_path,
         )
         return generated
-
-    # Log the absolute location, not just the configured one: SHC_STATE_DIR is
-    # used verbatim and may be relative, and "which file is my signing key?"
-    # is unanswerable from a relative line (issue #56, mirroring the database
-    # path log in backend/core/database.py).
-    absolute_path = state_path if state_path.is_absolute() else Path.cwd() / state_path
 
     if published:
         # WARNING, not INFO, on purpose. This runs at import of
@@ -257,6 +277,69 @@ def _resolve_secret_key(shc_state_dir: Union[Optional[str], _Unset] = _UNSET) ->
         )
     else:
         logger.info("Generated a new JWT signing key at %s.", absolute_path)
+    return generated
+
+
+def _resolve_shared_token(shc_state_dir: Union[Optional[str], _Unset] = _UNSET) -> str:
+    """
+    Resolve the shared bearer token, generating and persisting one if needed.
+
+    Order of preference:
+
+      1. an explicitly configured ``SHARED_TOKEN`` - the caller has already
+         checked, and this is only reached when there was none;
+      2. a token persisted under ``SHC_STATE_DIR``, so a restart does not
+         invalidate it;
+      3. a freshly generated one, persisted for next time.
+
+    Why this exists. ``SHARED_TOKEN`` used to be ``None`` until an operator set
+    it, and ``POST /api/v1/auth/token`` answered ``SHARED_TOKEN_NOT_CONFIGURED``
+    to every login (issue #56). That is a correct refusal of a *guessable* token
+    and a useless answer for a deployment that simply has not been configured
+    yet: the cluster is running, the dashboard is open, and nothing works, with
+    no hint what to do. The same already happened to the JWT signing key, which
+    has generated and persisted its own since #24.
+
+    Generating here means ``docker compose up -d`` works on a machine that has
+    never run this project before. The cost is that a typo in an intended
+    ``SHARED_TOKEN`` is no longer a startup failure - it produces a working
+    cluster with a token nobody else has, which the WARNING below exists to
+    surface.
+    """
+    state_path = Path(_state_dir(shc_state_dir)) / SHARED_TOKEN_FILENAME
+    try:
+        existing = state_path.read_text(encoding="utf-8").strip()
+    except (OSError, UnicodeDecodeError):
+        existing = ""
+
+    if existing:
+        # Steady state: a restart reads it back silently, exactly as the
+        # signing key does. A log line here would be noise on every boot.
+        return existing
+
+    generated = secrets.token_urlsafe(32)
+    written = _write_state_secret(state_path, generated)
+    if written is None:
+        logger.warning(
+            "No SHARED_TOKEN is configured and a generated one could not be "
+            "persisted to %s; it will change on every restart. Set SHARED_TOKEN "
+            "explicitly to keep it stable.",
+            state_path,
+        )
+        return generated
+
+    # WARNING, not INFO, and never the value. The operator needs to know two
+    # things: that nothing was configured, and where the generated token lives.
+    # The token itself is a credential and does not belong in a log that is
+    # routinely piped somewhere else.
+    logger.warning(
+        "SHARED_TOKEN is not configured, so one was generated and saved to %s. "
+        "Read it with 'cat %s' and use it to mint a token at "
+        "POST /api/v1/auth/token, or set SHARED_TOKEN yourself to choose one. "
+        "Without it, login is unavailable - not merely inconvenient.",
+        written,
+        written,
+    )
     return generated
 
 
@@ -464,6 +547,14 @@ class Settings(BaseSettings):
         # environment variable; fill it in from the persisted key.
         if not self.SECRET_KEY:
             self.SECRET_KEY = _resolve_secret_key(self.SHC_STATE_DIR)
+
+        # Same treatment for SHARED_TOKEN, and for the same reason: a
+        # deployment that has not been configured yet gets a working cluster
+        # rather than a login that cannot succeed. An explicit SHARED_TOKEN
+        # still wins - `not self.SHARED_TOKEN` is false for any real value, and
+        # an operator who sets one never sees this path.
+        if not self.SHARED_TOKEN:
+            self.SHARED_TOKEN = _resolve_shared_token(self.SHC_STATE_DIR)
 
         # Resolve DATABASE_URL from SHC_DATA_DIR if provided and not explicitly
         # set to a non-default value. This allows mounting the database at any

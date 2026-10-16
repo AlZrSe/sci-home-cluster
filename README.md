@@ -209,28 +209,32 @@ root.
 git clone --recurse-submodules https://github.com/AlZrSe/sci-home-cluster.git
 cd scientific-home-cluster
 
-# 2. Seed .env: generates SHARED_TOKEN if absent, defaults SYNCTHING_ROOT to
-#    ./syncthing and creates it. Idempotent - an existing token is never rotated.
-python docker/init_env.py        # or: make env-init
+# 2. Start it. There is nothing to configure.
+docker compose up -d
+docker compose ps          # "(healthy)" comes from the image's own HEALTHCHECK
 ```
 
-`init_env.py` copies `.env.example` if there is no `.env`, then sets the two
-variables the stack needs. **Neither has to be typed by hand**, and you only
-have to look at `.env` if you want to change them:
+**No `.env` is required.** Both things that used to need one now have working
+defaults:
 
-| Variable | What the script does |
-| --- | --- |
-| `SHARED_TOKEN` | Generates 32 bytes (`secrets.token_hex`, 64 hex chars) when absent or empty. An existing value is never overwritten, so re-running it does not log anyone out. |
-| `SYNCTHING_ROOT` | Defaults to `./syncthing` - a folder inside this checkout that it creates. Relative to the project directory, so it resolves identically on every machine. |
+| | Default | Override |
+| --- | --- | --- |
+| `SYNCTHING_ROOT` | `./syncthing` — a folder in this checkout, created and bind-mounted | put `SYNCTHING_ROOT` in a repository-root `.env` |
+| `SHARED_TOKEN` | generated on first start, persisted to the `shc-state` volume | put `SHARED_TOKEN` in `.env` |
 
-Nothing written here is ever committed: `.env` is gitignored and excluded from
-the build context, and so is `syncthing/`.
+To read the generated token, and mint a JWT with it:
 
-To point at a real Syncthing folder instead, edit `SYNCTHING_ROOT` in `.env`
-(`D:\syncthing-shared` on Windows, `/mnt/syncthing-shared` on Linux) and run
-`python docker/init_env.py` again - it will create it and report the path it
-actually used. See [`docker/README.md`](docker/README.md) for the full
-reference.
+```bash
+docker compose exec backend cat /app/.shc/shared_token
+```
+
+Then open <http://localhost:8000>. The SPA is served from `/` and every client-side route, the
+API is at `/api/v1`, the docs at `/docs`.
+
+**Prefer the token in `.env`?** `python docker/init_env.py` (or `make env-init`) seeds `.env`
+from `.env.example`, writes a 64-character token, creates `syncthing/` and is idempotent —
+`--show` prints the current one, `--rotate-token` replaces it. It needs Python on the host,
+which is exactly why nothing requires it any more.
 
 ```bash
 # 3. Start it
@@ -248,7 +252,7 @@ API is at `/api/v1`, the docs at `/docs`.
 ```bash
 curl -X POST http://localhost:8000/api/v1/auth/token \
   -H "Content-Type: application/json" \
-  -d '{"shared_token": "the value you set in .env"}'
+  -d '{"shared_token": "'"$(docker compose exec -T backend cat /app/.shc/shared_token)"'"}'
 ```
 
 Opened as `http://localhost:8000`, the dashboard falls back to a localhost bypass and you may not
