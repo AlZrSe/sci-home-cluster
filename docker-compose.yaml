@@ -208,28 +208,46 @@ services:
       - shc-data:/app/data
       - shc-state:/app/.shc
 
-      # REQUIRED, and a bind mount rather than a volume because the whole point
-      # of SYNCTHING_ROOT is that the backend and every agent see the SAME
-      # files. A default is refused: with nothing mounted the backend creates
-      # /tmp/syncthing/{jobs,nodes} itself on startup
-      # (backend/services/syncthing_service.py:192-193), then reports
+      # A BIND MOUNT, not a volume, because the whole point of SYNCTHING_ROOT is
+      # that the backend and every agent see the SAME files. A named volume
+      # would be invisible to every agent on every other node.
+      #
+      # The default is ./syncthing, a folder inside this checkout, and that is a
+      # deliberate change from refusing a default. Unmounted, the backend
+      # creates /tmp/syncthing/{jobs,nodes} itself on startup
+      # (backend/services/syncthing_service.py:192-193) and then reports
       # syncthing_status "available" because the directory it just created
       # exists - empty, and invisible to every agent in the fleet. The operator
-      # sees a healthy cluster, submits a job, and no node ever claims it. That
-      # is the silent second-cluster failure issue #104 exists to close, reached
-      # here by the most natural-looking mistake there is. So the operator is
-      # told at `docker compose config` time, not at first job submission.
+      # sees a healthy cluster, submits a job, and no node ever claims it.
+      # That is issue #104's silent second cluster.
       #
-      # Long syntax rather than the short "- ${SYNCTHING_ROOT:?...}:/tmp/syncthing":
-      # it states type: bind in the resolved config instead of letting compose
-      # infer it from the string, and a Windows source such as D:\syncthing-shared
+      # Requiring an absolute path was one answer to it, and a poor one: every
+      # value is machine-specific, so it cannot be copied, shared or committed,
+      # and it is the single most likely thing to get wrong. A project-local
+      # default is better on both counts - it resolves the same way everywhere,
+      # it is visible in `ls`, and docker/init_env.py creates it. The failure it
+      # cannot catch is a wrong OVERRIDE, which is a deliberate act.
+      #
+      # Long syntax rather than the short "- ./syncthing:/tmp/syncthing": it
+      # states type: bind in the resolved config instead of letting compose
+      # infer it from a string, and a Windows source such as D:\syncthing-shared
       # is not ambiguous to a parser.
       #
-      # The same ${VAR:?message} form as SHARED_TOKEN, and the same message, so
-      # the failure reads identically no matter which of the two references is
-      # interpolated first.
+      # This folder is operator data. It is excluded from the build context by
+      # .dockerignore, so it cannot ship into the image the way the databases in
+      # #131 did, and gitignored so it cannot be committed.
+      # The default Syncthing folder, so a first run needs no per-machine path.
+      # Relative paths here resolve against the PROJECT DIRECTORY - the folder
+      # holding this file - so `./syncthing` means <repo-root>/syncthing on every
+      # host, with no absolute path to copy between machines and nothing to get
+      # wrong. Override it for a real deployment:
+      #
+      #     SYNCTHING_ROOT=/mnt/syncthing-shared   # in .env
+      #
+      # Keep it set SYNCTHING_ROOT in the host shell only if you also pass it to
+      # compose, because compose prefers the shell environment over .env.
       - type: bind
-        source: "${SYNCTHING_ROOT:?set SYNCTHING_ROOT to your Syncthing folder - AGENTS.md says it is required on every node - and put it in the repository-root .env (copy .env.example to .env)}"
+        source: "${SYNCTHING_ROOT:-./syncthing}"
         target: /tmp/syncthing
 
     # Survives a host reboot, which is the case that matters for a home cluster

@@ -4,6 +4,7 @@
 .PHONY: help install install-dev test test-unit test-integration test-watch lint format typecheck clean
 .PHONY: backend-dev backend-build backend-migrate frontend-dev frontend-build frontend-lint frontend-format
 .PHONY: run-agent db-upgrade db-downgrade db-revision run
+.PHONY: env-init env-token
 .PHONY: test-e2e test-e2e-ui test-e2e-headed test-all
 
 # Default target
@@ -23,6 +24,10 @@ help:
 	@echo "  make backend-migrate  Run database migrations (alembic upgrade head)"
 	@echo "  make db-revision      Create new alembic migration revision"
 	@echo "  make run-agent        Start worker agent"
+	@echo ""
+	@echo "Docker Compose:"
+	@echo "  make env-init         Seed .env (token + syncthing folder) for compose"
+	@echo "  make env-token        Print the current SHARED_TOKEN"
 	@echo ""
 	@echo "Frontend:"
 	@echo "  make frontend-dev     Start frontend dev server (vite)"
@@ -95,6 +100,16 @@ db-revision:
 
 run-agent:
 	cd agent && python run_agent.py --node-id node-01
+
+# Seed .env for `docker compose up`: copies .env.example, generates SHARED_TOKEN
+# if absent, defaults SYNCTHING_ROOT to ./syncthing and creates it. Idempotent -
+# an existing token is never rotated. See docker/init_env.py.
+env-init:
+	python docker/init_env.py
+
+# Print the current SHARED_TOKEN without writing anything.
+env-token:
+	@python docker/init_env.py --show
 
 # Frontend development
 frontend-dev:

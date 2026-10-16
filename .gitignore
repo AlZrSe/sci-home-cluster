@@ -86,7 +86,13 @@ mysql/
 
 # Uploaded files
 uploads/
-syncthing/
+
+# Syncthing shared folder. The default SYNCTHING_ROOT for docker compose
+# (docker-compose.yaml, created by docker/init_env.py), so it holds the live
+# jobs/ and nodes/ trees and belongs to the operator, never to the repository.
+# Anchored to the root with a leading slash so it cannot accidentally match a
+# same-named directory inside the frontend submodule.
+/syncthing/
 
 # Backup files
 *.bak

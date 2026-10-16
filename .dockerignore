@@ -28,9 +28,11 @@
 # `**/` fixes it at any depth, so the per-environment venv names below are no
 # longer an enumeration that has to be kept in step with whatever the
 # developer happens to have lying around.
-**/venv/
-**/.venv/
-**/.venv-*/
+# Any virtualenv, whatever it happens to be called: venv, .venv, .venv-gates,
+# .venv-main-check, test_venv, test_venv2, venv_test. Enumerating those names is
+# how this file already failed once - the list drifts and the new name ships.
+# `*venv*` cannot drift, and cannot plausibly collide with a real directory.
+**/*venv*/
 **/env/
 **/__pycache__/
 **/*.py[cod]
@@ -96,6 +98,7 @@ frontend/.env.*
 # read it, which is the same exposure issue #56 recorded for signing keys.
 **/data/
 **/.shc/
+**/syncthing/
 **/*.db
 **/*.db-shm
 **/*.db-wal

@@ -65,8 +65,10 @@ folder, publishes port 8000, and restarts the container if the host reboots.
 From the repository root:
 
 ```bash
-cp .env.example .env      # Windows PowerShell: Copy-Item .env.example .env
-# edit .env: set SHARED_TOKEN and SYNCTHING_ROOT
+# Seed .env: generates SHARED_TOKEN if absent, defaults SYNCTHING_ROOT to
+# ./syncthing and creates it. Idempotent - an existing token is never rotated.
+python docker/init_env.py
+
 docker compose up -d      # builds the image on first run
 docker compose ps         # expect "(healthy)" within about 10 seconds
 ```
@@ -74,34 +76,32 @@ docker compose ps         # expect "(healthy)" within about 10 seconds
 Then open <http://localhost:8000>. The API is at `/api/v1`, the docs at `/docs`,
 and the SPA is served from `/` and every client-side route.
 
-Two variables are **required**, and compose refuses to invent either:
+Two variables are needed, and `init_env.py` sets both, so there is normally
+nothing to edit:
 
-| Variable | Why it is required |
+| Variable | What `init_env.py` does |
 | --- | --- |
-| `SHARED_TOKEN` | The bearer token. Unset, the container would still boot and report itself healthy while `POST /api/v1/auth/token` answered `SHARED_TOKEN_NOT_CONFIGURED` to every login (issue #56). |
-| `SYNCTHING_ROOT` | The **host** path of your Syncthing folder. Bind-mounted to `/tmp/syncthing` inside the container. |
+| `SHARED_TOKEN` | Generates 32 bytes (`secrets.token_hex` — 64 hex chars) when absent or empty. Unset, the container would still boot and report itself healthy while `POST /api/v1/auth/token` answered `SHARED_TOKEN_NOT_CONFIGURED` to every login (issue #56). |
+| `SYNCTHING_ROOT` | Defaults to `./syncthing`, a folder inside this checkout, which it creates. Bind-mounted to `/tmp/syncthing` inside the container. |
+
+`SHARED_TOKEN` is the one compose still insists on: if it is unset **or empty**,
+`docker compose up` stops immediately with exit 1 and a message naming the
+variable, and nothing is created — no image built, no volume made, no container
+started. That guard is the backstop for anyone who skips `init_env.py`, and it is
+deliberate. `SYNCTHING_ROOT` no longer has that guard, because it now has a
+default that is a real folder rather than nothing.
 
 Both are read from the repository-root `.env` automatically — compose interpolates
-`${...}` from it without any `env_file:` key — or from your shell environment. If
-either is unset **or empty**, `docker compose up` stops immediately with exit 1
-and a message naming the variable, and nothing is created: no image built, no
-volume made, no container started. That is deliberate; the file explains why at
-each use site.
+`${...}` from it without any `env_file:` key — or from your shell environment.
 
-Two things compose does that the `docker run` line below does not:
+```bash
+make env-init     # same as python docker/init_env.py
+make env-token    # print the current SHARED_TOKEN without writing anything
+python docker/init_env.py --rotate-token   # generate a new one (logs everyone out)
+```
 
-- **`DB_POOL` is overridden to `pooled`.** The image bakes `DB_POOL=null`
-  (`docker/Dockerfile:128`), which exists for the *test suite* — it opens a fresh
-  connection per session so connections are never shared between event loops
-  (`backend/core/config.py`, `backend/core/database.py`; the test session sets it
-  for itself). This container runs exactly one `uvicorn` process and therefore one
-  event loop, so there is nothing to protect against, and `NullPool` silently
-  disables `pool_pre_ping` while opening and closing a connection per request.
-  `pooled` is the application's own default. Overriding the image is not the
-  ideal fix — removing `DB_POOL=null` from the Dockerfile is — but the Dockerfile
-  is not this file's to change, so the override is the fix. If `docker inspect`
-  shows `DB_POOL=null` in the image config, that is why the running container
-  says `pooled`.
+One thing compose does that the `docker run` line below does not:
+
 - **The volumes have pinned names.** `shc-data` and `shc-state` are declared with
   `name:`, so they are not prefixed with a project name derived from your checkout
   directory. That keeps `docker volume ls` a reliable way to find your state, and
@@ -111,15 +111,58 @@ Compose does not restart an unhealthy container, and `restart: unless-stopped`
 restarts on exit rather than on ill health. Observe health with `docker compose ps`
 and recover with `docker compose restart backend`.
 
-### The Syncthing folder must be bind-mounted
+### `DB_POOL`: do not override it
+
+The image bakes `DB_POOL=null` (`docker/Dockerfile:128`) and compose inherits
+that value. **Do not add `DB_POOL: pooled` to the service**, even though `pooled`
+is `Settings.DB_POOL`'s own default (`backend/core/config.py:330`) and looks like
+the correct production setting. It does not start:
+
+```
+sqlalchemy.exc.ArgumentError: Pool class QueuePool cannot be used with asyncio engine
+```
+
+`backend/core/database.py:108` maps anything other than `"null"` to `QueuePool`,
+and SQLAlchemy 2.0 rejects a bare `QueuePool` on an async engine. It is raised
+inside the lifespan handler, so the process dies during startup and
+`restart: unless-stopped` turns that into a crash loop — it never reaches
+`/health`.
+
+So `null` is not a test accommodation that leaked into the image, which is what
+the docstring at `backend/core/config.py:327-330` implies. It is the only value
+this code path can currently produce. The real defect is one level up: `pooled`
+was never implemented for an async engine — it needs `AsyncAdaptedQueuePool` —
+which means the `Settings` default crashes any deployment that does not override
+it, including a bare `uvicorn backend.main:app`. Tracked as
+[#130](https://github.com/AlZrSe/sci-home-cluster/issues/130).
+
+Check what the container actually runs:
+
+```bash
+docker compose exec backend printenv DB_POOL
+```
+
+### The Syncthing folder is bind-mounted
 
 `SYNCTHING_ROOT` inside the container is the literal `/tmp/syncthing`, and the
-path you set in `.env` is bind-mounted there. Without the mount the failure is
+host path is bind-mounted there. The default is `./syncthing` — a folder inside
+this checkout, created by `docker/init_env.py`.
+
+It has to be a real shared folder, because without the mount the failure is
 silent: the backend creates `/tmp/syncthing/{jobs,nodes}` itself on startup, then
 reports `syncthing_status: "available"` because the directory it just made
 exists — empty, and invisible to every agent in the fleet. The cluster looks
-healthy, jobs get submitted, and no node ever claims one. Hence the required
-variable rather than a default.
+healthy, jobs get submitted, and no node ever claims one (issue #104).
+
+This used to be a **required** absolute path, and that was a poor answer: every
+value is machine-specific, so it cannot be copied between hosts, shared, or
+committed, and it is the single most likely thing to get wrong. A project-local
+default resolves the same way everywhere, is visible in `ls`, and is created for
+you. Point it at your real Syncthing folder by editing `SYNCTHING_ROOT` in `.env`
+and re-running `python docker/init_env.py`.
+
+`./syncthing` is gitignored and excluded from the build context, so the `jobs/`
+and `nodes/` trees in it are never committed and never shipped in the image.
 
 For the same reason, the **worker agent is not a service in
 `docker-compose.yaml`**. It runs on each compute node, is file-only and holds no

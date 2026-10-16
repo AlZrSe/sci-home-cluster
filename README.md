@@ -209,25 +209,28 @@ root.
 git clone --recurse-submodules https://github.com/AlZrSe/sci-home-cluster.git
 cd scientific-home-cluster
 
-# 2. Two variables are required. Compose reads them from a repository-root .env
-#    automatically, and STOPS with exit 1 and a one-line message if either is
-#    missing or empty - before it creates an image, a volume or a container.
-cp .env.example .env      # Windows PowerShell: Copy-Item .env.example .env
+# 2. Seed .env: generates SHARED_TOKEN if absent, defaults SYNCTHING_ROOT to
+#    ./syncthing and creates it. Idempotent - an existing token is never rotated.
+python docker/init_env.py        # or: make env-init
 ```
 
-Then edit `.env`. **Both of these must be set, and both must be non-empty:**
+`init_env.py` copies `.env.example` if there is no `.env`, then sets the two
+variables the stack needs. **Neither has to be typed by hand**, and you only
+have to look at `.env` if you want to change them:
 
-```bash
-# SHARED_TOKEN - the bearer token. Not generated for you: unset, the API
-# answers SHARED_TOKEN_NOT_CONFIGURED to every login. Generate a real one:
-openssl rand -hex 32
+| Variable | What the script does |
+| --- | --- |
+| `SHARED_TOKEN` | Generates 32 bytes (`secrets.token_hex`, 64 hex chars) when absent or empty. An existing value is never overwritten, so re-running it does not log anyone out. |
+| `SYNCTHING_ROOT` | Defaults to `./syncthing` - a folder inside this checkout that it creates. Relative to the project directory, so it resolves identically on every machine. |
 
-# SYNCTHING_ROOT - your Syncthing folder, on the HOST. This is the folder the
-# backend and every agent share; compose bind-mounts it into the container.
-# It is required for a reason worth knowing: unmounted, the backend creates
-# an empty /tmp/syncthing itself, reports the cluster as available because the
-# directory it just made exists, and no node ever claims a submitted job.
-```
+Nothing written here is ever committed: `.env` is gitignored and excluded from
+the build context, and so is `syncthing/`.
+
+To point at a real Syncthing folder instead, edit `SYNCTHING_ROOT` in `.env`
+(`D:\syncthing-shared` on Windows, `/mnt/syncthing-shared` on Linux) and run
+`python docker/init_env.py` again - it will create it and report the path it
+actually used. See [`docker/README.md`](docker/README.md) for the full
+reference.
 
 ```bash
 # 3. Start it
@@ -262,6 +265,11 @@ need this at all - see [`SHARED_TOKEN`](#environment-variables). Reaching it fro
   in a browser.
 - **The published port is `8000:8000` on purpose**, and is not a variable, because it cannot be
   derived from `VITE_API_URL`. Changing one without the other is the same trap.
+- **`SYNCTHING_ROOT` defaults to a real folder, not to nothing.** Unmounted, the backend would
+  create an empty `/tmp/syncthing` itself, report the cluster available because the directory it
+  just made exists, and no node would ever claim a submitted job. A project-local default you can
+  see in `ls` is much harder to get wrong than the required absolute path it replaced
+  ([#104](https://github.com/AlZrSe/sci-home-cluster/issues/104)).
 - **`docker compose down -v` deletes both volumes.** `shc-data` holds the database and losing it
   loses the cluster; `shc-state` holds the JWT signing key and losing it invalidates every token
   ever issued. Plain `docker compose down` keeps both.
