@@ -1,0 +1,270 @@
+# docker-compose.yaml - the one file that says how to run shc:latest.
+#
+# It lives at the REPOSITORY ROOT, next to .dockerignore, because the build
+# context is the repository root: docker/Dockerfile COPYs pyproject.toml,
+# backend/, shared/, agent/, cli/ and frontend/ (lines 44-46, 102-106), none of
+# which resolve from docker/. A compose file under docker/ would read as though
+# that directory were the context and fail on the first COPY. Issue #129.
+#
+# Quick start, from the repository root:
+#
+#     Copy-Item .env.example .env    # then set SHARED_TOKEN and SYNCTHING_ROOT
+#     docker compose up -d
+#     docker compose ps              # "(healthy)" is the image's OWN HEALTHCHECK
+#
+# `docker compose up` FAILS IMMEDIATELY, exit 1 and one line of stderr, if
+# SHARED_TOKEN or SYNCTHING_ROOT is unset OR EMPTY. That is the point of using
+# `${VAR:?message}` rather than `env_file:` - see the environment: block for why
+# each form was rejected. Nothing is created: no image is built, no volume made,
+# no container started.
+#
+# There is deliberately NO `version:` key. Compose v2 ignores it and emits no
+# warning, so a file carrying one looks authoritative while configuring nothing.
+#
+# Validate without building or starting anything (issue #129, TS-1):
+#
+#     $env:SHARED_TOKEN = "x"; $env:SYNCTHING_ROOT = "D:\syncthing-shared"
+#     docker compose config
+#
+# ---------------------------------------------------------------------------
+# Topology: one service, and the one you might expect to find here is absent
+# ---------------------------------------------------------------------------
+# The WORKER AGENT IS NOT A SERVICE IN THIS FILE, and that is a decision, not an
+# oversight. Five reasons, per issue #129:
+#
+#   1. It is a different machine. The agent runs on each COMPUTE NODE; the
+#      backend runs on the server. One compose file describes one host, so
+#      listing both would assert a co-location that is false in every real GPU
+#      cluster - and would make `docker compose down` on the server a candidate
+#      for stopping nodes it cannot reach.
+#   2. There is no service relationship to express. The agent is file-only: it
+#      never opens a network connection to the backend and holds no credential
+#      (README.md "Worker Agent (on each compute node)"). No shared network
+#      dependency, no depends_on edge, no SHARED_TOKEN to thread through.
+#   3. It needs the GPU and that node's real Syncthing folder, i.e.
+#      deploy.resources.reservations.devices, which differs between Docker
+#      Desktop and a Linux node, plus a bind mount of the NODE's folder - not
+#      expressible in a file that lives in the server's checkout.
+#   4. Issue #104 is open. agent/README.md does not exist yet, so there is no
+#      documented install path to encode into a service definition.
+#   5. The trap. `run-agent` IS installed in shc:latest - docker/Dockerfile:105
+#      does `COPY agent/ ./agent/`, pyproject.toml:177 includes agent* in the
+#      wheel, and pyproject.toml:182 declares the console script - so
+#      `docker compose exec backend run-agent --node-id node-01` really would
+#      work. Do not. It would run the one compute node inside the API
+#      container, behind the same SQLite volume, with that container's
+#      privileges, executing arbitrary JobSpec.command payloads.
+#
+# Where the agent does live: on each compute node, `run-agent --node-id <id>`
+# (README.md "Worker Agent (on each compute node)"), with that node's own
+# SYNCTHING_ROOT pointing at that node's Syncthing folder. That is a DIFFERENT
+# directory from the host folder this file bind-mounts to /tmp/syncthing for the
+# backend - one value in .env, two destinations depending on which process reads
+# it. A deployment story for the agent - image, systemd unit, or both - is
+# follow-up work sequenced after #104.
+
+services:
+  backend:
+    # The same tag docker/README.md documents. Unpinned and local on purpose:
+    # there is no registry in this project.
+    image: shc:latest
+
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+      args:
+        # These two ARGs are the only knobs docker/Dockerfile:65-66 exposes, and
+        # the defaults below are BYTE-IDENTICAL to the Dockerfile's own. That
+        # identity is load-bearing: if this file and the Dockerfile disagreed,
+        # `docker compose build` and `docker build -f docker/Dockerfile -t
+        # shc:latest .` would produce two different images from the same tree -
+        # both succeed, and the job-log WebSocket breaks in only one of them.
+        #
+        # `args:` rather than a comment saying "pass --build-arg": a comment is
+        # inert, an entry is documentation AND the mechanism, and it is the same
+        # ${...}-from-.env path SHARED_TOKEN already uses. One file, one edit,
+        # one mechanism - rather than making the operator re-derive a
+        # `docker build` line by hand, which is what #129 exists to end.
+        #
+        # VITE_API_URL must stay ABSOLUTE. frontend/src/services/http.ts derives
+        # the socket URL with base().replace(/^http/, "ws"), so a same-origin
+        # relative base produces new WebSocket("/api/v1/..."), which throws in a
+        # browser and kills the job log stream.
+        #
+        # The localhost default is correct ONLY for a browser on the machine
+        # running this container. A browser on another machine must either
+        # rebuild with an externally reachable VITE_API_URL or, one time, set it
+        # on the app's settings page (frontend/src/lib/settings.ts reads this as
+        # a first-run default; localStorage["shc.settings"] overrides it). Until
+        # one of those happens the dashboard reports BACKEND_UNREACHABLE.
+        # Note also that a browser reaching http://192.168.x.x:8000 is outside
+        # the localhost auth bypass (backend/core/config.py:436 keys on the
+        # client-supplied Host header), so it needs a real minted token.
+        VITE_CLUSTER_BACKEND: "${VITE_CLUSTER_BACKEND:-http}"
+        VITE_API_URL: "${VITE_API_URL:-http://localhost:8000/api/v1}"
+
+    # A CONSTANT, not a variable. A ${SHC_PORT:-8000} would look more flexible
+    # and would let an operator change the published port without touching
+    # VITE_API_URL - producing a container that serves perfectly and a bundle
+    # that points somewhere else. The two cannot be derived from one another:
+    # build args are interpolated before any container exists. So it is one
+    # constant with a loud comment, and changing it means editing BOTH lines
+    # and rebuilding.
+    ports:
+      - "8000:8000"
+
+    # Exactly three keys. That is a decision, not an omission.
+    #
+    # The image bakes five values (docker/Dockerfile:126-130). SERVE_FRONTEND,
+    # FRONTEND_DIR, SHC_DATA_DIR and PYTHONPATH are INHERITED on purpose:
+    # re-stating them here would make this file a second source of truth for
+    # values the image owns, and the two would drift silently. SHC_DATA_DIR in
+    # particular is coupled to the /app/data mount below - backend/core/config.py
+    # redirects DATABASE_URL only while it is still the default - so the mount
+    # target is pinned here (AC-13) and nothing under /app is overlaid.
+    environment:
+      # `${VAR:?message}` rather than `${VAR}`: an empty interpolation would let
+      # the container boot and report itself healthy while
+      # POST /api/v1/auth/token answered SHARED_TOKEN_NOT_CONFIGURED to every
+      # login (Settings.SHARED_TOKEN is Optional[str] = None,
+      # backend/core/config.py:305; issue #56). `:?` also fires on an EMPTY
+      # value, so `SHARED_TOKEN=` copied out of .env.example is caught too.
+      # `${VAR:-fallback}` would mean shipping a default token. No.
+      #
+      # Not `env_file: [.env]`, for three independent reasons: a fresh clone has
+      # no .env, so env_file would fail a purely static `docker compose config`
+      # with a filesystem error before the operator did anything wrong; the
+      # application could not read it in any case (pydantic's _REPO_ROOT is /app
+      # inside the image, so it looks for /app/.env, which .dockerignore:51-52
+      # excludes from the build context and the Dockerfile never COPYs); and
+      # build args resolve from ${...} interpolation, not from env_file:, so one
+      # mechanism now serves both.
+      #
+      # Compose reads <repo-root>/.env for `${...}` automatically, with no
+      # env_file: key at all. `.env` is gitignored, so the token is never
+      # committed, and .dockerignore:51-52 keeps it out of the build context too.
+      SHARED_TOKEN: "${SHARED_TOKEN:?set SHARED_TOKEN in the repository-root .env - copy .env.example to .env and fill it in}"
+
+      # The CONTAINER path, a literal, and deliberately not the value the
+      # operator typed. The host folder is consumed as the bind mount SOURCE
+      # below; this is where it lands inside the container, which is also what
+      # the image already defaults to (backend/core/config.py:308) and what
+      # docker/Dockerfile leaves unset. Two different directories behind one
+      # variable name - the part worth saying out loud.
+      SYNCTHING_ROOT: "/tmp/syncthing"
+
+      # This is the ONE place compose deliberately disagrees with the image.
+      # docker/Dockerfile:128 bakes DB_POOL=null, and the rationale for null is
+      # recorded at backend/core/config.py:327-330 - "null opens a fresh
+      # connection per session, which the test suite uses so that connections
+      # are never shared between event loops" - and applied at
+      # backend/core/database.py:104-108, where the test session asks for
+      # NullPool (backend/tests/conftest.py:181 sets it for itself).
+      #
+      # That justification does not transfer to this container. The image runs
+      # exactly one uvicorn process (docker/Dockerfile:139), so there is one
+      # event loop and no second loop for NullPool to protect against. And
+      # pool_pre_ping (backend/core/database.py:103) is a no-op under NullPool -
+      # there is no pool to pre-ping - so stale-connection detection is silently
+      # switched off, while every session opens and closes its own SQLite
+      # connection on the API's hottest path.
+      #
+      # `pooled` is Settings.DB_POOL's own default (backend/core/config.py:330).
+      # Fixing the Dockerfile rather than overriding here would be the better
+      # change, but it is issue #123's file and out of scope for #129; until it
+      # is filed, this override is the fix. So if you `docker inspect` and find
+      # DB_POOL=null in the image config, this line is why the running container
+      # says pooled - the file is not wrong.
+      DB_POOL: "pooled"
+
+    volumes:
+      # Three mounts, and the count is the point. /app/data and /app/.shc are
+      # the image's own VOLUME (docker/Dockerfile:122) and hold the only state a
+      # container replace would destroy: the SQLite database and the JWT signing
+      # key. Nothing under /app/frontend, /app/backend, /app/shared, /app/agent
+      # or /app/cli is mounted - those are image content, and a bind mount over
+      # any of them would make the container's behaviour depend on the host
+      # checkout, the class of bug this repository has been bitten by twice
+      # (issues #34 and #58, both CWD-relative path resolution).
+      - shc-data:/app/data
+      - shc-state:/app/.shc
+
+      # REQUIRED, and a bind mount rather than a volume because the whole point
+      # of SYNCTHING_ROOT is that the backend and every agent see the SAME
+      # files. A default is refused: with nothing mounted the backend creates
+      # /tmp/syncthing/{jobs,nodes} itself on startup
+      # (backend/services/syncthing_service.py:192-193), then reports
+      # syncthing_status "available" because the directory it just created
+      # exists - empty, and invisible to every agent in the fleet. The operator
+      # sees a healthy cluster, submits a job, and no node ever claims it. That
+      # is the silent second-cluster failure issue #104 exists to close, reached
+      # here by the most natural-looking mistake there is. So the operator is
+      # told at `docker compose config` time, not at first job submission.
+      #
+      # Long syntax rather than the short "- ${SYNCTHING_ROOT:?...}:/tmp/syncthing":
+      # it states type: bind in the resolved config instead of letting compose
+      # infer it from the string, and a Windows source such as D:\syncthing-shared
+      # is not ambiguous to a parser.
+      #
+      # The same ${VAR:?message} form as SHARED_TOKEN, and the same message, so
+      # the failure reads identically no matter which of the two references is
+      # interpolated first.
+      - type: bind
+        source: "${SYNCTHING_ROOT:?set SYNCTHING_ROOT to your Syncthing folder - AGENTS.md says it is required on every node - and put it in the repository-root .env (copy .env.example to .env)}"
+        target: /tmp/syncthing
+
+    # Survives a host reboot, which is the case that matters for a home cluster
+    # that has to come back by itself after power is restored. `unless-stopped`
+    # rather than `always` in exactly one respect: after a deliberate `docker
+    # compose stop`, `always` starts the container again at the next daemon
+    # start, and an operator who stopped the cluster to debug should find it
+    # still stopped. `on-failure` is refused - "came back wrong" is better as a
+    # visible crash loop than a policy that hides it.
+    #
+    # This is NOT a health policy. Docker restarts on exit, not on ill health,
+    # and compose does not restart an unhealthy container either: an app that
+    # fails the inherited HEALTHCHECK (docker/Dockerfile:136-137) but keeps
+    # running simply shows "(unhealthy)" in `docker compose ps`. Observe health
+    # there; recover with `docker compose restart backend`. Autohealing would
+    # need the out-of-band consumer-labelled-service restart key, which is an
+    # ecosystem behaviour for a file meant to be read once.
+    #
+    # Nothing else is asserted about the service. No healthcheck block - the
+    # image's own is inherited, and re-stating it would duplicate a value the
+    # image owns and let the two drift. No depends_on - there is one service, so
+    # the key is either invalid or a self-edge. No container_name - compose
+    # already namespaces by project, and pinning it blocks `up --scale`. No
+    # user - the Dockerfile has no USER, so the container is root and files it
+    # writes into shc-data are root-owned on a Linux host; pinning ${UID}:${GID}
+    # breaks on Docker Desktop and on Windows. Known, documented, not hidden.
+    restart: unless-stopped
+
+# Named volumes, with the names PINNED.
+#
+# `name:` is explicit on purpose. Without it compose prefixes the project name,
+# which is derived from the CHECKOUT DIRECTORY - so the same repository is
+# scientific-home-cluster_shc-data on this machine and work_shc-data on a laptop.
+# Three concrete costs: `docker volume ls` stops answering "do I still have the
+# old database?"; the `docker run -v shc-data:/app/data` example in
+# docker/README.md stops sharing state with `docker compose up`, making the two
+# documented paths two different clusters; and renaming the checkout orphans the
+# data.
+#
+# Not `external: true`: compose would not create them and would not remove them
+# on `docker compose down -v` - a real safety property, but silent until a fresh
+# operator's first run, which then fails with "external volume shc-data not
+# found", a second hard failure with no operator-authored message - and
+# `docker compose up` would stop being self-contained for no benefit. The data
+# is recoverable either way, so prefer the discoverable form and DOCUMENT the
+# consequence below rather than hide it.
+#
+# CONSEQUENCE, stated rather than hidden: `docker compose down -v` DELETES BOTH.
+# Losing shc-data loses the cluster. Losing shc-state invalidates every JWT this
+# cluster has ever issued, because the key that minted them is gone (README.md
+# "Where is the signing key?"). Plain `docker compose down` keeps both, and
+# `docker compose up -d` recreates containers without touching either.
+volumes:
+  shc-data:
+    name: shc-data
+  shc-state:
+    name: shc-state
