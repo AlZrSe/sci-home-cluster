@@ -12,17 +12,32 @@
 .github
 
 # Python
-venv/
-.venv-main-check/
-test_venv/
-test_venv2/
-venv_test/
-__pycache__/
-*.py[cod]
-.mypy_cache/
-.pytest_cache/
-.ruff_cache/
-*.egg-info/
+#
+# The `**/` prefix on every rule below is load-bearing, and it was missing.
+# Docker matches these patterns against each PATH COMPONENT, so a bare
+# `__pycache__/` matches only `<root>/__pycache__` and NOT
+# `backend/__pycache__`, `agent/tests/__pycache__` or
+# `backend/alembic/versions/__pycache__`. This file already relied on that
+# rule without stating it - it listed `node_modules/` AND
+# `frontend/node_modules/` separately, which would be redundant if the bare
+# pattern reached into subdirectories. The caches did not, so they shipped:
+# `backend/.mypy_cache` alone was 48 MB of the build context, and on Windows a
+# live mypy holding one of those files made `COPY backend/` fail with an
+# I/O error that read like a Docker bug.
+#
+# `**/` fixes it at any depth, so the per-environment venv names below are no
+# longer an enumeration that has to be kept in step with whatever the
+# developer happens to have lying around.
+**/venv/
+**/.venv/
+**/.venv-*/
+**/env/
+**/__pycache__/
+**/*.py[cod]
+**/.mypy_cache/
+**/.pytest_cache/
+**/.ruff_cache/
+**/*.egg-info/
 .coverage
 
 # Node / frontend build output.
@@ -32,8 +47,12 @@ __pycache__/
 # submodule's SOURCE is needed by the frontend stage, and only its build output
 # is not. Getting that backwards is the difference between a working build and a
 # frontend stage that copies nothing at all.
-node_modules/
-frontend/node_modules/
+#
+# Same `**/` rule as the Python block: a bare `node_modules/` reaches only the
+# repository root, which is why the nested one has always needed naming
+# separately. `**/node_modules/` covers both, and any other package root that
+# turns up, in one entry instead of an enumeration to maintain.
+**/node_modules/
 frontend/.output/
 frontend/.nitro/
 frontend/.tanstack/
@@ -59,11 +78,29 @@ frontend/.env.*
 # data, not source: shipping them would put a database and a JWT signing key
 # into a published image, and a committed signing key has to be rotated on sight
 # (issue #56).
-data/
-.shc/
-*.db
-*.db-shm
-*.db-wal
+#
+# `**/` again. These three rules looked correct and did nothing, because they
+# only ever matched the repository ROOT - and the databases they were written to
+# keep are not at the root:
+#
+#     backend/scientific_home_cluster.db          139 KB, shipped in shc:latest
+#     backend/scientific_home_cluster.db-shm       32 KB, live shared-memory index
+#     backend/scientific_home_cluster.db-wal            0 KB, live write-ahead log
+#     backend/tests/unit/scientific_home_cluster.db
+#
+# All four were copied into the image by `COPY backend/ ./backend/` and were
+# readable by anyone who pulled it. The `-shm` and `-wal` companions are the
+# give-away: those files exist only beside a database that was OPEN at build
+# time, so a developer's live cluster state - nodes, jobs and their commands -
+# was travelling inside the published image. Anyone who can `docker pull` can
+# read it, which is the same exposure issue #56 recorded for signing keys.
+**/data/
+**/.shc/
+**/*.db
+**/*.db-shm
+**/*.db-wal
+**/*.sqlite
+**/*.sqlite3
 
 # Stray local artefacts that are in the working tree but not part of the
 # distributed packages (setuptools includes only backend*, shared*, agent*,
