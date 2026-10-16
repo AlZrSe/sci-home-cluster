@@ -22,6 +22,12 @@ logger = logging.getLogger(__name__)
 # location, so it points at the tree the developer is editing.
 _REPO_ROOT: Final[Path] = Path(__file__).resolve().parents[2]
 
+# Default directory for the SQLite database file. Can be overridden via
+# SHC_DATA_DIR environment variable (Settings field below) to point at a
+# host-mounted volume at any path. The default mirrors the historical
+# location under the repo root so local development keeps working unchanged.
+DEFAULT_DATA_DIR: Final[Path] = _REPO_ROOT / "data"
+
 # The one canonical database: an absolute path under the repo root, identical
 # from any working directory. Kept a plain str (never a URL object) because
 # database.py, alembic/env.py and alembic.ini all match on the literal
@@ -29,9 +35,7 @@ _REPO_ROOT: Final[Path] = Path(__file__).resolve().parents[2]
 #
 # Path.as_posix() is what makes this correct on Windows, where the SQLAlchemy
 # form is `sqlite:///C:/.../data/scientific_home_cluster.db`.
-CANONICAL_DATABASE_PATH: Final[Path] = (
-    _REPO_ROOT / "data" / "scientific_home_cluster.db"
-)
+CANONICAL_DATABASE_PATH: Final[Path] = DEFAULT_DATA_DIR / "scientific_home_cluster.db"
 DEFAULT_DATABASE_URL: Final[str] = "sqlite:///" + CANONICAL_DATABASE_PATH.as_posix()
 
 # Where the JWT signing key is persisted when SECRET_KEY is not configured.
@@ -306,6 +310,11 @@ class Settings(BaseSettings):
     # Local server state directory (holds JWT signing key)
     SHC_STATE_DIR: Optional[str] = None
 
+    # Data directory for SQLite database. Override to point at a host-mounted
+    # volume. Defaults to DEFAULT_DATA_DIR (repo_root/data). In the container
+    # image this should point at the mounted volume path.
+    SHC_DATA_DIR: Optional[str] = None
+
     # Database configuration.
     #
     # The default is an absolute path under the repo root, NOT a relative one:
@@ -381,6 +390,20 @@ class Settings(BaseSettings):
             return v
         raise ValueError(v)
 
+    # Static frontend serving.
+    #
+    # Off by default. The backend is an API server; nothing about it should grow a
+    # dependency on a frontend build being present. It is switched on in the
+    # container image (docker/Dockerfile sets SERVE_FRONTEND=true), where the same
+    # process serves both halves on one origin so the browser needs no CORS.
+    #
+    # FRONTEND_DIR points at the *client output* of a TanStack Start SPA build -
+    # .output/public, which holds the hashed asset bundles plus the prerendered
+    # `_shell.html`. Not at .output, which also holds the nitro server bundle this
+    # process never runs.
+    SERVE_FRONTEND: bool = False
+    FRONTEND_DIR: str = str(_REPO_ROOT / "frontend" / ".output" / "public")
+
     # Lovable preview CORS opt-in
     ENABLE_LOVABLE_PREVIEW_CORS: bool = False
 
@@ -441,6 +464,16 @@ class Settings(BaseSettings):
         # environment variable; fill it in from the persisted key.
         if not self.SECRET_KEY:
             self.SECRET_KEY = _resolve_secret_key(self.SHC_STATE_DIR)
+
+        # Resolve DATABASE_URL from SHC_DATA_DIR if provided and not explicitly
+        # set to a non-default value. This allows mounting the database at any
+        # host path via -v /host/path:/mnt/data -e SHC_DATA_DIR=/mnt/data
+        if self.SHC_DATA_DIR and self.DATABASE_URL == DEFAULT_DATABASE_URL:
+            from pathlib import Path
+
+            data_dir = Path(self.SHC_DATA_DIR)
+            db_path = data_dir / "scientific_home_cluster.db"
+            self.DATABASE_URL = "sqlite:///" + db_path.as_posix()
 
 
 settings = Settings()

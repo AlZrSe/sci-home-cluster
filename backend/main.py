@@ -40,6 +40,7 @@ from backend.api.v1 import auth, nodes, syncthing, jobs  # noqa: E402
 from shared.schemas.error_response import ErrorResponse  # noqa: E402
 from backend.store import get_store  # noqa: E402
 from backend.services.syncthing_service import SyncthingService  # noqa: E402
+from backend.core.frontend import register_frontend, serving_frontend  # noqa: E402
 
 # basicConfig above already put a handler on root, so this sets the level only:
 # it is a setLevel, not a second configuration, and it is where the operator's
@@ -285,9 +286,15 @@ app.include_router(
 )
 
 
-@app.get("/")
-async def root():
-    return {"message": "Welcome to Scientific Home Cluster API"}
+# Registered only when the SPA is not being served. Both cannot answer for "/",
+# and FastAPI resolves in registration order, so the API's own root has to stand
+# aside: in a container the page at "/" is the app, not this JSON. See
+# backend/core/frontend.py.
+if not serving_frontend():
+
+    @app.get("/")
+    async def root():
+        return {"message": "Welcome to Scientific Home Cluster API"}
 
 
 @app.get(f"{settings.API_V1_STR}/health")
@@ -359,3 +366,10 @@ async def health_check():
             "url": _database_display_name(settings.DATABASE_URL),
         },
     }
+
+
+# Last, deliberately. It claims "/{full_path:path}", so every route above -
+# the API routers, /docs, /redoc, /api/v1/health and the JSON root - has to be
+# registered first or this catch-all would take them instead. A no-op unless
+# SERVE_FRONTEND is on.
+register_frontend(app)

@@ -1,0 +1,79 @@
+# Docker build context exclusions.
+#
+# This file is at the repository root because the build context is the
+# repository root:
+#
+#     docker build -f docker/Dockerfile -t shc:latest .
+#
+# Without it the context - node_modules, virtualenvs, caches and build output -
+# is copied into the daemon before a single instruction runs.
+
+.git
+.github
+
+# Python
+venv/
+.venv-main-check/
+test_venv/
+test_venv2/
+venv_test/
+__pycache__/
+*.py[cod]
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+.coverage
+
+# Node / frontend build output.
+#
+# frontend/node_modules and frontend/.output live inside the submodule directory
+# and are named here rather than with a blanket `frontend/` rule: the
+# submodule's SOURCE is needed by the frontend stage, and only its build output
+# is not. Getting that backwards is the difference between a working build and a
+# frontend stage that copies nothing at all.
+node_modules/
+frontend/node_modules/
+frontend/.output/
+frontend/.nitro/
+frontend/.tanstack/
+frontend/.wrangler/
+frontend/.lovable/
+frontend/test-results/
+frontend/playwright-report/
+
+# Local configuration and secrets.
+#
+# backend/core/config.py loads env_file=<repo root>/.env, so a developer's local
+# .env - which commonly holds SHARED_TOKEN and a SECRET_KEY - is readable here.
+# Baking it into an image would publish the operator's credentials to anyone who
+# pulls it. Variables are passed explicitly as --build-arg / -e instead.
+.env
+.env.*
+!.env.example
+frontend/.env
+frontend/.env.*
+!frontend/.env.example
+
+# Runtime state that must never be baked into an image. These are the operator's
+# data, not source: shipping them would put a database and a JWT signing key
+# into a published image, and a committed signing key has to be rotated on sight
+# (issue #56).
+data/
+.shc/
+*.db
+*.db-shm
+*.db-wal
+
+# Stray local artefacts that are in the working tree but not part of the
+# distributed packages (setuptools includes only backend*, shared*, agent*,
+# cli*; stubs/ is mypy-only).
+~/
+src/
+stubs/
+docs/
+*.md
+acceptance_comment.md
+close_comment.md
+pr_body.md
+mypy_output.txt
