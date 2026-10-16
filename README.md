@@ -13,7 +13,7 @@ A distributed platform for running scientific long-running applications on vario
 | Syncthing Sync Service | ✅ **Done** | Issue [#4](https://github.com/AlZrSe/sci-home-cluster/issues/4) |
 | Worker Agent | ✅ **Skeleton Delivered** | Issue [#93](https://github.com/AlZrSe/sci-home-cluster/issues/93) - config, logging, supervised loop, graceful shutdown. Job execution is #95-#98 |
 | CLI | ✅ **Stub Implemented** | Phase 2 - commands scaffolded, needs API integration |
-| Docker/Production | 📋 Planned | Phase 3 |
+| Docker/Production | ✅ **Done** | Issues [#123](https://github.com/AlZrSe/sci-home-cluster/issues/123) (image + static serving), [#129](https://github.com/AlZrSe/sci-home-cluster/issues/129) (compose) - see [Docker Compose](#docker-compose-single-container-one-port) |
 
 **Current Focus**: Phase 1 - Backend Foundation (FastAPI + SQLite + Syncthing sync) - **COMPLETE**
 
@@ -62,7 +62,6 @@ This platform uses a client-server architecture with:
 **Planned (Phase 2+):**
 - Worker Agent job execution logic
 - CLI full API integration
-- Docker/Production deployment
 - Windows and Linux support (currently Linux-focused)
 
 ---
@@ -196,6 +195,86 @@ make check
 ```
 
 > **Note**: The Makefile currently provides `db-upgrade` and `db-downgrade` targets. Creating new migrations requires running `cd backend && alembic revision --autogenerate -m "message"` directly.
+
+### Docker Compose (single container, one port)
+
+The application is also a **single deployable unit**: one image that serves the SPA and the API on
+one origin and one port, so there is no CORS to configure and nothing to reverse-proxy in
+front of it. `docker-compose.yaml` sits at the repository root because the build context is the
+root.
+
+```bash
+# 1. The frontend is a git submodule; a plain clone leaves it empty and the
+#    build fails deliberately rather than shipping an image whose UI 404s.
+git clone --recurse-submodules https://github.com/AlZrSe/sci-home-cluster.git
+cd scientific-home-cluster
+
+# 2. Two variables are required. Compose reads them from a repository-root .env
+#    automatically, and STOPS with exit 1 and a one-line message if either is
+#    missing or empty - before it creates an image, a volume or a container.
+cp .env.example .env      # Windows PowerShell: Copy-Item .env.example .env
+```
+
+Then edit `.env`. **Both of these must be set, and both must be non-empty:**
+
+```bash
+# SHARED_TOKEN - the bearer token. Not generated for you: unset, the API
+# answers SHARED_TOKEN_NOT_CONFIGURED to every login. Generate a real one:
+openssl rand -hex 32
+
+# SYNCTHING_ROOT - your Syncthing folder, on the HOST. This is the folder the
+# backend and every agent share; compose bind-mounts it into the container.
+# It is required for a reason worth knowing: unmounted, the backend creates
+# an empty /tmp/syncthing itself, reports the cluster as available because the
+# directory it just made exists, and no node ever claims a submitted job.
+```
+
+```bash
+# 3. Start it
+docker compose up -d
+docker compose ps          # "(healthy)" comes from the image's own HEALTHCHECK
+```
+
+Then open <http://localhost:8000>. The SPA is served from `/` and every client-side route, the
+API is at `/api/v1`, the docs at `/docs`.
+
+#### Getting a token to sign in with
+
+`SHARED_TOKEN` is not what you send to the API - it is exchanged for a short-lived JWT:
+
+```bash
+curl -X POST http://localhost:8000/api/v1/auth/token \
+  -H "Content-Type: application/json" \
+  -d '{"shared_token": "the value you set in .env"}'
+```
+
+Opened as `http://localhost:8000`, the dashboard falls back to a localhost bypass and you may not
+need this at all - see [`SHARED_TOKEN`](#environment-variables). Reaching it from another machine
+(`http://192.168.x.x:8000`) is **outside** that bypass, so mint a real token there.
+
+#### Things that bite
+
+- **From another machine, the default API URL points at yourself.** `VITE_API_URL` is a
+  *build-time* constant baked into the JS bundle and defaults to `http://localhost:8000/api/v1`.
+  A browser on a different host will report the backend unreachable until you either rebuild with
+  an externally reachable URL, or set it once on the app's settings page. It must stay absolute -
+  the job-log WebSocket is derived with `base().replace(/^http/, "ws")`, and a relative base throws
+  in a browser.
+- **The published port is `8000:8000` on purpose**, and is not a variable, because it cannot be
+  derived from `VITE_API_URL`. Changing one without the other is the same trap.
+- **`docker compose down -v` deletes both volumes.** `shc-data` holds the database and losing it
+  loses the cluster; `shc-state` holds the JWT signing key and losing it invalidates every token
+  ever issued. Plain `docker compose down` keeps both.
+- **The worker agent is deliberately not a service here.** It runs on each compute node, needs that
+  node's GPU and its own Syncthing folder, and `agent/README.md` does not exist yet
+  ([#104](https://github.com/AlZrSe/sci-home-cluster/issues/104)). See
+  [Worker Agent](#worker-agent-on-each-compute-node).
+- `run-agent` *is* on `PATH` inside the image, so `docker compose exec backend run-agent` will
+  actually run. Don't - it would run the one compute node inside the API container, behind the same
+  SQLite volume, executing arbitrary job commands.
+
+Full reference, including every environment variable the image understands:
+[`docker/README.md`](docker/README.md).
 
 ### Production Build
 ```bash
@@ -727,7 +806,8 @@ scientific-home-cluster/
 ├── agent/                 # Worker Node Agent (stub)
 ├── cli/                   # User CLI (Typer) (stub)
 ├── backend/tests/         # Unit & integration tests
-├── docker/                # Docker configs (planned)
+├── docker/                # Dockerfile + container reference (image built from the root context)
+├── docker-compose.yaml    # Single-container deployment (see Docker Compose above)
 ├── docs/                  # Architecture specs (API, tests, routers, etc.)
 ├── stubs/                 # Type stubs
 ├── openapi.yaml           # OpenAPI 3.0 specification
