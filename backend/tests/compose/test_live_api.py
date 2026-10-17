@@ -58,6 +58,12 @@ def test_container_reaches_healthy(compose_stack: ComposeStack) -> None:
     the wrong reason - a container that started, answered once, was then killed
     and came back would report `healthy` with a non-zero restart count, and a
     test that only watched the status string would call that a pass.
+
+    `RestartCount` is read through `ComposeStack.restart_count()`, which
+    templates `{{.RestartCount}}` in its own right. Reading it out of
+    `{{json .State}}` - as this test originally did - yields 0 unconditionally,
+    because the field is a SIBLING of `State`, so the control passed whatever the
+    container had done.
     """
     cid = compose_stack.container_id()
     state = compose_stack.inspect("{{json .State}}", cid)
@@ -66,11 +72,12 @@ def test_container_reaches_healthy(compose_stack: ComposeStack) -> None:
         "HEALTHCHECK (docker/Dockerfile:136-137) and compose inherits it; a "
         "missing status means the image and this suite disagree."
     )
-    assert int(state.get("RestartCount", 0)) == 0, (
-        f"RestartCount is {state['RestartCount']} before the health poll. The "
-        "container restarted, so a later `healthy` could be a restart loop "
-        "settling rather than a healthy start. MUST M-5.3 is the scenario that "
-        "deliberately causes a restart."
+    restarts = compose_stack.restart_count(cid)
+    assert restarts == 0, (
+        f"RestartCount is {restarts} before the health poll. The container "
+        "restarted, so a later `healthy` could be a restart loop settling rather "
+        "than a healthy start. MUST M-5.3 is the scenario that deliberately "
+        "causes a restart."
     )
 
     with ClusterClient(compose_stack.port) as instance:

@@ -24,11 +24,17 @@ pinned as a re-checkable assertion so the reason is recorded rather than
 asserted in prose.
 """
 
+import json
+import sys
 import time
+import uuid
+from typing import Optional
 
 import pytest
 
 from backend.tests.compose.conftest import (
+    COMPOSE_FILE,
+    COMPOSE_INVOCATIONS,
     COMPOSE_PYTESTMARK,
     HEALTH_TIMEOUT_S,
     IMAGE_TAG,
@@ -36,12 +42,31 @@ from backend.tests.compose.conftest import (
     ClusterClient,
     ComposeStack,
     _mint_jwt,
+    audit_destructive_invocations,
     run_compose,
     submit_job,
     volume_exists,
 )
 
 pytestmark = COMPOSE_PYTESTMARK
+
+
+def _probe(name: str) -> tuple[str, int, Optional[str]]:
+    """(status, restart_count, health) for a container addressed by NAME."""
+    status = run_compose(
+        ["docker", "inspect", name, "--format", "{{.State.Status}}"], check=False
+    ).stdout.strip()
+    health = run_compose(
+        [
+            "docker",
+            "inspect",
+            name,
+            "--format",
+            "{{if .State.Health}}{{.State.Health.Status}}{{end}}",
+        ],
+        check=False,
+    ).stdout.strip()
+    return status, _restart_count(name), health or None
 
 
 def _restart_count(name: str) -> int:
@@ -51,8 +76,8 @@ def _restart_count(name: str) -> int:
     NOT read out of `.State`: `RestartCount` is a SIBLING of `State` in
     `docker inspect` output, not a member of it, so a `{{json .State}}` template
     silently yields 0 forever. That mistake cost a 120 s debugging detour during
-    development and would have made this test fail while pointing at the restart
-    policy rather than at the template.
+    development, and - worse, and only found in review - it made three control
+    assertions in this suite unable to fail.
     """
     result = run_compose(
         ["docker", "inspect", name, "--format", "{{.RestartCount}}"], check=False
@@ -245,17 +270,41 @@ def test_declared_restart_policy_recovers_an_unexpected_death(
     live_stack: ComposeStack,
 ) -> None:
     """
-    M-5.3 (the property, at the mechanism that can actually observe it) - the
-    restart policy `docker-compose.yaml` DECLARES recovers a container whose
-    process dies unexpectedly.
+    M-5.3 / AC-22 (the property, at the mechanism that can actually observe it) -
+    a container running the real image under the restart policy
+    `docker-compose.yaml` DECLARES reaches `(healthy)`, suffers an unexpected
+    process death, and then reaches `(healthy)` AGAIN with `.RestartCount >= 1`.
 
     Protects `docker-compose.yaml:276-282`: "Survives a host reboot, which is the
     case that matters for a home cluster that has to come back by itself after
     power is restored." A power cut is, from Docker's point of view, exactly this
     case - the process stops, nothing asked it to.
 
+    **Both halves of AC-22 are asserted, not one.** The earlier version of this
+    test used a container running `sh -c 'sleep 12; exit 3'`, which proved the
+    restart policy fires and nothing else: that container never became healthy,
+    so `.RestartCount >= 1` was delivered but "reaches healthy again" was not.
+    Now the rogue container runs the image's own application, so the full
+    operator-visible property - was serving, died, is serving again - is the thing
+    under test. Measured on Docker Desktop 29.8.2: healthy at ~10 s, killed at
+    25 s, healthy again at ~35 s with `RestartCount == 1`.
+
+    **Control assertions, both real:**
+      * healthy BEFORE the death, so "healthy again" cannot be satisfied by a
+        container that was never serving;
+      * the recovery wait requires `RestartCount >= 1` **and** `healthy` together,
+        so the assertion cannot be satisfied by the FIRST healthy reading.
+
     The policy value is READ from the stack's resolved config, not hardcoded, so
     this test tracks the file rather than restating it.
+
+    **Why the death has to come from inside.** PID 1 of a container ignores
+    signals sent from within its own PID namespace, so `kill -9 1` from `exec`
+    is a no-op - measured. The app therefore runs as a BACKGROUND job under `sh`
+    (which is PID 1) and is killed from there: an unexpected death of the
+    application, with PID 1 exiting non-zero behind it. That is not a manual stop
+    - the daemon was never asked to stop anything, which is precisely the
+    distinction `docker kill` fails (see the sibling test).
     """
     declared = live_stack.resolved_config()["services"]["backend"]["restart"]
     assert declared == "unless-stopped", (
@@ -263,9 +312,9 @@ def test_declared_restart_policy_recovers_an_unexpected_death(
         "policy the file names (docker-compose.yaml:276-282)"
     )
 
-    # One-off, outside compose, so a restart loop cannot disturb the shared
-    # stack (D3). Its PID 1 exits on its own - nothing asks it to stop - which is
-    # the condition the restart policy exists for.
+    # One-off, outside compose, so a restart loop cannot disturb the shared stack
+    # (D3). PID 1 is `sh`; the app is a background job it kills after 25 s and
+    # then exits 137 - an unexpected failure, not a stop.
     name = f"{live_stack.project_name}-rogue"
     run_compose(
         [
@@ -279,27 +328,52 @@ def test_declared_restart_policy_recovers_an_unexpected_death(
             IMAGE_TAG,
             "sh",
             "-c",
-            "sleep 12; exit 3",
+            "uvicorn backend.main:app --host 0.0.0.0 --port 8000 & "
+            "sleep 25; kill -9 $!; exit 137",
         ]
     )
     try:
-        # Restart policies only engage after a container has been up for ten
-        # seconds, so the process has to outlive that before it exits.
+        # CONTROL 1: it really was serving, so "healthy again" means something.
+        healthy_before = _wait_for(name, lambda s, r, h: h == "healthy", 90)
+        assert healthy_before, (
+            f"{name} never became healthy before the injected death, so a "
+            "subsequent `healthy` would prove nothing. The image's own "
+            "HEALTHCHECK is what decides this (docker/Dockerfile:136-137)."
+        )
+        # CONTROL 1b: and that first healthy reading has RestartCount 0, so the
+        # recovery predicate below (>= 1) provably cannot be satisfied by it.
+        # Without this the "again" in "healthy again" would be unchecked.
+        _status, restarts_at_first_healthy, _health = _probe(name)
+        assert restarts_at_first_healthy == 0, (
+            f"the container reported healthy at RestartCount="
+            f"{restarts_at_first_healthy}, so the recovery wait below could be "
+            "satisfied by this same reading and would prove nothing."
+        )
+
+        # The property: restarted AND healthy again. Both conditions at once, so
+        # the first healthy reading (RestartCount 0) cannot satisfy it.
         deadline = time.monotonic() + 120
+        recovered = False
         restart_count = 0
         while time.monotonic() < deadline:
-            restart_count = _restart_count(name)
-            if restart_count >= 1:
+            status, restart_count, health = _probe(name)
+            if restart_count >= 1 and health == "healthy":
+                recovered = True
                 break
             time.sleep(2.0)
 
-        assert restart_count >= 1, (
-            f"a container whose process exited on its own under "
-            f"`--restart {declared}` was never restarted (RestartCount="
-            f"{restart_count}). That is exactly the case "
-            "docker-compose.yaml:276-282 claims to cover - a host reboot, a "
-            "power cut, an OOM kill - and `on-failure` is refused precisely "
+        assert recovered, (
+            f"a container running the real image was healthy, then its "
+            f"application was killed unexpectedly, and it did not come back "
+            f"serving under `--restart {declared}` (RestartCount="
+            f"{restart_count}, last status={status!r}). That is exactly the "
+            "case docker-compose.yaml:276-282 claims to cover - a host reboot, "
+            "a power cut, an OOM kill - and `on-failure` is refused precisely "
             'because "came back wrong" is better as a visible crash loop.'
+        )
+        assert restart_count >= 1, (
+            "the container reported healthy without a restart, so it never came "
+            "back from the death at all."
         )
     finally:
         # `-v` and not just `-f`: `docker rm` leaves the container's ANONYMOUS
@@ -307,6 +381,16 @@ def test_declared_restart_policy_recovers_an_unexpected_death(
         # so omitting it leaks two 64-hex-named volumes per run - a suite whose
         # whole subject is containment should not trail orphans around.
         run_compose(["docker", "rm", "-f", "-v", name], check=False)
+
+
+def _wait_for(name: str, predicate, timeout: float, interval: float = 2.0) -> bool:
+    """Poll `_probe(name)` until `predicate` holds or the timeout expires."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if predicate(*_probe(name)):
+            return True
+        time.sleep(interval)
+    return False
 
 
 def test_docker_kill_is_treated_as_a_manual_stop(live_stack: ComposeStack) -> None:
@@ -324,13 +408,21 @@ def test_docker_kill_is_treated_as_a_manual_stop(live_stack: ComposeStack) -> No
     **Control assertion first:** `RestartCount == 0` before the kill. Without it
     "still 0 after the kill" would be vacuous - it is what a correct restart
     policy would ALSO show immediately after a kill, before it had acted.
+
+    **Both `RestartCount` reads go through `ComposeStack.restart_count()`**, which
+    templates `{{.RestartCount}}` in its own right. This test originally read
+    `state.get("RestartCount", 0)` out of `{{json .State}}`, where the field does
+    not exist - so BOTH assertions evaluated `0 == 0` and passed against any
+    container whatsoever, including one that had restarted seven times. A control
+    that cannot fail is the exact thing issue #134 exists to prevent.
     """
     stack = live_stack
     cid = stack.container_id()
-    before = stack.inspect("{{json .State}}", cid)
-    assert (
-        int(before.get("RestartCount", 0)) == 0
-    ), f"RestartCount is already {before['RestartCount']} before the kill"
+    restarts_before = stack.restart_count(cid)
+    assert restarts_before == 0, (
+        f"RestartCount is already {restarts_before} before the kill, so "
+        "'still zero afterwards' would prove nothing."
+    )
 
     killed = run_compose(["docker", "kill", cid])
     assert killed.returncode == 0, killed.describe()
@@ -348,9 +440,9 @@ def test_docker_kill_is_treated_as_a_manual_stop(live_stack: ComposeStack) -> No
         "sibling test's mechanism is the one that observes the policy. Re-measure "
         "before concluding the compose file changed."
     )
-    assert int(state.get("RestartCount", 0)) == 0, (
-        f"RestartCount is {state['RestartCount']} after `docker kill`. If a future "
-        "Docker honours the restart policy for an API-issued kill, this "
+    assert stack.restart_count(cid) == 0, (
+        f"RestartCount is {stack.restart_count(cid)} after `docker kill`. If a "
+        "future Docker honours the restart policy for an API-issued kill, this "
         "assertion goes red - which is the interesting direction, and the reason "
         "it is an assertion rather than a comment."
     )
@@ -532,3 +624,155 @@ def test_force_recreate_preserves_state(live_stack: ComposeStack) -> None:
         "rebuilt. Every JWT this cluster has ever issued would stop verifying "
         "(digests, not values)."
     )
+
+
+# ---------------------------------------------------------------------------
+# Negative controls for the controls (defects 2 and 5)
+#
+# Each of these exists because a control that CANNOT FAIL is worse than no
+# control, and because three such controls were found in review having been
+# shipped as if they worked.
+# ---------------------------------------------------------------------------
+
+
+def test_restart_count_is_not_readable_from_state(image_id: str) -> None:
+    """
+    DEFECT 2 REGRESSION TEST: proves the repaired `RestartCount` controls can
+    fail, and that the shape they replaced could not.
+
+    Three control assertions in this suite read
+    `state.get("RestartCount", 0)` out of `docker inspect --format
+    '{{json .State}}'`. `RestartCount` is a SIBLING of `State`, not a member, so
+    that expression is `0` forever - each of those controls evaluated `0 == 0` and
+    passed against any container whatsoever, including one that had restarted
+    seven times.
+
+    The proof is differential and needs a container that HAS restarted, so this
+    runs one: `--restart always` with a process that outlives the ten-second
+    restart-policy window and then exits. Once `RestartCount >= 1` the two reads
+    must DISAGREE - the real template reports the count, the `.State` template
+    reports 0 - which is exactly the gap that made the controls vacuous.
+
+    If this test ever passes with `RestartCount == 0`, it has proved nothing.
+    """
+    name = f"{uuid.uuid4().hex[:10]}-restartproof"
+    try:
+        run_compose(
+            [
+                "docker",
+                "run",
+                "-d",
+                "--restart",
+                "always",
+                "--name",
+                name,
+                IMAGE_TAG,
+                "sh",
+                "-c",
+                "sleep 12; exit 3",
+            ]
+        )
+        deadline = time.monotonic() + 90
+        real = 0
+        while time.monotonic() < deadline:
+            real = _restart_count(name)
+            if real >= 1:
+                break
+            time.sleep(2.0)
+
+        assert real >= 1, (
+            f"{name} never reached RestartCount >= 1 (last read {real}), so this "
+            "test has not reproduced the condition the vacuous controls were "
+            "evaluated under and proves nothing."
+        )
+
+        # The two templates disagree, on a container that has actually
+        # restarted. This single assertion is what makes the repaired controls
+        # trustworthy: `{{json .State}}` yields 0 where the truth is `real`.
+        from_state = json.loads(
+            run_compose(
+                ["docker", "inspect", name, "--format", "{{json .State}}"],
+                check=False,
+            ).stdout
+        )
+        assert "RestartCount" not in from_state, (
+            "`.State` now carries a RestartCount key; if Docker ever moves the "
+            "field, the repaired controls and this test should both be revisited."
+        )
+        assert (
+            int(from_state.get("RestartCount", 0)) == 0 != real
+        ), f"expected the `.State` read to report 0 while the real count is {real}"
+        assert (
+            _restart_count(name) == real >= 1
+        ), "the repaired read disagrees with itself"
+    finally:
+        run_compose(["docker", "rm", "-f", "-v", name], check=False)
+
+
+def test_destructive_invocations_audit_catches_a_planted_rogue() -> None:
+    """
+    DEFECT 5 REGRESSION TEST: proves the session-wide audit SEES a test body's
+    invocation, and that its rule is neither blind nor trigger-happy.
+
+    Two defects lived here. First, pytest imports this conftest twice (`conftest`
+    and `backend.tests.compose.conftest`) and the module-level registry was
+    therefore two lists: fixtures recorded into one, test bodies read the other,
+    and the teardown audit saw nothing - blind to exactly where a rogue `down -v`
+    would be written. The registry now lives in `sys.modules`, shared by both.
+
+    Second, the rule matched any argv containing `rm` and `-v`, which also matched
+    the suite's own legitimate `docker rm -f -v <rogue-container>` cleanup.
+
+    So this plants each shape into the SHARED registry - read back through the
+    dotted import path a test body would use, which is the identity that was
+    previously disconnected - and asserts the audit's verdict on each:
+
+      * a bare `docker compose down -v`          -> FLAGGED (the blast radius)
+      * the suite's own `docker rm -f -v <name>`  -> NOT flagged (anonymous
+        volumes of a named container; it cannot reach a pinned project volume)
+      * `down` without `-v`                      -> NOT flagged (keeps the data)
+      * `down -v` WITH both `-f` flags           -> NOT flagged (that is M-5.2)
+
+    The planted argv is removed afterwards, so the real session teardown audit
+    still sees a clean registry.
+    """
+    rogue = ["docker", "compose", "down", "-v"]
+    legitimate_cleanup = ["docker", "rm", "-f", "-v", "some-rogue-container"]
+    keeps_volumes = ["docker", "compose", "down"]
+    sanctioned = ["docker", "compose", "-f", str(COMPOSE_FILE), "-f", "x", "down", "-v"]
+
+    imported = COMPOSE_INVOCATIONS
+    assert sys.modules["conftest"].COMPOSE_INVOCATIONS is imported, (
+        "the conftest module and the dotted import are STILL two different "
+        "registry objects. The audit would be blind again - this assertion is "
+        "the regression guard for the double-import itself."
+    )
+
+    baseline = list(imported)
+    try:
+        imported[:] = baseline + [rogue]
+        assert audit_destructive_invocations(), (
+            "the audit did not flag a bare `docker compose down -v`. It is blind "
+            "to the exact invocation it exists to catch."
+        )
+
+        imported[:] = baseline + [legitimate_cleanup]
+        assert audit_destructive_invocations() == [], (
+            "the audit flagged the suite's own `docker rm -f -v <name>` cleanup. "
+            "A false positive that fires at teardown would make the suite "
+            "un-runnable."
+        )
+
+        imported[:] = baseline + [keeps_volumes]
+        assert audit_destructive_invocations() == [], (
+            "`docker compose down` without -v keeps the volumes and is not the "
+            "blast radius being guarded against."
+        )
+
+        imported[:] = baseline + [sanctioned]
+        assert audit_destructive_invocations() == [], (
+            "a `down -v` carrying both -f flags is MUST M-5.2, the one sanctioned "
+            "destructive verb in the suite."
+        )
+    finally:
+        imported[:] = baseline
