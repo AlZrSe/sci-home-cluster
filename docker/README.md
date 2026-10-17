@@ -360,7 +360,7 @@ skips with a message naming the missing prerequisite — it does not error.
 
 | Variable | Effect |
 | --- | --- |
-| unset | Every test under `backend/tests/compose/` is **SKIPPED**. `pytest` and `make test` are unaffected; collection costs ~0.06 s. |
+| unset | Every test under `backend/tests/compose/` is **SKIPPED**. `pytest` and `make test` are unaffected; collecting the 41 skipped tests costs ≈0.2 s (0.17–0.43 s across five measurements, the spread being collection noise). |
 | `SHC_COMPOSE_TESTS=1` | Runs the suite. |
 | `SHC_COMPOSE_ALLOW_DESTRUCTIVE=1` | Additionally permits `down -v` against the throwaway stack. Split from the flag above so the one genuinely destructive scenario needs a second, deliberate word. |
 | `SHC_COMPOSE_SENTINEL_BUILD=1` | Additionally builds a second image with a sentinel `VITE_API_URL` and asserts the build arg reached the bundle (SHOULD S-2). |
@@ -415,6 +415,58 @@ Two honest caveats, both recorded in the tests themselves:
 - The restart-policy test proves recovery from an unexpected process death. It
   cannot distinguish `unless-stopped` from `always`; only the static
   `restart == "unless-stopped"` assertion does that.
+
+### Declined SHOULD scenarios
+
+Issue #134's catalogue listed six SHOULD scenarios. Five are implemented (S-1 the
+host→container watcher, gated on a native Linux bind mount; S-2 the sentinel
+rebuild, behind `SHC_COMPOSE_SENTINEL_BUILD=1`; S-3 the image env and healthcheck;
+S-5 the immutable cache header; S-6 `--force-recreate`). The sixth is **declined**,
+and the reason is recorded here rather than only in a PR body, because a decline
+that lives in a closed review is a decline nobody can find next time.
+
+**S-4 — an explicit `SHARED_TOKEN` wins and is never persisted — is declined.**
+The contract it would test is `docker-compose.yaml:163-165` ("An explicit value
+always wins and is never persisted") and `docker/README.md:95-100`, and it is a
+real one: an operator setting `SHARED_TOKEN` in `.env` gets a cluster where the
+value is never written to disk and never logged.
+
+It is declined because of **cost against the containment this suite buys**. As
+specified it needs a *second* stack with different environment — a second image
+build, a second pair of volumes and a second published port — and the only
+genuinely destructive verb in the suite (`down -v`) would then have two targets
+instead of one, doubling the blast radius the rest of the harness exists to keep
+at exactly one.
+
+What the L1 layer already pins is the mechanism behind the contract:
+`docker-compose.yaml:173` is `${SHARED_TOKEN:-}`, which cannot carry a default
+token, and MUST M-1.10 asserts the resolved value is `""` under a scrubbed
+environment.
+
+**A real gap, stated rather than papered over.** The other half — *an explicitly
+configured value is never written to `/app/.shc/shared_token`* — is **not covered
+anywhere today**. `backend/tests/unit/` tests `SHARED_TOKEN` end-to-end through
+`AuthService` but never calls `_resolve_shared_token` (`config.py:283-338`), and
+this suite exercises only the *generated* path (M-3.7). An earlier draft of this
+note claimed in-process coverage; that was wrong, and grepping for
+`_resolve_shared_token` across `backend/tests/` finds only the reference in
+`test_live_api.py`'s docstring. So this is a known, deliberately-uncovered seam
+rather than a property someone else is holding.
+
+It is closable cheaply when someone wants it, and the cheap way is *not* a second
+stack: reuse this one. `down -v`, then `up -d` with `SHARED_TOKEN` injected into
+the environment, then assert the file is absent, no WARNING was logged, the
+explicit value authenticates and a generated one does not — then `down -v` again
+to restore. That is one extra `down -v` on the existing override stack and no
+second image, which is roughly what M-5.2 already costs. It was left out here
+because it is new coverage rather than a repair.
+
+The COULD scenarios (C-1 a planted database as a negative control, C-2 path
+traversal over HTTP, C-3 the job-log WebSocket, C-4 a recursive-clone build, C-5 a
+headless browser) were each assessed in the issue and none is worth writing: C-2
+is not deliverable through a normalising client, C-3 would add a dev dependency
+for something M-2.4 and S-2 already pin directly, C-4 and C-5 are out of
+proportion, and C-1's job is done by M-2.1's known-file self-check.
 
 ## Notes
 

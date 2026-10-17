@@ -159,7 +159,8 @@ it.** `backend/tests/compose/` runs the checked-in `docker-compose.yaml` against
 real Docker daemon — it builds the image, publishes a port, bind-mounts
 `./syncthing`, and issues `docker compose down -v`. Without `SHC_COMPOSE_TESTS=1`
 every test in it is **SKIPPED**, which is why `pytest` and `make test` are
-unaffected (collection costs ~0.06 s).
+unaffected (collecting the 41 skipped tests costs ≈0.2 s — 0.17–0.43 s across
+five measurements on Windows, the spread being collection noise).
 
 It creates and deletes volumes named `shc-e2e-*` and **never** `shc-data` or
 `shc-state`. That containment is structural, not conventional: both volumes in
