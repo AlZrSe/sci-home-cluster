@@ -33,6 +33,8 @@ from backend.tests.compose.conftest import (
     COMPOSE_FILE,
     COMPOSE_PYTESTMARK,
     DOCKERFILE,
+    DESTRUCTIVE_ENV,
+    EXECUTED_ARGVS,
     REPO_ROOT,
     ComposeRun,
     InterlockViolation,
@@ -40,6 +42,7 @@ from backend.tests.compose.conftest import (
     assert_override_renames_volumes,
     checked_in_run,
     compose_argv,
+    destructive_allowed,
     run_destructive_compose,
 )
 
@@ -676,18 +679,31 @@ def test_a_renaming_nothing_override_is_refused_before_the_verb_runs(
     tmp_path,
 ) -> None:
     """
-    End-to-end proof that `run_destructive_compose` refuses BEFORE executing the
-    verb, not merely that the pure helper can refuse.
+    DEFECT 4 ORDERING PROOF: `run_destructive_compose` refuses BEFORE the verb is
+    executed - not merely that the guard fires at all.
 
-    The preceding test drives `assert_override_renames_volumes` directly. This
-    drives the real entry point, which is where the ordering lives: the merge is
-    resolved and checked, and only then is the verb issued.
+    The preceding test drives `assert_override_renames_volumes` directly, so it
+    says nothing about WHERE `run_destructive_compose` calls it. This one drives
+    the real entry point.
 
-    **The witness verb is `config`, which is completely harmless** - a pure
-    parse-and-interpolate that creates and removes nothing. That is what makes
-    this test safe to run: if the guard were ever removed or reordered, the
-    consequence would be a wasted `docker compose config`, not a `down -v`
-    against a developer's cluster. A test that proved this by attempting the real
+    **A guard that runs after the verb has gone out is not a guard.** So the
+    assertion is not "an InterlockViolation was raised" - a witness verb that is
+    harmless and idempotent succeeds either way, and the exception still arrives
+    afterwards, which is exactly how the first version of this test passed with
+    the guard deliberately moved after `_execute_argv`.
+
+    Two things make it load-bearing instead:
+
+      * the witness verb is **`ps`**, which is read-only and - crucially -
+        *distinguishable from the internal `config` resolve* the guard itself
+        performs. So the log can be checked for the witness specifically rather
+        than for "did anything run", which would trip on the guard's own parse.
+      * the assertion reads the shared EXECUTION log, appended at the top of
+        `_execute_argv` before `subprocess.run` is reached. If the guard is ever
+        reordered after the call, the witness is in the log and this goes red.
+
+    `ps` is read-only, so even in the mutated world the worst outcome is a wasted
+    `docker compose ps`. A test that proved this by attempting the real
     destructive verb would be the hazard rather than the check.
     """
     override = tmp_path / "renames-nothing.yaml"
@@ -701,5 +717,58 @@ def test_a_renaming_nothing_override_is_refused_before_the_verb_runs(
         encoding="utf-8",
     )
 
+    witness = "ps"
+    assert (
+        witness not in EXECUTED_ARGVS[-1] if EXECUTED_ARGVS else True
+    ), "sanity: the previous exec log should not already end in the witness"
+
     with pytest.raises(InterlockViolation, match="does not rename"):
-        run_destructive_compose(override, "config", "--format", "json")
+        run_destructive_compose(override, witness, "--format", "json")
+
+    ran_witness = [argv for argv in EXECUTED_ARGVS if witness in argv]
+    assert ran_witness == [], (
+        "the interlock raised, but the witness verb had ALREADY been executed: "
+        f"{[' '.join(a) for a in ran_witness]}. The guard is after the call, so "
+        "it refused something already done. `config` inside the guard is "
+        "expected here and is not the witness - `ps` is."
+    )
+
+
+def test_a_renaming_override_would_pass_the_same_gate(tmp_path) -> None:
+    """
+    The negative control for the witness choice in the test above.
+
+    Without this, "the ordering test passes because nothing ran" and "it passes
+    because the guard fired first" are indistinguishable - and so is "the witness
+    verb is simply never reached at all".
+
+    This drives the same entry point through an override that DOES rename, so the
+    gate must let it through and the witness verb MUST then appear in the log. If
+    the witness could not run, the assertion in the ordering test would be
+    vacuously true.
+
+    `ps` is read-only, so this cannot destroy anything either.
+    """
+    override = tmp_path / "renames-both.yaml"
+    override.write_text(
+        "volumes:\n"
+        "  shc-data:\n"
+        "    name: shc-e2e-ordering-probe-data\n"
+        "  shc-state:\n"
+        "    name: shc-e2e-ordering-probe-state\n",
+        encoding="utf-8",
+    )
+    if not destructive_allowed():
+        pytest.skip(
+            f"{DESTRUCTIVE_ENV} is not 1, so `run_destructive_compose` skips "
+            "before reaching the witness verb and this control would prove "
+            "nothing. Re-run with it set."
+        )
+
+    before = len(EXECUTED_ARGVS)
+    run_destructive_compose(override, "ps", "--format", "json", check=False)
+    assert len(EXECUTED_ARGVS) > before, (
+        "the witness verb did not execute even for a valid override, so the "
+        "ordering test's 'nothing ran' assertion could not distinguish a "
+        "correctly-ordered guard from a broken harness."
+    )

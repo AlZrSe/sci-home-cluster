@@ -166,6 +166,10 @@ def _execute_argv(
 ) -> "ComposeRun":
     recorded = list(argv)
     COMPOSE_INVOCATIONS.append(recorded)
+    # Appended at the TOP of the call, not after subprocess.run returns: the log
+    # records that execution was ATTEMPTED, which is what an ordering assertion
+    # needs. A guard placed after this line has already lost the race.
+    EXECUTED_ARGVS.append(recorded)
     try:
         result = subprocess.run(
             recorded,
@@ -410,6 +414,7 @@ def _shared_state() -> Any:
     if module is None:
         module = ModuleType(_SHARED_NAMESPACE)
         module.com_invocations = []  # type: ignore[attr-defined]
+        module.executed_argvs = []  # type: ignore[attr-defined]
         sys.modules[_SHARED_NAMESPACE] = module
     return module
 
@@ -420,6 +425,19 @@ def _shared_state() -> Any:
 #: ordering guarantee: a single test could run before the lifecycle module that
 #: issues the `down -v`.
 COMPOSE_INVOCATIONS: list[list[str]] = _shared_state().com_invocations
+
+#: Every argv that was actually EXECUTED, appended by :func:`_execute_argv`.
+#:
+#: Deliberately distinct from COMPOSE_INVOCATIONS, which records argv *built*.
+#: The difference is what makes an ordering assertion possible: a guard that runs
+#: after `_execute_argv` has still populated this list, so "the verb never ran"
+#: becomes checkable rather than assumed. An earlier version of the interlock
+#: ordering test used `config` as its witness verb - harmless and idempotent, so
+#: it succeeded whether the guard came before or after the call, and the test
+#: could not detect the reordering at all.
+#:
+#: Also shared across both imports, for the same reason as the list above.
+EXECUTED_ARGVS: list[list[str]] = _shared_state().executed_argvs
 
 
 def compose_argv(override_path: Optional[Path], *args: str) -> list[str]:
@@ -569,21 +587,26 @@ def run_destructive_compose(
     ``down -v`` through it still resolves to ``shc-data`` / ``shc-state``. So the
     merged config is resolved and inspected before the verb runs. That costs one
     `docker compose config`, which is a pure parse: it creates and removes
-    nothing, and only two verbs in the whole suite are gated here.
+    nothing.
 
-    ``SHC_COMPOSE_ALLOW_DESTRUCTIVE=1`` is required as well, so MUST M-5.2 - the
-    only genuinely destructive scenario - costs a second, deliberate word (D2). It
-    is enforced HERE rather than in the test, so no caller can forget it.
+    **Both guards precede ``_execute_argv``, and that ordering is load-bearing** -
+    a guard that runs after the verb has already been issued is not a guard. It is
+    asserted, not assumed: see
+    ``test_compose_config.py::test_a_renaming_nothing_override_is_refused_before_the_verb_runs``,
+    which proves the verb was never executed by reading the shared execution log.
+
+    The ``SHC_COMPOSE_ALLOW_DESTRUCTIVE`` check sits BETWEEN them deliberately. It
+    is the cheapest possible refusal - a boolean and a skip message - so an
+    operator who opts in without the second flag pays nothing, not even the
+    ``docker compose config``. The two interlock guards are the ones that must
+    come first, because they are the ones that would permit destruction.
+
+    ``SHC_COMPOSE_ALLOW_DESTRUCTIVE=1`` is required, so MUST M-5.2 - the only
+    genuinely destructive scenario - costs a second, deliberate word (D2). It is
+    enforced HERE rather than in the test, so no caller can forget it.
     """
     argv = compose_argv(override_path, *args)
     assert_override_engaged(override_path, argv)
-    # Resolved, not assumed. A read-only parse of the merged document.
-    assert_override_renames_volumes(
-        Path(override_path),
-        parse_config(
-            run_compose(compose_argv(override_path, "config", "--format", "json"))
-        ),
-    )
     if not destructive_allowed():
         pytest.skip(
             "MUST M-5.2 issues `docker compose down -v`. Re-run with "
@@ -591,6 +614,14 @@ def run_destructive_compose(
             "volumes this suite created. Those are NOT the checked-in file's "
             "shc-data / shc-state, which this suite never touches."
         )
+    # Resolved, not assumed. A read-only parse of the merged document, and the
+    # LAST thing before the verb goes out.
+    assert_override_renames_volumes(
+        Path(override_path),
+        parse_config(
+            run_compose(compose_argv(override_path, "config", "--format", "json"))
+        ),
+    )
     return _execute_argv(argv, env_extra=env_extra, check=check, timeout=timeout)
 
 

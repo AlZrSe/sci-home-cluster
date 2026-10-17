@@ -635,7 +635,10 @@ def test_force_recreate_preserves_state(live_stack: ComposeStack) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_restart_count_is_not_readable_from_state(image_id: str) -> None:
+def test_restart_count_is_not_readable_from_state(
+    compose_stack: ComposeStack,
+    image_id: str,
+) -> None:
     """
     DEFECT 2 REGRESSION TEST: proves the repaired `RestartCount` controls can
     fail, and that the shape they replaced could not.
@@ -652,6 +655,17 @@ def test_restart_count_is_not_readable_from_state(image_id: str) -> None:
     restart-policy window and then exits. Once `RestartCount >= 1` the two reads
     must DISAGREE - the real template reports the count, the `.State` template
     reports 0 - which is exactly the gap that made the controls vacuous.
+
+    **It reads through `ComposeStack.restart_count()` - the method the defect-2
+    fix introduced, and the only path the three repaired controls use.** An
+    earlier version of this test called the module-level `_restart_count()` helper
+    instead, which meant reverting `restart_count()` to the broken
+    `{{json .State}}` read left the suite green: the proof was demonstrating a
+    property of its own helper, not of the code under repair. Proof of a repair
+    has to go through the repair.
+
+    The container is addressed by NAME, which `restart_count(cid)` accepts, so the
+    real method is exercised without needing a compose project.
 
     If this test ever passes with `RestartCount == 0`, it has proved nothing.
     """
@@ -675,7 +689,8 @@ def test_restart_count_is_not_readable_from_state(image_id: str) -> None:
         deadline = time.monotonic() + 90
         real = 0
         while time.monotonic() < deadline:
-            real = _restart_count(name)
+            # The repaired accessor, not a local re-implementation.
+            real = compose_stack.restart_count(name)
             if real >= 1:
                 break
             time.sleep(2.0)
@@ -703,7 +718,7 @@ def test_restart_count_is_not_readable_from_state(image_id: str) -> None:
             int(from_state.get("RestartCount", 0)) == 0 != real
         ), f"expected the `.State` read to report 0 while the real count is {real}"
         assert (
-            _restart_count(name) == real >= 1
+            compose_stack.restart_count(name) == real >= 1
         ), "the repaired read disagrees with itself"
     finally:
         run_compose(["docker", "rm", "-f", "-v", name], check=False)
@@ -742,11 +757,27 @@ def test_destructive_invocations_audit_catches_a_planted_rogue() -> None:
     sanctioned = ["docker", "compose", "-f", str(COMPOSE_FILE), "-f", "x", "down", "-v"]
 
     imported = COMPOSE_INVOCATIONS
-    assert sys.modules["conftest"].COMPOSE_INVOCATIONS is imported, (
-        "the conftest module and the dotted import are STILL two different "
-        "registry objects. The audit would be blind again - this assertion is "
-        "the regression guard for the double-import itself."
-    )
+    # The double-import guard, but expressed so it DEGRADES rather than raises.
+    #
+    # `sys.modules["conftest"]` exists only under pytest's default prepend import
+    # mode. Under `--import-mode=importlib` the conftest is registered under a
+    # mangled name and the lookup raised KeyError - taking the whole test with it,
+    # over an assertion about module identity rather than about the audit. The
+    # defect-5 fix was adopted BECAUSE a module-identity assumption broke; adding
+    # a second one of the same shape to police the first is the wrong trade.
+    #
+    # So: assert the identity when it is observable, and stay silent otherwise.
+    # What is asserted unconditionally is the audit's behaviour on a registry that
+    # is, by construction, the shared one - `COMPOSE_INVOCATIONS` is imported from
+    # the dotted path and mutations to it are visible to `audit_destructive_
+    # invocations` below. That holds under any import mode.
+    plugin_module = sys.modules.get("conftest")
+    if plugin_module is not None:
+        assert plugin_module.COMPOSE_INVOCATIONS is imported, (
+            "the conftest module and the dotted import are STILL two different "
+            "registry objects. The audit would be blind again - this assertion "
+            "is the regression guard for the double-import itself."
+        )
 
     baseline = list(imported)
     try:
