@@ -24,6 +24,7 @@ It still needs `SHC_COMPOSE_TESTS=1`, because AC-25 requires every test under
 import json
 import re
 from pathlib import Path
+from typing import Optional
 
 import pytest
 import yaml
@@ -34,9 +35,12 @@ from backend.tests.compose.conftest import (
     DOCKERFILE,
     REPO_ROOT,
     ComposeRun,
+    InterlockViolation,
     assert_override_engaged,
+    assert_override_renames_volumes,
     checked_in_run,
     compose_argv,
+    run_destructive_compose,
 )
 
 pytestmark = COMPOSE_PYTESTMARK
@@ -564,16 +568,138 @@ def test_destructive_verbs_cannot_resolve_to_the_checked_in_volumes() -> None:
     argument and builds its argv from it; `assert_override_engaged` then refuses
     any argv whose `-f` flags do not carry it. Passing only
     `-f docker-compose.yaml` is therefore not discouraged, it is unreachable.
+
+    Tighten the exception assertions to the specific class too: a bare
+    `pytest.raises(Exception)` would also pass if the helper raised `TypeError`
+    or `KeyError` for some unrelated reason, which is the same
+    passes-for-the-wrong-reason trap one level down.
     """
     checked_in_only = compose_argv(None, "down", "-v")
-    with pytest.raises(Exception) as excinfo:
+    with pytest.raises(InterlockViolation, match="checked-in"):
         assert_override_engaged(COMPOSE_FILE, checked_in_only)
-    assert "checked-in" in str(excinfo.value)
 
     override = REPO_ROOT / "generated" / "override.yaml"
-    with pytest.raises(Exception) as excinfo:
+    with pytest.raises(InterlockViolation, match="not among the -f flags"):
         assert_override_engaged(override, compose_argv(None, "down", "-v"))
-    assert "not among the -f flags" in str(excinfo.value)
 
     # And the accepted shape is accepted for the right reason.
     assert_override_engaged(override, compose_argv(override, "down", "-v"))
+
+
+def test_an_override_that_renames_nothing_is_refused() -> None:
+    """
+    DEFECT 4 REGRESSION TEST: an override present on the command line but
+    renaming nothing is REFUSED.
+
+    `assert_override_engaged` used to check only that the override path appeared
+    among the `-f` flags, so an override that renames nothing passed it - and a
+    `down -v` through that override resolved to `shc-data` / `shc-state` exactly
+    as the single-file form does. Safety rested entirely on `_override_yaml`
+    happening to be the only producer.
+
+    `assert_override_renames_volumes` closes that: it reads the MERGED config and
+    refuses when either volume still carries its checked-in name. This test drives
+    it with the four shapes that matter, all pure, all safe to run:
+
+      1. renames nothing        -> refused (the defect)
+      2. renames only shc-data   -> refused (a half-measure is not a shield)
+      3. renames only shc-state  -> refused
+      4. renames both           -> accepted, which is what the suite's own
+                                   override does
+
+    A test that only exercised case 4 would pass just as happily with the check
+    deleted, so the refusal cases are the point of this test.
+    """
+    override = REPO_ROOT / "generated" / "override.yaml"
+
+    def config(data_name: Optional[str], state_name: Optional[str]) -> dict:
+        """A merged config whose volumes carry exactly these names.
+
+        `Optional[str]` means "the key is absent", which is what a merge that
+        renames nothing looks like. Built from an explicit dict rather than
+        **kwargs deliberately: `shc-data` is not a legal Python keyword argument,
+        so a kwargs helper silently produces `shc_data`, every lookup misses, and
+        all four cases collapse into the same first-iteration refusal. That
+        happened while writing this test, and cases 2 and 3 passed for the wrong
+        reason - which is precisely what these negative controls exist to catch.
+        """
+        volumes: dict = {}
+        if data_name is not None:
+            volumes["shc-data"] = {"name": data_name}
+        if state_name is not None:
+            volumes["shc-state"] = {"name": state_name}
+        return {"volumes": volumes}
+
+    # 1. renames nothing.
+    with pytest.raises(InterlockViolation, match="shc-data"):
+        assert_override_renames_volumes(override, config("shc-data", "shc-state"))
+
+    # 2. renames only shc-data - a half-measure is not a shield.
+    with pytest.raises(InterlockViolation, match="shc-state"):
+        assert_override_renames_volumes(override, config("shc-e2e-x-data", "shc-state"))
+
+    # 3. renames only shc-state.
+    with pytest.raises(InterlockViolation, match="shc-data"):
+        assert_override_renames_volumes(override, config("shc-data", "shc-e2e-x-state"))
+
+    # 4. renames neither because the override declares no volumes at all - the
+    #    shape an empty or stray override file produces.
+    with pytest.raises(InterlockViolation, match="shc-data"):
+        assert_override_renames_volumes(override, {"volumes": {}})
+
+    # 5. renames both: the shape the suite's own override has.
+    assert_override_renames_volumes(
+        override, config("shc-e2e-x-data", "shc-e2e-x-state")
+    )
+
+
+def test_the_suite_owns_a_real_override_that_passes_the_interlock(
+    compose_stack,
+) -> None:
+    """
+    The positive control for the preceding refusal test: the override the suite
+    ACTUALLY generates renames both volumes, so the tightened interlock does not
+    refuse the suite's own stack.
+
+    Without this, "the interlock refuses everything" and "the interlock is
+    correct" would be indistinguishable from the failure side.
+    """
+    volumes = compose_stack.resolved_config()["volumes"]
+    assert volumes["shc-data"]["name"] != "shc-data", volumes
+    assert volumes["shc-state"]["name"] != "shc-state", volumes
+    assert_override_renames_volumes(
+        compose_stack.override_path, compose_stack.resolved_config()
+    )
+
+
+def test_a_renaming_nothing_override_is_refused_before_the_verb_runs(
+    tmp_path,
+) -> None:
+    """
+    End-to-end proof that `run_destructive_compose` refuses BEFORE executing the
+    verb, not merely that the pure helper can refuse.
+
+    The preceding test drives `assert_override_renames_volumes` directly. This
+    drives the real entry point, which is where the ordering lives: the merge is
+    resolved and checked, and only then is the verb issued.
+
+    **The witness verb is `config`, which is completely harmless** - a pure
+    parse-and-interpolate that creates and removes nothing. That is what makes
+    this test safe to run: if the guard were ever removed or reordered, the
+    consequence would be a wasted `docker compose config`, not a `down -v`
+    against a developer's cluster. A test that proved this by attempting the real
+    destructive verb would be the hazard rather than the check.
+    """
+    override = tmp_path / "renames-nothing.yaml"
+    override.write_text(
+        "# A valid override that changes only the published port - and so renames\n"
+        "# nothing. `down -v` through this file deletes shc-data and shc-state.\n"
+        "services:\n"
+        "  backend:\n"
+        "    ports: !override\n"
+        '      - "18099:8000"\n',
+        encoding="utf-8",
+    )
+
+    with pytest.raises(InterlockViolation, match="does not rename"):
+        run_destructive_compose(override, "config", "--format", "json")
