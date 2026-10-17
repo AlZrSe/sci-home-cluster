@@ -61,10 +61,12 @@ import os
 import shutil
 import socket
 import subprocess
+import sys
 import time
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
+from types import ModuleType
 from typing import Any, Iterator, Mapping, Optional, Sequence
 
 import httpx
@@ -180,6 +182,12 @@ def _execute_argv(
         raise AssertionError(
             f"`{' '.join(recorded)}` did not finish within {timeout}s."
         ) from exc
+    except OSError as exc:
+        # A missing `docker` binary, same reasoning as `_run_plain`: `subprocess`
+        # raises rather than returning non-zero. Reached only if the
+        # collection-time prerequisite probe was bypassed, and it must still fail
+        # as a readable assertion rather than an OSError traceback.
+        return ComposeRun(recorded, 127, "", f"{exc}\n")
     run = ComposeRun(recorded, result.returncode, result.stdout, result.stderr)
     if check and run.returncode != 0:
         raise AssertionError(f"compose invocation failed:\n{run.describe()}")
@@ -187,23 +195,62 @@ def _execute_argv(
 
 
 def _run_plain(argv: Sequence[str]) -> subprocess.CompletedProcess:
-    """A plain `docker ...` call. Explicit cwd, inherited-but-scrubbed env."""
-    return subprocess.run(
-        list(argv),
-        cwd=str(REPO_ROOT),
-        env=scrubbed_env(),
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        shell=False,
-    )
+    """
+    A plain `docker ...` call. Explicit cwd, scrubbed env.
+
+    **Catches `OSError`, and that is not defensive padding - it is the whole
+    point.** `subprocess.run` on a missing executable RAISES `FileNotFoundError`;
+    it does not return non-zero. Without this guard, a machine with no `docker` on
+    PATH hits the exception inside `pytest_collection_modifyitems` ->
+    `missing_prerequisite()`, which is a collection-time hook, so pytest turns it
+    into an `INTERNALERROR` and exits 3 - with NO skip reported at all. That
+    breaks AC-25 ("every test under `backend/tests/compose/` reports SKIPPED, not
+    errored") and the requirement that a default run on a machine without Docker
+    stays green. Only the *binary-absent* case escaped: daemon-down returned
+    non-zero and skipped correctly.
+
+    A synthesised non-zero result is returned instead, so every existing
+    `returncode == 0` check reads it as "not available" and the prerequisite
+    probe reports the missing binary by name.
+    """
+    try:
+        return subprocess.run(
+            list(argv),
+            cwd=str(REPO_ROOT),
+            env=scrubbed_env(),
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            shell=False,
+        )
+    except OSError as exc:
+        # errno 2 is ENOENT on every platform, including Windows (where a
+        # missing binary also surfaces as WinError 2).
+        return subprocess.CompletedProcess(
+            args=list(argv),
+            returncode=127,
+            stdout="",
+            stderr=f"{argv[0] if argv else '?'}: {exc}\n",
+        )
 
 
 def compose_cli_version() -> Optional[str]:
     """`docker compose version`, or None when the CLI cannot report one."""
     result = _run_plain(["docker", "compose", "version"])
     return result.stdout.strip() if result.returncode == 0 else None
+
+
+def docker_binary_missing(result: subprocess.CompletedProcess) -> bool:
+    """
+    Whether a probe failed because the `docker` EXECUTABLE is absent.
+
+    Distinguished from "the binary ran and said no", because the two need
+    different skip messages: a developer on a machine with no Docker needs to be
+    told to install Docker, not to start Docker Desktop (issue #134, AC-25).
+    `_run_plain` synthesises exit 127 for exactly this case.
+    """
+    return result.returncode == 127
 
 
 def docker_daemon_version() -> Optional[str]:
@@ -218,14 +265,31 @@ def docker_daemon_version() -> Optional[str]:
 
 
 def missing_prerequisite() -> Optional[str]:
-    """A message naming what is missing, or None when the suite can run."""
-    if compose_cli_version() is None:
+    """
+    A message naming what is missing, or None when the suite can run.
+
+    Three distinct outcomes, three distinct messages. Collapsing them into one
+    "no Docker" would leave a developer on Windows without a way to tell a
+    missing install from a stopped daemon - and AC-25 asks for the reason to name
+    the missing prerequisite, not merely to mention Docker.
+    """
+    cli = _run_plain(["docker", "compose", "version"])
+    if docker_binary_missing(cli):
+        return (
+            "the `docker` executable is not on PATH (`docker compose version` "
+            "could not be started). Install Docker Desktop, or Docker Engine "
+            "plus the Compose plugin, and re-run."
+        )
+    if cli.returncode != 0:
         return (
             "the Docker Compose CLI is unavailable: `docker compose version` "
             "failed. The suite needs `docker compose` on PATH to parse the "
             "checked-in file."
         )
-    if docker_daemon_version() is None:
+    daemon = _run_plain(["docker", "version", "--format", "{{.Server.Version}}"])
+    if docker_binary_missing(daemon):
+        return "the `docker` executable disappeared between the two probes."
+    if daemon.returncode != 0:
         return (
             "no reachable Docker daemon: `docker version` reported no server. "
             "Start Docker Desktop (or the daemon) and re-run."
@@ -317,11 +381,45 @@ class InterlockViolation(AssertionError):
     """A destructive verb was aimed at the checked-in file's own state."""
 
 
-#: Every `docker compose` argv this suite builds, in order. Audited at session
-#: teardown (AC-21's second half) rather than asserted once inside a test,
-#: because pytest gives no cross-module ordering guarantee: a single test could
-#: run before the lifecycle module that issues the `down -v`.
-COMPOSE_INVOCATIONS: list[list[str]] = []
+# ---------------------------------------------------------------------------
+# The shared invocation registry
+# ---------------------------------------------------------------------------
+#
+# pytest imports this file TWICE: once as `conftest` (the conftest plugin for the
+# backend/tests/compose directory) and once as
+# `backend.tests.compose.conftest`, because the test modules import their helpers
+# from the dotted path. Those are two distinct module objects, so a module-level
+# list here gave each its own copy:
+#
+#     fixtures close over the `conftest` copy
+#     test bodies read the `backend.tests.compose.conftest` copy
+#     conftest is not sys.modules["backend.tests.compose.conftest"]
+#     => `conftest.COMPOSE_INVOCATIONS is not <the imported one>` is True
+#
+# so an invocation recorded from a test BODY never reached the list the session
+# teardown audits, and the audit saw nothing at all. It was blind to exactly the
+# place a rogue `down -v` would be written.
+#
+# `sys.modules` is the one namespace both imports share, so the registry is
+# pinned there under a fixed key. Both copies then read and write ONE list.
+_SHARED_NAMESPACE = "shc_compose_suite_shared_state"
+
+
+def _shared_state() -> Any:
+    module = sys.modules.get(_SHARED_NAMESPACE)
+    if module is None:
+        module = ModuleType(_SHARED_NAMESPACE)
+        module.com_invocations = []  # type: ignore[attr-defined]
+        sys.modules[_SHARED_NAMESPACE] = module
+    return module
+
+
+#: Every `docker compose` argv this suite builds, in order - shared across both
+#: imports of this file. Audited at session teardown (AC-21's second half) rather
+#: than asserted once inside a test, because pytest gives no cross-module
+#: ordering guarantee: a single test could run before the lifecycle module that
+#: issues the `down -v`.
+COMPOSE_INVOCATIONS: list[list[str]] = _shared_state().com_invocations
 
 
 def compose_argv(override_path: Optional[Path], *args: str) -> list[str]:
@@ -339,12 +437,26 @@ def compose_argv(override_path: Optional[Path], *args: str) -> list[str]:
     return argv
 
 
+#: The two volume names `docker-compose.yaml:327-330` pins. A `down -v` that
+#: resolves to either of them destroys a developer's cluster.
+CHECKED_IN_VOLUME_NAMES = ("shc-data", "shc-state")
+
+
 def assert_override_engaged(override_path: Path, argv: Sequence[str]) -> None:
     """Refuse argv whose ``-f`` flags do not carry the override.
 
     Split out from :func:`run_destructive_compose` as a pure function so a test
     can prove the refusal WITHOUT executing ``docker`` - which is the only way to
     test an interlock whose failure mode is deleting a developer's database.
+
+    **Presence of the flag is necessary but NOT sufficient**, and treating it as
+    sufficient was the gap this was tightened for: an override file that renames
+    nothing satisfied this check, and a `down -v` through it resolved to
+    ``shc-data`` / ``shc-state`` exactly as the single-file form would. Presence
+    of a file says nothing about what that file does. The other half of the rule
+    - that the MERGED config demonstrably renames both volumes away from the
+    checked-in names - is :func:`assert_override_renames_volumes`, applied by
+    :func:`run_destructive_compose` because it needs to resolve the config.
     """
     if Path(override_path) == COMPOSE_FILE:
         raise InterlockViolation(
@@ -366,6 +478,41 @@ def assert_override_engaged(override_path: Path, argv: Sequence[str]) -> None:
             f"not among the -f flags {file_flags}. Without it there is no file "
             "under test, only the override."
         )
+
+
+def assert_override_renames_volumes(
+    override_path: Path,
+    merged_config: Mapping[str, Any],
+) -> None:
+    """
+    Refuse a destructive verb whose merged config still names the checked-in
+    volumes. The half of the interlock that reads what the override actually DOES.
+
+    ``assert_override_engaged`` can only see that the override was passed on the
+    command line. This resolves ``docker compose -f docker-compose.yaml -f
+    <override> config --format json`` and inspects the result, so a `down -v`
+    through an override that renames nothing - a stray file, an empty one, one
+    that renames only one of the two - is refused on evidence rather than on
+    trust in whichever module produced it.
+
+    Pure, so :func:`run_destructive_compose` can call it after the resolution and
+    a test can prove the refusal without executing anything.
+    """
+    volumes = dict(merged_config.get("volumes") or {})
+    for key, pinned in (
+        ("shc-data", CHECKED_IN_VOLUME_NAMES[0]),
+        ("shc-state", CHECKED_IN_VOLUME_NAMES[1]),
+    ):
+        resolved = (volumes.get(key) or {}).get("name", pinned)
+        if resolved == pinned:
+            raise InterlockViolation(
+                f"refusing a destructive verb: through {override_path} the "
+                f"volume {key!r} still resolves to {pinned!r}. The override is "
+                "present on the command line but does not rename this volume, so "
+                f"`down -v` would delete the checked-in file's state "
+                "(docker-compose.yaml:327-330). An override is only a shield "
+                "where it demonstrably renames."
+            )
 
 
 @dataclass
@@ -409,12 +556,20 @@ def run_destructive_compose(
 ) -> ComposeRun:
     """Run a verb that can destroy daemon state, against the override stack.
 
-    **The override path is a required positional argument.** That is the whole
+    **The override path is a required positional argument.** That is half the
     interlock (D4c): there is no call shape in which ``-f docker-compose.yaml``
     alone gets a ``down -v`` through, because the argv is built by
     :func:`compose_argv` with the override mandatory and then re-validated by
     :func:`assert_override_engaged`. A review comment is a rule somebody can route
     around; this is not reachable.
+
+    **And the override has to demonstrably rename both volumes**, via
+    :func:`assert_override_renames_volumes`. Passing the flag is necessary but not
+    sufficient - an override that renames nothing satisfies the flag check while a
+    ``down -v`` through it still resolves to ``shc-data`` / ``shc-state``. So the
+    merged config is resolved and inspected before the verb runs. That costs one
+    `docker compose config`, which is a pure parse: it creates and removes
+    nothing, and only two verbs in the whole suite are gated here.
 
     ``SHC_COMPOSE_ALLOW_DESTRUCTIVE=1`` is required as well, so MUST M-5.2 - the
     only genuinely destructive scenario - costs a second, deliberate word (D2). It
@@ -422,6 +577,13 @@ def run_destructive_compose(
     """
     argv = compose_argv(override_path, *args)
     assert_override_engaged(override_path, argv)
+    # Resolved, not assumed. A read-only parse of the merged document.
+    assert_override_renames_volumes(
+        Path(override_path),
+        parse_config(
+            run_compose(compose_argv(override_path, "config", "--format", "json"))
+        ),
+    )
     if not destructive_allowed():
         pytest.skip(
             "MUST M-5.2 issues `docker compose down -v`. Re-run with "
@@ -690,6 +852,31 @@ class ComposeStack:
         except (AssertionError, IndexError):
             return None
         return (state.get("Health") or {}).get("Status")
+
+    def restart_count(self, cid: Optional[str] = None) -> int:
+        """
+        `.RestartCount` - read from its OWN template, never out of `.State`.
+
+        `RestartCount` is a SIBLING of `State` in `docker inspect` output, not a
+        member of it. `docker inspect --format '{{json .State}}'` yields an object
+        whose keys are Status, Running, Paused, Restarting, OOMKilled, Dead, Pid,
+        ExitCode, Error, StartedAt, FinishedAt - so `state.get("RestartCount", 0)`
+        on it is `0` FOREVER, whatever the real count is.
+
+        Three control assertions in this suite were written that way and were
+        therefore permanently vacuous: each evaluated `0 == 0` and passed no
+        matter what the container had done. A control that cannot fail is the
+        exact thing issue #134 exists to prevent, so every `RestartCount` read
+        goes through this one method. `test_lifecycle.py::
+        test_restart_count_is_not_readable_from_state` pins the distinction.
+        """
+        cid = cid or self.container_id()
+        result = _run_plain(["docker", "inspect", cid, "--format", "{{.RestartCount}}"])
+        assert result.returncode == 0, (
+            f"docker inspect {cid} --format '{{{{.RestartCount}}}}' failed:\n"
+            f"{result.stdout}\n{result.stderr}"
+        )
+        return int(result.stdout.strip() or 0)
 
     def wait_healthy(
         self, timeout: int = HEALTH_TIMEOUT_S, cid: Optional[str] = None
@@ -1257,9 +1444,30 @@ def audit_destructive_invocations() -> list[str]:
     suite actually built and reports any destructive verb that went out without
     the generated override in its ``-f`` flags - which would have resolved to
     the checked-in file's own ``shc-data`` / ``shc-state``.
+
+    **The rule is deliberately narrow, and used to be wide.** It previously
+    matched *any* argv containing ``rm`` and ``-v``, which also matched the
+    suite's own legitimate ``docker rm -f -v <rogue-container>`` cleanup from the
+    restart-policy test: a false positive waiting for that test to reach the
+    teardown. Two fixes:
+
+    * only ``docker compose`` invocations are considered at all - that is the
+      only path on which ``-v`` means *project volumes*, which is the
+      destruction being guarded against;
+    * the verb must actually be ``down`` (or ``rm``) AND carry a volume flag.
+
+    A plain ``docker rm -f -v <name>`` removes containers and their ANONYMOUS
+    volumes by name. It cannot reach ``shc-data``, which is a pinned project
+    volume reachable only through compose.
+
+    `test_destructive_invocations_audit_catches_a_planted_rogue` plants an
+    offender in the registry and proves this function reports it, so the rule is
+    demonstrated rather than assumed.
     """
     offenders: list[str] = []
     for argv in COMPOSE_INVOCATIONS:
+        if argv[:2] != ["docker", "compose"]:
+            continue  # `docker rm -f -v <name>` cannot reach a project volume
         if "down" not in argv and "rm" not in argv:
             continue
         if "-v" not in argv and "--volumes" not in argv:
