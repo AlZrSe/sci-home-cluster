@@ -775,6 +775,14 @@ def pytest_configure(config):
     config.addinivalue_line(
         "markers", "websocket: mark test as requiring WebSocket support"
     )
+    # Kept in step with the `markers` list in pyproject.toml. This repo
+    # duplicates that list deliberately and its norm is to change both together
+    # (AGENTS.md, on shared/auth/localhost_hosts.json). The wording is identical
+    # for the same reason.
+    config.addinivalue_line(
+        "markers",
+        "compose: marks a test that runs the checked-in docker-compose.yaml",
+    )
 
 
 class TestSettings(BaseSettings):
