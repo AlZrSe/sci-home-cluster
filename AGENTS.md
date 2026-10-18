@@ -15,8 +15,9 @@ Distributed platform for running scientific workloads on a home GPU cluster.
 | Frontend e2e types | `cd frontend && npm run typecheck:e2e` (advisory report; prints 8 known errors, exits 0) |
 | Frontend lint | `cd frontend && npm run lint` |
 | Frontend test | `cd frontend && npm test` (vitest unit + integration; e2e is `npm run test:e2e`) |
-| Backend lint | `ruff check . && ruff format . && mypy .` |
+| Backend lint | `ruff check . && ruff format --check . && mypy .` (all three from the repository **root**; `--check`, not the bare formatter — see below) |
 | Backend test | `pytest --cov=backend` |
+| **CI** | `.github/workflows/ci.yml` — four jobs, no edges: `backend-gates`, `frontend-gates`, `compose-suite`, `e2e`. Push or PR to `main`; weekly Monday 06:17 UTC; manual dispatch. All four are required status checks on `main`. |
 | Compose test | `make test-compose` (**opt-in, destructive-adjacent** — creates and deletes `shc-e2e-*` volumes, never `shc-data`/`shc-state`; needs Docker; see `docker/README.md` §"Testing the compose file") |
 | API server | `uvicorn backend.main:app --reload` |
 | Worker agent | `run-agent --node-id node-01` (needs `SYNCTHING_ROOT` set; see README "Worker Agent") |
@@ -41,6 +42,19 @@ uv pip install --python .venv-gates/bin/python -e ".[dev]"
 red, check the tool versions (`ruff --version`, `mypy --version`, `pytest --version`) **before**
 investigating the code — a version mismatch is the likeliest explanation and the most expensive
 one to chase.
+
+### Two spellings of the lint gate that are not the gate
+
+- **`ruff format .` is a formatter, not a check.** It rewrites files and exits 0, so wired into a
+  pipeline it would pass on unformatted code. The gate is `ruff format --check .`, which is what
+  `ci.yml` runs.
+- **`make lint` and `make typecheck` are materially weaker than `mypy .`.** Both `cd backend`
+  first, and mypy resolves its configuration against the invocation CWD without walking up, so
+  from `backend/` it finds no `pyproject.toml` and silently drops `warn_return_any`,
+  `mypy_path = "stubs"`, `python_version = "3.11"` and the whole `exclude` list. Run the three
+  gates from the repository **root**. (`cd backend && pytest --cov=backend` is fine by contrast:
+  coverage resolves `source = ["backend", "agent"]` by package name, which is why `make test`
+  reports 92% rather than 0%.)
 
 ---
 
@@ -147,7 +161,7 @@ new frontend code. `frontend/AGENTS.md` also carries a Lovable sync notice: comm
 |-------|--------|---------|
 | Backend unit | >80% coverage | `pytest --cov=backend` |
 | Backend integration | API endpoints, service layer | `pytest backend/tests/integration` |
-| Backend type | Pydantic + hints | `mypy .` (part of `ruff check . && ruff format . && mypy .`) |
+| Backend type | Pydantic + hints | `mypy .` (part of `ruff check . && ruff format --check . && mypy .`) |
 | Frontend unit + integration | vitest in jsdom | `cd frontend && npm test` |
 | Frontend type | `src/` + the vitest suite | `cd frontend && npm run typecheck` |
 | Frontend lint | — | `cd frontend && npm run lint` |
@@ -159,7 +173,7 @@ it.** `backend/tests/compose/` runs the checked-in `docker-compose.yaml` against
 real Docker daemon — it builds the image, publishes a port, bind-mounts
 `./syncthing`, and issues `docker compose down -v`. Without `SHC_COMPOSE_TESTS=1`
 every test in it is **SKIPPED**, which is why `pytest` and `make test` are
-unaffected (collecting the 41 skipped tests costs ≈0.2 s — 0.17–0.43 s across
+unaffected (collecting the 48 skipped tests costs ≈0.2 s — 0.17–0.43 s across
 five measurements on Windows, the spread being collection noise).
 
 It creates and deletes volumes named `shc-e2e-*` and **never** `shc-data` or
@@ -174,16 +188,27 @@ Never point it at anything but your own checkout. Full detail, including what
 each layer asserts and two caveats about what it does *not* prove:
 `docker/README.md` § "Testing the compose file".
 
-**Frontend types are checked — with one recorded gap.** `npm run typecheck` runs
-`tsc --noEmit` over `frontend/tsconfig.json` and covers `src/**` *and the whole vitest suite*
-(`src/**/*.test.ts` plus `tests/integration/**`) plus `vitest.config.ts` / `vite.config.ts`. It is
-ratcheted: **1** known production error in `src/` is recorded in
-`frontend/scripts/typecheck-baseline.json` and tolerated, and the gate goes red if that inventory
-stops matching — so a new error in `src/` fails, and so does fixing one without shrinking the
-baseline. That one entry is a real bug, not type debt: the `async` `streamJobLogs` wrapper in
-`src/services/index.ts` makes `jobs.$jobId.tsx` invoke a Promise as its unmount cleanup and leak
-the log WebSocket. It is deliberately unfixed — see the `$comment` in that baseline file. Test files
-carry no baseline at all.
+**Frontend types are checked, with one recorded gap that is not a gate.**
+`npm run typecheck` runs `tsc --noEmit` over `frontend/tsconfig.json` and covers
+`src/**` *and the whole vitest suite* (`src/**/*.test.ts` plus
+`tests/integration/**`) plus `vitest.config.ts` / `vite.config.ts`. It is
+ratcheted against `frontend/scripts/typecheck-baseline.json`, and **that baseline
+is empty** (`"count": 0`, `"diagnostics": []`) — it held 16 entries until commit
+`1e22580` emptied it (issue #46). So the gate is strict: **any** new error in
+`src/` fails, and the baseline can never absorb one. The file is kept rather than
+deleted precisely so the gate still runs on a regression; its own `$comment` says
+so. Test files carry no baseline at all, so a type error in one fails outright.
+
+The last entry it held was a real bug, not type debt — an `async`
+`streamJobLogs` wrapper in `src/services/index.ts` that made
+`jobs.$jobId.tsx` invoke a Promise as its unmount cleanup and leak the log
+WebSocket. It is fixed (issue #45); `streamJobLogs` is `export function` again
+(`src/services/index.ts:104`). **If that `TS2322` ever reappears, the fix is the
+wrapper — never a baseline entry.**
+
+The gate also asserts the *file set*, not just the diagnostics, so deleting a
+test file from `tsconfig.json`'s `include` fails loudly instead of quietly
+un-checking it. See `frontend/README.md#type-checking`.
 
 **`tests/e2e/**` is NOT type-checked.** It is a separate program (`frontend/tsconfig.e2e.json`,
 `npm run typecheck:e2e`) with 8 known errors, deliberately excluded from the main program because

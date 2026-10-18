@@ -116,7 +116,7 @@ A task is considered done when:
       creates and deletes volumes named `shc-e2e-*` and never `shc-data`/`shc-state`, but it must
       only ever be pointed at your own checkout. See `docker/README.md` § "Testing the compose file"
       before the first run on a new machine. `make test` does **not** run it and does not need Docker.
-- [ ] No backend lint/type errors (`ruff check . && ruff format . && mypy .`)
+- [ ] No backend lint/type errors (`ruff check . && ruff format --check . && mypy .`, from the repository root — `--check` because the bare formatter rewrites files and exits 0, and the root because `cd backend && mypy .` finds no `pyproject.toml`; see AGENTS.md § "Two spellings of the lint gate that are not the gate")
 - [ ] No frontend lint/type errors (`cd frontend && npm run lint && npm run typecheck`) — and read `frontend/README.md#type-checking` first: `npm run typecheck` covers `src/` and the vitest suite but **not** `tests/e2e/**`, and `npm run build` does not check types at all
 - [ ] Documentation updated (README, API docs)
 - [ ] PM has performed final acceptance review
