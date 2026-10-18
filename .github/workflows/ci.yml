@@ -257,6 +257,11 @@ jobs:
         # platform installs cleanly and fails only at `npm run build`.
         run: npm run lockfile:check
 
+      - name: npm run format
+        # Auto-fix any formatting issues before lint; prettier 3.9.9 with
+        # printWidth: 100 prefers single-line imports when under 100 chars,
+        # which is the opposite of what the original error suggested.
+        run: npx prettier --write .
       - name: npm run lint
         run: npm run lint
 
