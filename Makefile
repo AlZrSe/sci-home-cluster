@@ -63,10 +63,10 @@ test:
 	cd backend && pytest --cov=backend --cov-report=term-missing --cov-fail-under=80
 
 test-unit:
-	cd backend && pytest backend/tests/unit -v
+	cd backend && pytest tests/unit -v
 
 test-integration:
-	cd backend && pytest backend/tests/integration -v
+	cd backend && pytest tests/integration -v
 
 # Opt-in suite that runs the checked-in docker-compose.yaml against a real Docker
 # daemon (issue #134). Deliberately WITHOUT coverage: a live-container run
@@ -82,8 +82,11 @@ test-integration:
 #
 # NB the path is `tests/compose`, not `backend/tests/compose`: the `cd backend`
 # makes it relative to backend/, and pytest resolves a path argument against the
-# invocation CWD, not against rootdir. (test-unit and test-integration above have
-# the same bug and collect nothing today - pre-existing, reported separately.)
+# invocation CWD, not against rootdir. test-unit and test-integration had the
+# same bug until issue #136 - they named `backend/tests/...` from inside
+# backend/, resolved to backend/backend/tests/..., and collected nothing while
+# exiting 0. A documented gate that silently runs no tests is worse than one
+# that is absent, so it is fixed here; #26 tracks the rest of this Makefile.
 test-compose:
 	cd backend && SHC_COMPOSE_TESTS=1 SHC_COMPOSE_ALLOW_DESTRUCTIVE=1 pytest tests/compose -m compose -v
 
