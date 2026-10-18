@@ -136,26 +136,27 @@ def destructive_allowed() -> bool:
 #: `docker compose config` scenarios "belong in the default `pytest` run":
 #: AC-25 states the opposite - "every test under `backend/tests/compose/` reports
 #: SKIPPED" - and AC-25 is an acceptance criterion repeated verbatim in the
-#: Definition of Done. AC-25 wins. The value D4(a) was reaching for survives
-#: differently: the L1 layer touches no daemon state, and the marker selects it
-#: alone (`-m compose -k config`), so it costs about a second when opted into.
-COMPOSE_PYTESTMARK = [
-    pytest.mark.compose,
-]
-
-# Opt-in gate: session-scoped autouse fixture that skips the entire session
-# if SHC_COMPOSE_TESTS != "1". This runs once per session and is more
-# reliable than a module-level skipif in pytestmark (which can be tricky
-# with list markers) or a function-scoped autouse fixture (which may not
-# show the skip reason prominently in -v output).
-@pytest.fixture(scope="session", autouse=True)
-def _require_compose_opt_in():
-    if not compose_tests_enabled():
-        pytest.skip(
-            f"compose suite is opt-in and runs the real Docker daemon: set "
-            f"{FORCE_ENV}=1 (issue #134). `make test` and a bare `pytest` are "
-            "unaffected."
-        )
+140: #: Definition of Done. AC-25 wins. The value D4(a) was reaching for survives
+141: #: differently: the L1 layer touches no daemon state, and the marker selects it
+142: #: alone (`-m compose -k config`), so it costs about a second when opted into.
+142: COMPOSE_PYTESTMARK = [
+143:     pytest.mark.compose,
+144: ]
+145: 
+146: # Opt-in gate: pytest hook that skips all tests at collection time if
+147: # SHC_COMPOSE_TESTS != "1". This runs at collection time and is more
+148: # reliable than fixtures or pytestmark skipif.
+149: def pytest_collection_modifyitems(config, items):
+149:     if not compose_tests_enabled():
+150:         skip_marker = pytest.mark.skip(
+151:             reason=(
+152:                 f"compose suite is opt-in and runs the real Docker daemon: set "
+153:                 f"{FORCE_ENV}=1 (issue #134). `make test` and a bare `pytest` are "
+154:                 "unaffected."
+155:             )
+156:         )
+157:         for item in items:
+158:             item.add_marker(skip_marker)
 
 
 # ---------------------------------------------------------------------------
