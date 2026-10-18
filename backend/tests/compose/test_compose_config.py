@@ -718,14 +718,34 @@ def test_a_renaming_nothing_override_is_refused_before_the_verb_runs(
     )
 
     witness = "ps"
-    assert (
-        witness not in EXECUTED_ARGVS[-1] if EXECUTED_ARGVS else True
-    ), "sanity: the previous exec log should not already end in the witness"
-
+    # Scoped to the calls THIS test makes, not the whole session.
+    #
+    # The previous version scanned every argv the suite had ever executed for the
+    # token `ps`, and asserted that the last recorded call did not contain it.
+    # Both halves are order-dependent: `ComposeStack.container_id()` issues
+    # `docker compose ... ps -q backend`, so any earlier test that touched the
+    # stack poisons the scan, and a future `-p randomly` would flip it at random.
+    # That is the spec's own D3 - "do not rely on order" - and it reproduced as:
+    #
+    #   pytest backend/tests/compose/test_lifecycle.py \
+    #          backend/tests/compose/test_compose_config.py -k "..."
+    #   E  AssertionError: sanity: the previous exec log should not already end
+    #      in the witness
+    #
+    # Snapshotting the length and scanning only the suffix is the pattern the
+    # negative control below already uses; this adopts it rather than inventing a
+    # second one.
+    before = len(EXECUTED_ARGVS)
     with pytest.raises(InterlockViolation, match="does not rename"):
         run_destructive_compose(override, witness, "--format", "json")
 
-    ran_witness = [argv for argv in EXECUTED_ARGVS if witness in argv]
+    # Both the witness verb AND this test's own override path, so a `ps` from any
+    # other source cannot be mistaken for the witness even if the window grows.
+    ran_witness = [
+        argv
+        for argv in EXECUTED_ARGVS[before:]
+        if witness in argv and str(override) in " ".join(argv)
+    ]
     assert ran_witness == [], (
         "the interlock raised, but the witness verb had ALREADY been executed: "
         f"{[' '.join(a) for a in ran_witness]}. The guard is after the call, so "
