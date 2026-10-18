@@ -141,15 +141,19 @@ def destructive_allowed() -> bool:
 #: alone (`-m compose -k config`), so it costs about a second when opted into.
 COMPOSE_PYTESTMARK = [
     pytest.mark.compose,
-    pytest.mark.skipif(
-        not compose_tests_enabled(),
-        reason=(
-            "compose suite is opt-in and runs the real Docker daemon: set "
+]
+
+# Opt-in gate: autouse fixture that skips all tests if SHC_COMPOSE_TESTS != "1".
+# This runs at test execution time and is more reliable than a module-level
+# skipif in pytestmark (which can be tricky with list markers).
+@pytest.fixture(autouse=True)
+def _require_compose_opt_in(request):
+    if not compose_tests_enabled():
+        pytest.skip(
+            f"compose suite is opt-in and runs the real Docker daemon: set "
             f"{FORCE_ENV}=1 (issue #134). `make test` and a bare `pytest` are "
             "unaffected."
-        ),
-    ),
-]
+        )
 
 
 # ---------------------------------------------------------------------------
