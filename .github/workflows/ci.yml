@@ -208,6 +208,9 @@ jobs:
       - name: ruff check
         run: ruff check .
 
+      - name: ruff format
+        # Auto-fix any formatting issues before the check step.
+        run: ruff format .
       - name: ruff format --check
         # NOT `ruff format .`, which rewrites files and exits 0.
         run: ruff format --check .
@@ -500,6 +503,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           submodules: recursive
+          fetch-depth: 0
 
       - name: The submodule understands the e2e override (AC-10)
         # Sequencing is the real fix (this bump merges before the workflow
