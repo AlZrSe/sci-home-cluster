@@ -9,10 +9,11 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Dict
 
-from fastapi import FastAPI, Request, HTTPException
+from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 # Configure logging BEFORE anything that logs at import time.
 #
@@ -195,9 +196,21 @@ async def request_logging_middleware(request: Request, call_next):
     return response
 
 
-@app.exception_handler(HTTPException)
-async def http_exception_handler(request: Request, exc: HTTPException):
-    """Convert HTTPException to ErrorResponse format."""
+@app.exception_handler(StarletteHTTPException)
+async def http_exception_handler(request: Request, exc: StarletteHTTPException):
+    """Convert HTTPException to ErrorResponse format.
+
+    Registered for starlette's HTTPException, not fastapi's subclass, and the
+    distinction is load-bearing. Starlette's router raises the BASE class itself
+    when nothing matched (404) and when the path exists under another method
+    (405) - `starlette/routing.py: Route.handle` and `Router.not_found` both do
+    `raise HTTPException(...)` with `starlette.exceptions.HTTPException`.
+    Registering only fastapi's subclass therefore covers what the application
+    raises and misses everything the framework raises, so a routing-level 404
+    answered `{"detail": "Not Found"}` while every application 404 carried the
+    ErrorResponse envelope. fastapi.HTTPException IS a subclass of this one, so
+    the base registration covers both and nothing is lost (issue #140).
+    """
     # APIError carries its own code; anything else falls back to the
     # status-code map.
     error_code = getattr(exc, "error_code", None) or get_error_code(
@@ -227,6 +240,10 @@ async def http_exception_handler(request: Request, exc: HTTPException):
             instance=str(request.url),
             error_code=error_code,
         ).model_dump(),
+        # Carried through rather than dropped. A 405 raised by Starlette sets
+        # `Allow`, and a 405 without it is a 405 a client cannot act on - the
+        # one header that tells it which methods to try.
+        headers=getattr(exc, "headers", None),
     )
 
 

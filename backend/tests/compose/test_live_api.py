@@ -1,5 +1,6 @@
 """
-MUST M-3.1 .. M-3.10 - the running container over its PUBLISHED port (layer L3).
+MUST M-3.1 .. M-3.10 and M-3.11 - the running container over its PUBLISHED port
+(layer L3).
 
 Every request goes to `127.0.0.1:<free-port>`, which is a path the image's own
 healthcheck does NOT cover: it uses `127.0.0.1:8000` *inside* the container, so
@@ -226,6 +227,51 @@ def test_unknown_api_route_is_a_json_404(cluster: ClusterClient) -> None:
         "the unknown API route returned an HTML body. That is the SPA fallback "
         "leaking into the API namespace (backend/core/frontend.py:137-139).",
     )
+
+
+def test_a_collection_route_without_its_slash_still_answers(
+    cluster: ClusterClient,
+) -> None:
+    """
+    M-3.11 - `GET /api/v1/jobs` and `GET /api/v1/nodes`, the exact URLs the SPA
+    issues, answer 200 over the published port.
+
+    Issue #140. The routers declare the collection paths WITH a trailing slash -
+    FastAPI rejects `@router.get("")` - while `frontend/src/services/http.ts`
+    builds `/jobs` and `/nodes`. The SPA catch-all
+    (`backend/core/frontend.py::_SpaFallbackRoute`) used to match that missing
+    slash, so Starlette's `redirect_slashes` fallback never ran and the
+    dashboard's two list fetches answered 404 against the image the dashboard
+    ships in.
+
+    `ClusterClient` is an `httpx.Client`, which follows redirects by default, so
+    this asserts the WHOLE chain rather than the redirect itself: the status
+    alone would be satisfied by a 307 that led nowhere. The unit test
+    `backend/tests/unit/test_frontend_serving.py` is the layer that pins the
+    307 and its `Location`; this is the layer that proves the IMAGE does it.
+    """
+    for path, body_key in (("/api/v1/jobs", "items"), ("/api/v1/nodes", None)):
+        response = cluster.get(path)
+        assert response.status_code == 200, (
+            f"GET {path} answered {response.status_code}: {response.text[:200]}. "
+            "This is the URL frontend/src/services/http.ts sends on every "
+            "dashboard load (issue #140)."
+        )
+        payload = response.json()
+        assert isinstance(payload, (list, dict)), (
+            f"GET {path} returned {type(payload).__name__}, not the documented "
+            f"collection shape: {response.text[:200]}"
+        )
+        if body_key is not None:
+            assert (
+                body_key in payload
+            ), f"GET {path} returned {sorted(payload)}, which has no {body_key!r}"
+        assert_not_in(
+            "<!doctype html",
+            response.text.lower(),
+            f"GET {path} returned HTML; the SPA shell leaked into the API "
+            "namespace, which is the other half of issue #140.",
+        )
 
 
 def test_docs_is_served(cluster: ClusterClient) -> None:
