@@ -336,12 +336,15 @@ jobs:
       - name: Negative control — the suite is opt-in and says so (AC-5)
         run: |
           set -o pipefail
-          pytest tests/compose -m compose 2>&1 | tee compose-not-opted-in.log
+          # -v is required so pytest prints skip reasons; otherwise the grep below
+          # finds nothing and the negative control fails vacuously.
+          pytest tests/compose -m compose -v 2>&1 | tee compose-not-opted-in.log
 
       - name: Verify the negative control
         run: |
           if ! grep -q 'compose suite is opt-in' compose-not-opted-in.log; then
             echo "::error::the un-opted-in run did not report the opt-in skip reason"
+            cat compose-not-opted-in.log
             exit 1
           fi
           if grep -qE '^[0-9]+ passed' compose-not-opted-in.log; then
