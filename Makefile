@@ -1,7 +1,7 @@
 # Scientific Home Cluster - Development Makefile
 # Provides convenient commands for backend and frontend development
 
-.PHONY: help install install-dev test test-unit test-integration test-watch lint format typecheck clean
+.PHONY: help install install-dev test test-unit test-integration test-compose test-watch lint format typecheck clean
 .PHONY: backend-dev backend-build backend-migrate frontend-dev frontend-build frontend-lint frontend-format
 .PHONY: run-agent db-upgrade db-downgrade db-revision run
 .PHONY: env-init env-token
@@ -16,6 +16,8 @@ help:
 	@echo "  make test             Run all tests with coverage"
 	@echo "  make test-unit        Run unit tests only"
 	@echo "  make test-integration Run integration tests only"
+	@echo "  make test-compose    Run the opt-in docker-compose suite (needs Docker;"
+	@echo "                       creates and deletes shc-e2e-* volumes - see docker/README.md)"
 	@echo "  make test-watch       Run tests in watch mode"
 	@echo "  make lint             Run ruff linter on backend"
 	@echo "  make format           Format backend code with ruff"
@@ -65,6 +67,25 @@ test-unit:
 
 test-integration:
 	cd backend && pytest backend/tests/integration -v
+
+# Opt-in suite that runs the checked-in docker-compose.yaml against a real Docker
+# daemon (issue #134). Deliberately WITHOUT coverage: a live-container run
+# contributes zero lines of backend/, so folding it into the coverage gate would
+# only add minutes.
+#
+# It creates and deletes volumes named shc-e2e-* and republishes the hardcoded
+# port 8000 on a free one; it NEVER touches shc-data or shc-state. See
+# docker/README.md "Testing the compose file" before running it.
+#
+#   make test-compose
+#   SHC_COMPOSE_TESTS=1 pytest tests/compose -m compose -k config   # from backend/: static layer, ~1s
+#
+# NB the path is `tests/compose`, not `backend/tests/compose`: the `cd backend`
+# makes it relative to backend/, and pytest resolves a path argument against the
+# invocation CWD, not against rootdir. (test-unit and test-integration above have
+# the same bug and collect nothing today - pre-existing, reported separately.)
+test-compose:
+	cd backend && SHC_COMPOSE_TESTS=1 SHC_COMPOSE_ALLOW_DESTRUCTIVE=1 pytest tests/compose -m compose -v
 
 test-watch:
 	cd backend && pytest-watch --runner "pytest --cov=backend"

@@ -81,12 +81,41 @@ Consequences for the workflow below:
 - Verify delivery with a clean recursive clone: `git clone --recurse-submodules
   https://github.com/AlZrSe/sci-home-cluster.git` must yield the new frontend code.
 
+## Where the compose tests live
+
+`backend/tests/compose/` holds an opt-in suite that runs the **checked-in**
+`docker-compose.yaml` against a real Docker daemon (issue #134) — the layer
+between "the image builds" and "the API answers", which
+`backend/tests/integration/` (in-process `ASGITransport`) structurally cannot
+reach: it never runs the Dockerfile, never publishes a port, never mounts a
+volume, never bind-mounts the Syncthing folder, and never runs the `HEALTHCHECK`.
+
+Three consequences for the workflow:
+
+- **It is not part of `make test`.** The `compose` marker and
+  `SHC_COMPOSE_TESTS=1` gate it; without that variable every test in the
+  directory is SKIPPED. `make test-integration` is also unaffected — it is
+  path-based (`backend/tests/integration`), so adding a fifth kind of test there
+  would have silently made an existing developer command need Docker and publish
+  a port.
+- **It is destructive-adjacent and says so.** It creates and deletes volumes
+  named `shc-e2e-*`; it never touches `shc-data` or `shc-state`. See
+  `docker/README.md` § "Testing the compose file".
+- **A PR that adds compose tests has to run them.** "Written" is not "verified";
+  see the Definition of Done.
+
 ## Definition of Done
 
 A task is considered done when:
 - [ ] Code implements all acceptance criteria
 - [ ] Unit tests pass (>80% coverage)
 - [ ] Integration tests pass (where applicable)
+- [ ] If the change touches `docker-compose.yaml`, `docker/Dockerfile` or anything under `docker/`, the
+      opt-in compose suite has been **run against a real Docker daemon**, not just written:
+      `make test-compose`. It is opt-in (`SHC_COMPOSE_TESTS=1`) and it is destructive-adjacent — it
+      creates and deletes volumes named `shc-e2e-*` and never `shc-data`/`shc-state`, but it must
+      only ever be pointed at your own checkout. See `docker/README.md` § "Testing the compose file"
+      before the first run on a new machine. `make test` does **not** run it and does not need Docker.
 - [ ] No backend lint/type errors (`ruff check . && ruff format . && mypy .`)
 - [ ] No frontend lint/type errors (`cd frontend && npm run lint && npm run typecheck`) — and read `frontend/README.md#type-checking` first: `npm run typecheck` covers `src/` and the vitest suite but **not** `tests/e2e/**`, and `npm run build` does not check types at all
 - [ ] Documentation updated (README, API docs)

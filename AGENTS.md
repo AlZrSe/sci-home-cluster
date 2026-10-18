@@ -17,6 +17,7 @@ Distributed platform for running scientific workloads on a home GPU cluster.
 | Frontend test | `cd frontend && npm test` (vitest unit + integration; e2e is `npm run test:e2e`) |
 | Backend lint | `ruff check . && ruff format . && mypy .` |
 | Backend test | `pytest --cov=backend` |
+| Compose test | `make test-compose` (**opt-in, destructive-adjacent** — creates and deletes `shc-e2e-*` volumes, never `shc-data`/`shc-state`; needs Docker; see `docker/README.md` §"Testing the compose file") |
 | API server | `uvicorn backend.main:app --reload` |
 | Worker agent | `run-agent --node-id node-01` (needs `SYNCTHING_ROOT` set; see README "Worker Agent") |
 
@@ -151,6 +152,27 @@ new frontend code. `frontend/AGENTS.md` also carries a Lovable sync notice: comm
 | Frontend type | `src/` + the vitest suite | `cd frontend && npm run typecheck` |
 | Frontend lint | — | `cd frontend && npm run lint` |
 | E2E | Critical user flows | `cd frontend && npm run test:e2e` (Playwright; needs a live backend + dev server) |
+| Compose | The checked-in `docker-compose.yaml` | `make test-compose` (**opt-in**: `SHC_COMPOSE_TESTS=1`; needs Docker; destructive-adjacent) |
+
+**The compose suite is opt-in and destructive-adjacent. Read this before running
+it.** `backend/tests/compose/` runs the checked-in `docker-compose.yaml` against a
+real Docker daemon — it builds the image, publishes a port, bind-mounts
+`./syncthing`, and issues `docker compose down -v`. Without `SHC_COMPOSE_TESTS=1`
+every test in it is **SKIPPED**, which is why `pytest` and `make test` are
+unaffected (collecting the 41 skipped tests costs ≈0.2 s — 0.17–0.43 s across
+five measurements on Windows, the spread being collection noise).
+
+It creates and deletes volumes named `shc-e2e-*` and **never** `shc-data` or
+`shc-state`. That containment is structural, not conventional: both volumes in
+`docker-compose.yaml` are pinned with `name:` (`:327-330`) and — measured —
+`COMPOSE_PROJECT_NAME` does not namespace them, so a `down -v` resolving to the
+checked-in file would delete a developer's live cluster and JWT signing key. The
+helper that issues a destructive verb therefore **requires the override path as
+an argument**, so passing only `-f docker-compose.yaml` is unreachable rather
+than discouraged, and `down -v` additionally needs `SHC_COMPOSE_ALLOW_DESTRUCTIVE=1`.
+Never point it at anything but your own checkout. Full detail, including what
+each layer asserts and two caveats about what it does *not* prove:
+`docker/README.md` § "Testing the compose file".
 
 **Frontend types are checked — with one recorded gap.** `npm run typecheck` runs
 `tsc --noEmit` over `frontend/tsconfig.json` and covers `src/**` *and the whole vitest suite*

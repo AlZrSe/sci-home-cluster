@@ -305,6 +305,169 @@ commit that introduced this file.
 - `/api/v1/**`, `/docs` and `/redoc` are never answered with a page — an unknown
   API route stays a JSON 404.
 
+## Testing the compose file
+
+`docker-compose.yaml` and this image are exercised by an opt-in pytest suite,
+`backend/tests/compose/` (issue #134). It runs the **checked-in** file against a
+real Docker daemon: it builds the image, publishes a port, bind-mounts the
+Syncthing folder, waits for the `HEALTHCHECK`, restarts the container, and issues
+`down -v`.
+
+> ### ⚠️ It creates and deletes volumes named `shc-e2e-*`
+>
+> Run it **only against your own checkout, never pointed at a real cluster.**
+>
+> The suite generates an override that renames both volumes to `shc-e2e-<id>-data`
+> and `shc-e2e-<id>-state`, and deletes exactly those at the end. But the check
+> `docker-compose.yaml` performs is the real thing: `down -v` really does delete
+> the volumes it is aimed at, which is why the override exists at all. Both
+> volumes here are pinned with `name:` (`:327-330`), and — measured, not assumed
+> — `COMPOSE_PROJECT_NAME` does **not** namespace them. A `down -v` that resolved
+> to the checked-in file would delete `shc-data` and `shc-state`: your cluster,
+> and your JWT signing key.
+>
+> The suite refuses to let that happen structurally, not by convention: the
+> helper that issues a destructive verb **requires the override path as an
+> argument**, so passing only `-f docker-compose.yaml` is not discouraged, it is
+> unreachable. A `down -v` additionally needs a second opt-in variable. See
+> "Containment" below.
+
+### Running it
+
+Nothing to configure, and no `.env` is needed — a fresh clone is the precondition
+the static layer asserts.
+
+```bash
+# Everything, including the destructive `down -v` scenario:
+make test-compose
+
+# Everything except the destructive scenario:
+SHC_COMPOSE_TESTS=1 pytest backend/tests/compose -m compose -v
+
+# Just the static layer — `docker compose config` only, no daemon state touched.
+# About a second even when opted into:
+SHC_COMPOSE_TESTS=1 pytest backend/tests/compose -m compose -k config
+
+# Add the sentinel rebuild (SHOULD S-2), which costs a full vite build
+# (~140 s measured here):
+SHC_COMPOSE_TESTS=1 SHC_COMPOSE_SENTINEL_BUILD=1 pytest backend/tests/compose -m compose
+```
+
+Requires Docker Compose and a reachable daemon. Without Docker, an opted-in run
+skips with a message naming the missing prerequisite — it does not error.
+
+### Variables
+
+| Variable | Effect |
+| --- | --- |
+| unset | Every test under `backend/tests/compose/` is **SKIPPED**. `pytest` and `make test` are unaffected; collecting the 41 skipped tests costs ≈0.2 s (0.17–0.43 s across five measurements, the spread being collection noise). |
+| `SHC_COMPOSE_TESTS=1` | Runs the suite. |
+| `SHC_COMPOSE_ALLOW_DESTRUCTIVE=1` | Additionally permits `down -v` against the throwaway stack. Split from the flag above so the one genuinely destructive scenario needs a second, deliberate word. |
+| `SHC_COMPOSE_SENTINEL_BUILD=1` | Additionally builds a second image with a sentinel `VITE_API_URL` and asserts the build arg reached the bundle (SHOULD S-2). |
+
+`make test` is deliberately **unchanged**: it runs `cd backend && pytest
+--cov=backend`, and no compose test executes. A live-container run contributes
+zero lines of `backend/`, so folding it into the coverage gate would only add
+minutes.
+
+### Containment
+
+The blast radius of `down -v` is the reason this suite is written the way it is:
+
+- The **L1 static layer** runs `docker compose config` against the single
+  checked-in file. That is a pure parse-and-interpolate — no container, network
+  or volume is created or removed — so those ten load-bearing decisions are
+  pinned at zero cost and zero danger.
+- Everything that touches the daemon runs behind a **generated** override that
+  renames the two volumes and republishes the single hardcoded port on a free
+  one. `ports` uses `!override`, **not** `!reset`: measured, `!reset` deletes the
+  `ports:` key entirely, so the stack would publish nothing and every live
+  scenario would fail with a connection refused that reads like an application
+  bug.
+- The **bind mount still points at `<repo-root>/syncthing`**, because pointing it
+  elsewhere would mean not testing the documented default. The suite therefore
+  writes real job folders into your checkout, and removes exactly the ones it
+  created — by name, never by clearing the folder.
+- At session start it refuses to run if either `shc-e2e-*` volume already exists
+  (a `uuid4` collision is impossible, so a hit means something else owns it), and
+  at session end it removes **only** what it created, by exact name. Anything it
+  does not recognise is reported rather than removed.
+
+Verified on a machine where `shc-data` and `shc-state` both already existed and a
+real cluster was running: `docker volume ls` and `docker ps -a` were
+byte-identical before and after a full run.
+
+### What is asserted
+
+| Layer | What |
+| --- | --- |
+| L1 — static | No `.env` needed; one service; no `version:`; build-arg defaults byte-identical to the Dockerfile's `ARG`s; `DB_POOL` absent; the two volume names pinned; the Syncthing mount is a long-syntax bind and `SYNCTHING_ROOT` moves only its source; the published port is the constant `8000`; only the documented keys on the service; `SHARED_TOKEN` defaults to empty. |
+| L2 — image | No SQLite state shipped (the #131 regression), no `.env`, no signing key, no Node/npm, no frontend source, `_shell.html` present, and the bundle carries an absolute `VITE_API_URL`. |
+| L3 — live HTTP | `(healthy)`; `/api/v1/health`; `/` and a client route both serve the SPA shell byte-for-byte; an unknown `/api/v1/**` stays a JSON 404; `/docs` works; the generated token is persisted, named in a WARNING and **never printed**; it mints a JWT; and a non-localhost `Host` without a token is 401 — with the localhost-bypass control that makes that 401 mean something. |
+| L4 — filesystem | Exactly three mounts and nothing over the code; a job submitted over the port appears **on the host** (the one assertion that distinguishes a working bind mount from #104's silent second cluster); the database is on `shc-data` and the pool is `null`. |
+| L5 — lifecycle | Plain `down` keeps both volumes and the data; `down -v` deletes both; the declared restart policy recovers an unexpected death; a JWT survives `compose restart`; and `DB_POOL=pooled` is pinned as **not** starting (issue #130, `xfail(strict=True)` so the fix is a deliberately red test). |
+
+Two honest caveats, both recorded in the tests themselves:
+
+- `syncthing_status: "available"` in `/health` proves **nothing** about the bind
+  mount — a directory the backend created for itself satisfies it. Only the L4
+  job-folder assertion does.
+- The restart-policy test proves recovery from an unexpected process death. It
+  cannot distinguish `unless-stopped` from `always`; only the static
+  `restart == "unless-stopped"` assertion does that.
+
+### Declined SHOULD scenarios
+
+Issue #134's catalogue listed six SHOULD scenarios. Five are implemented (S-1 the
+host→container watcher, gated on a native Linux bind mount; S-2 the sentinel
+rebuild, behind `SHC_COMPOSE_SENTINEL_BUILD=1`; S-3 the image env and healthcheck;
+S-5 the immutable cache header; S-6 `--force-recreate`). The sixth is **declined**,
+and the reason is recorded here rather than only in a PR body, because a decline
+that lives in a closed review is a decline nobody can find next time.
+
+**S-4 — an explicit `SHARED_TOKEN` wins and is never persisted — is declined.**
+The contract it would test is `docker-compose.yaml:163-165` ("An explicit value
+always wins and is never persisted") and `docker/README.md:95-100`, and it is a
+real one: an operator setting `SHARED_TOKEN` in `.env` gets a cluster where the
+value is never written to disk and never logged.
+
+It is declined because of **cost against the containment this suite buys**. As
+specified it needs a *second* stack with different environment — a second image
+build, a second pair of volumes and a second published port — and the only
+genuinely destructive verb in the suite (`down -v`) would then have two targets
+instead of one, doubling the blast radius the rest of the harness exists to keep
+at exactly one.
+
+What the L1 layer already pins is the mechanism behind the contract:
+`docker-compose.yaml:173` is `${SHARED_TOKEN:-}`, which cannot carry a default
+token, and MUST M-1.10 asserts the resolved value is `""` under a scrubbed
+environment.
+
+**A real gap, stated rather than papered over.** The other half — *an explicitly
+configured value is never written to `/app/.shc/shared_token`* — is **not covered
+anywhere today**. `backend/tests/unit/` tests `SHARED_TOKEN` end-to-end through
+`AuthService` but never calls `_resolve_shared_token` (`config.py:283-338`), and
+this suite exercises only the *generated* path (M-3.7). An earlier draft of this
+note claimed in-process coverage; that was wrong, and grepping for
+`_resolve_shared_token` across `backend/tests/` finds only the reference in
+`test_live_api.py`'s docstring. So this is a known, deliberately-uncovered seam
+rather than a property someone else is holding.
+
+It is closable cheaply when someone wants it, and the cheap way is *not* a second
+stack: reuse this one. `down -v`, then `up -d` with `SHARED_TOKEN` injected into
+the environment, then assert the file is absent, no WARNING was logged, the
+explicit value authenticates and a generated one does not — then `down -v` again
+to restore. That is one extra `down -v` on the existing override stack and no
+second image, which is roughly what M-5.2 already costs. It was left out here
+because it is new coverage rather than a repair.
+
+The COULD scenarios (C-1 a planted database as a negative control, C-2 path
+traversal over HTTP, C-3 the job-log WebSocket, C-4 a recursive-clone build, C-5 a
+headless browser) were each assessed in the issue and none is worth writing: C-2
+is not deliverable through a normalising client, C-3 would add a dev dependency
+for something M-2.4 and S-2 already pin directly, C-4 and C-5 are out of
+proportion, and C-1's job is done by M-2.1's known-file self-check.
+
 ## Notes
 
 - The final image contains no Node, no npm, and no frontend source — only the
@@ -316,4 +479,5 @@ commit that introduced this file.
   @rollup/rollup-linux-x64-gnu`. See `frontend/scripts/check-lockfile-platforms.mjs`.
 - Nothing is verified by these files alone on a machine without Docker or Node.
   The first real `docker build` is what confirms the SPA build emits `_shell.html`
-  on this submodule revision.
+  on this submodule revision. On a machine **with** Docker, the opt-in suite
+  above does that and much more — see [Testing the compose file](#testing-the-compose-file).
