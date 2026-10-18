@@ -262,6 +262,15 @@ jobs:
         # printWidth: 100 prefers single-line imports when under 100 chars,
         # which is the opposite of what the original error suggested.
         run: npx prettier --write .
+      - name: Verify formatting
+        run: |
+          # Check if any files were modified by prettier
+          if ! git diff --quiet; then
+            echo "Prettier modified files:"
+            git diff --stat
+          else
+            echo "No formatting changes needed"
+          fi
       - name: npm run lint
         run: npm run lint
 
@@ -343,13 +352,16 @@ jobs:
           set -o pipefail
           # -v is required so pytest prints skip reasons; otherwise the grep below
           # finds nothing and the negative control fails vacuously.
-          pytest tests/compose -m compose -v 2>&1 | tee compose-not-opted-in.log
+          # -x stops on first failure so we see the first error.
+          pytest tests/compose -m compose -v -x 2>&1 | tee compose-not-opted-in.log
 
       - name: Verify the negative control
         run: |
           if ! grep -q 'compose suite is opt-in' compose-not-opted-in.log; then
             echo "::error::the un-opted-in run did not report the opt-in skip reason"
+            echo "=== Full log ==="
             cat compose-not-opted-in.log
+            echo "=== End log ==="
             exit 1
           fi
           if grep -qE '^[0-9]+ passed' compose-not-opted-in.log; then
@@ -500,6 +512,11 @@ jobs:
             git -C frontend log --oneline -1
             exit 1
           fi
+          # Verify the submodule has the #141 fix (localStorage.clear() after navigation)
+          if ! git -C frontend log --oneline -1 --grep="#141" | grep -q "820a444\|141"; then
+            echo "::warning::submodule may not have #141 fix; e2e tests may fail with SecurityError"
+            git -C frontend log --oneline -1
+          fi
           echo "OK: playwright.config.ts reads PLAYWRIGHT_BASE_URL."
 
       - name: Set up Node ${{ env.NODE_VERSION }}
@@ -632,6 +649,7 @@ jobs:
 
       - name: Run the Playwright suite against the stack
         working-directory: frontend
+        timeout-minutes: 30
         env:
           # One origin, no dev servers. With this set, playwright.config.ts
           # resolves `webServer` to undefined, so Playwright starts nothing and
