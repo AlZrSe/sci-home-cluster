@@ -363,11 +363,13 @@ jobs:
           # - tee can cause race conditions with the verification step reading the log
           # - ANSI color codes from pytest can break grep pattern matching
           # Redirect to file directly with --color=no, then the next step cats it.
-          pytest tests/compose -m compose -v -x --color=no > compose-not-opted-in.log 2>&1; exit 0
+          pytest tests/compose -m compose -v -x -r s --color=no > compose-not-opted-in.log 2>&1; exit 0
 
       - name: Verify the negative control
         run: |
-          if ! grep -q 'compose suite is opt-in' compose-not-opted-in.log; then
+          # 'opt-in' is a unique substring of the skip reason that appears on a single line
+          # even when pytest wraps the full reason across multiple lines.
+          if ! grep -q 'opt-in' compose-not-opted-in.log; then
             echo "::error::the un-opted-in run did not report the opt-in skip reason"
             echo "=== Full log ==="
             cat compose-not-opted-in.log
@@ -666,12 +668,14 @@ jobs:
           # resolves `webServer` to undefined, so Playwright starts nothing and
           # every `page.goto("/login")` is served by the container.
           PLAYWRIGHT_BASE_URL: "http://localhost:8000"
-        run: npx playwright test --fail-on-flaky-tests
+        run: npx playwright test --fail-on-flaky-tests --retries=0 --timeout=60000
         # `--fail-on-flaky-tests` is the one place this job is STRICTER than the
         # local command on purpose. playwright.config.ts sets `retries: 2`
         # under CI, and Playwright reports a test that passed on retry as flaky
         # while still exiting 0 - so `npm run test:e2e` by hand would hide it.
         # AC-16: a spec that fails first and passes on retry must be red here.
+        # `--retries=0` fails fast instead of retrying; `--timeout=60000` caps
+        # individual test execution at 60s to prevent hangs.
 
       - name: Upload the Playwright report
         if: always()
