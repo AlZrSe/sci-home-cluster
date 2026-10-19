@@ -137,7 +137,7 @@ def destructive_allowed() -> bool:
 COMPOSE_PYTESTMARK = [
     pytest.mark.compose,
     pytest.mark.skipif(
-        not compose_tests_enabled(),
+        lambda: not compose_tests_enabled(),
         reason=(
             f"compose suite is opt-in and runs the real Docker daemon: set "
             f"{FORCE_ENV}=1 (issue #134). `make test` and a bare `pytest` are "

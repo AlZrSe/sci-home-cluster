@@ -354,6 +354,9 @@ jobs:
       # compose suite because it was told to" are different claims, and only one
       # of them is worth anything.
       - name: Negative control — the suite is opt-in and says so (AC-5)
+        env:
+          SHC_COMPOSE_TESTS: ""
+          SHC_COMPOSE_ALLOW_DESTRUCTIVE: ""
         run: |
           set -o pipefail
           # -v is required so pytest prints skip reasons; otherwise the grep below
