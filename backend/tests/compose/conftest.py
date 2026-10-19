@@ -71,6 +71,7 @@ from typing import Any, Iterator, Mapping, Optional, Sequence
 
 import httpx
 import pytest
+import yaml
 
 # ---------------------------------------------------------------------------
 # Repository layout (D7.1).  Resolved from __file__, never from the process CWD.
@@ -141,15 +142,8 @@ def destructive_allowed() -> bool:
 #: alone (`-m compose -k config`), so it costs about a second when opted into.
 COMPOSE_PYTESTMARK = [
     pytest.mark.compose,
-]
-
-# Opt-in gate: module-level skipif marker that skips all tests if
-# SHC_COMPOSE_TESTS != "1". This runs at collection time and is more
-# reliable than fixtures or pytest_collection_modifyitems hook.
-COMPOSE_PYTESTMARK = [
-    pytest.mark.compose,
     pytest.mark.skipif(
-        not compose_tests_enabled(),
+        lambda: not compose_tests_enabled(),
         reason=(
             f"compose suite is opt-in and runs the real Docker daemon: set "
             f"{FORCE_ENV}=1 (issue #134). `make test` and a bare `pytest` are "
@@ -282,8 +276,8 @@ class ComposeRun:
         return (
             f"Command: {' '.join(self.argv)}\n"
             f"Exit code: {self.returncode}\n"
-            f"Stdout:\n{self.stdout}\n"
-            f"Stderr:\n{self.stderr}"
+            "Stdout:\n{self.stdout}\n"
+            "Stderr:\n{self.stderr}"
         )
 
 
@@ -467,7 +461,6 @@ def assert_override_engaged(argv: list[str]) -> None:
 
 def assert_not_checked_in_volumes(override_file: Path) -> None:
     """Fail if the override still references the checked-in volume names."""
-    import yaml
     data = yaml.safe_load(override_file.read_text())
     vols = data.get("volumes", {})
     for name in ("shc-data", "shc-state"):
@@ -477,10 +470,8 @@ def assert_not_checked_in_volumes(override_file: Path) -> None:
 
 def assert_override_renames_volumes(override_file: Path) -> None:
     """Fail if the merged config still has the checked-in volume names."""
-    import yaml
-    import subprocess
     result = subprocess.run(
-        ["docker", "compose", "-f", str(COMPOSE_FILE), "-f", str(override_file), "config"],
+        ["docker", "compose", "-f", str(COMPOSE_FILE), "-f", str(self.override_file), "config"],
         capture_output=True,
         text=True,
         cwd=str(REPO_ROOT),
