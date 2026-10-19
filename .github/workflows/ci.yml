@@ -525,10 +525,11 @@ jobs:
             git -C frontend log --oneline -1
             exit 1
           fi
-          # Verify the submodule has the #141 fix (localStorage.clear() after navigation)
-          if ! git -C frontend log --oneline -1 --grep="#141" | grep -q "820a444\|141"; then
+          # Verify the submodule has the #141 fix (localStorage.clear() after navigation).
+          # Check commit history, not just the latest commit.
+          if ! git -C frontend log --oneline --grep="#141" | grep -q .; then
             echo "::warning::submodule may not have #141 fix; e2e tests may fail with SecurityError"
-            git -C frontend log --oneline -1
+            git -C frontend log --oneline -3
           fi
           echo "OK: playwright.config.ts reads PLAYWRIGHT_BASE_URL."
 
