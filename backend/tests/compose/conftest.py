@@ -54,20 +54,14 @@ needs its own coverage story. See the issue's D1 for the measured cost.
 
 from __future__ import annotations
 
-import contextlib
-import hashlib
-import json
 import os
-import shutil
 import socket
 import subprocess
 import sys
-import time
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
-from types import ModuleType
-from typing import Any, AsyncGenerator, Iterator, Mapping, Optional, Sequence
+from typing import AsyncGenerator, Iterator, Mapping, Optional, Sequence
 
 import httpx
 import pytest
@@ -303,7 +297,9 @@ class ComposeStack:
     override_file: Path = field(init=False)
 
     def __post_init__(self):
-        self.override_file = REPO_ROOT / f"docker-compose.override.{self.project_name}.yaml"
+        self.override_file = REPO_ROOT / (
+            f"docker-compose.override.{self.project_name}.yaml"
+        )
 
     def _write_override(self) -> None:
         """Generate the override that renames volumes and moves the published port."""
@@ -425,7 +421,19 @@ class ComposeStack:
 
     def container_name(self) -> str:
         run = self._run(
-            ["docker", "compose", "-f", str(COMPOSE_FILE), "-f", str(self.override_file), "ps", "-a", "--format", "{{.Names}}", "backend"],
+            [
+                "docker",
+                "compose",
+                "-f",
+                str(COMPOSE_FILE),
+                "-f",
+                str(self.override_file),
+                "ps",
+                "-a",
+                "--format",
+                "{{.Names}}",
+                "backend",
+            ],
             check=False,
         )
         return run.stdout.strip()
@@ -433,7 +441,9 @@ class ComposeStack:
 
 #: A lightweight async client configured for the live compose stack.
 @pytest.fixture
-async def cluster(compose_stack: ComposeStack) -> AsyncGenerator[httpx.AsyncClient, None]:
+async def cluster(
+    compose_stack: ComposeStack,
+) -> AsyncGenerator[httpx.AsyncClient, None]:
     async with httpx.AsyncClient(
         base_url=compose_stack.base_url,
         timeout=30.0,
@@ -465,13 +475,23 @@ def assert_not_checked_in_volumes(override_file: Path) -> None:
     vols = data.get("volumes", {})
     for name in ("shc-data", "shc-state"):
         if vols.get(name, {}).get("name") in ("shc-data", "shc-state"):
-            raise InterlockViolation(f"override still uses checked-in volume name: {name}")
+            raise InterlockViolation(
+                f"override still uses checked-in volume name: {name}"
+            )
 
 
 def assert_override_renames_volumes(override_file: Path) -> None:
     """Fail if the merged config still has the checked-in volume names."""
     result = subprocess.run(
-        ["docker", "compose", "-f", str(COMPOSE_FILE), "-f", str(override_file), "config"],
+        [
+            "docker",
+            "compose",
+            "-f",
+            str(COMPOSE_FILE),
+            "-f",
+            str(override_file),
+            "config",
+        ],
         capture_output=True,
         text=True,
         cwd=str(REPO_ROOT),
@@ -483,7 +503,9 @@ def assert_override_renames_volumes(override_file: Path) -> None:
     for name in ("shc-data", "shc-state"):
         vol_name = vols.get(name, {}).get("name")
         if vol_name in ("shc-data", "shc-state"):
-            raise AssertionError(f"override does not rename volume '{name}': got {vol_name}")
+            raise AssertionError(
+                f"override does not rename volume '{name}': got {vol_name}"
+            )
 
 
 def run_destructive_compose(
@@ -492,7 +514,8 @@ def run_destructive_compose(
     check: bool = True,
     timeout: Optional[float] = 120.0,
 ) -> ComposeRun:
-    """Run a compose command with the override file engaged and volume rename verified."""
+    """Run a compose command with the override file engaged and
+    volume rename verified."""
     assert_override_renames_volumes(override_file)
     return _execute_argv(
         argv,
@@ -505,7 +528,12 @@ def run_destructive_compose(
     )
 
 
-def checked_in_run(argv: list[str], *, check: bool = True, timeout: Optional[float] = 30.0) -> ComposeRun:
+def checked_in_run(
+    argv: list[str],
+    *,
+    check: bool = True,
+    timeout: Optional[float] = 30.0,
+) -> ComposeRun:
     """Run compose against the checked-in file (no override)."""
     return _execute_argv(
         argv,
@@ -520,12 +548,129 @@ def compose_argv(*args: str) -> list[str]:
 
 
 class InterlockViolation(Exception):
+    """A destructive verb was aimed at the checked-in file's own state."""
     pass
+
+
+def assert_not_in(haystack: str, needle: str, message: str = "") -> None:
+    """Assert that `needle` is not in `haystack`, with a custom message."""
+    if needle in haystack:
+        msg = f"Expected {needle!r} to be absent from string"
+        if message:
+            msg += f": {message}"
+        raise AssertionError(msg)
+
+
+def image_config(image_id: str) -> dict:
+    """Get the configuration of a Docker image."""
+    result = subprocess.run(
+        ["docker", "image", "inspect", image_id],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    config = yaml.safe_load(result.stdout)
+    return config[0] if config else {}
+
+
+def run_in_image(image_id: str, command: str, timeout: float = 30.0) -> str:
+    """Run a command in a Docker image and return the output."""
+    result = subprocess.run(
+        ["docker", "run", "--rm", image_id, "sh", "-c", command],
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+    )
+    return result.stdout
+
+
+class ClusterClient:
+    """HTTP client for the cluster API, configured with the test port and auth."""
+
+    def __init__(self, port: int):
+        self.port = port
+        self.base_url = f"http://localhost:{port}"
+        self._client = httpx.Client(timeout=30.0)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self._client.close()
+
+    def get(self, path: str, **kwargs):
+        return self._client.get(f"{self.base_url}{path}", **kwargs)
+
+    def post(self, path: str, **kwargs):
+        return self._client.post(f"{self.base_url}{path}", **kwargs)
+
+
+def run_compose(
+    argv: list[str],
+    *,
+    check: bool = True,
+    timeout: Optional[float] = 120.0,
+) -> subprocess.CompletedProcess:
+    """Run a docker compose command and return the result."""
+    return subprocess.run(
+        ["docker", "compose", *argv],
+        cwd=str(REPO_ROOT),
+        env=scrubbed_env({}),
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+        check=check,
+    )
+
+
+def submit_job(stack: ComposeStack, jwt: str) -> str:
+    """Submit a job and return the job ID."""
+    job_spec = {
+        "name": "e2e-test-job",
+        "command": "echo hello",
+        "working_dir": "/tmp",
+        "env": {},
+        "resources": {"gpus": 0, "cpus": 1, "memory_gb": 1},
+        "paths": {"input": "/tmp/in", "output": "/tmp/out"},
+        "retry": {"max_retries": 0, "retry_delay_seconds": 0},
+    }
+    jwt_token = jwt
+    client = httpx.Client(timeout=30.0, headers={"Authorization": f"Bearer {jwt_token}"})
+    try:
+        resp = client.post(f"http://localhost:{stack.port}/api/v1/jobs", json=job_spec)
+        resp.raise_for_status()
+        return resp.json()["job_id"]
+    finally:
+        client.close()
+
+
+def volume_exists(name: str) -> bool:
+    """Check if a Docker volume exists."""
+    result = subprocess.run(
+        ["docker", "volume", "inspect", name],
+        capture_output=True,
+        text=True,
+    )
+    return result.returncode == 0
+
+
+def audit_destructive_invocations() -> list[str]:
+    """Return a list of destructive invocations that violated the interlock."""
+    violations = []
+    for argv in COMPOSE_INVOCATIONS:
+        if "down" in argv and "-v" in argv:
+            if sum(1 for arg in argv if arg == "-f") < 2:
+                violations.append(
+                    f"Destructive `docker compose down -v` without override: "
+                    f"{' '.join(argv)}"
+                )
+    return violations
 
 
 # ---------------------------------------------------------------------------
 # Pytest collection hook: negative control for destructive verbs (AC-21)
 # ---------------------------------------------------------------------------
+
 
 def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
     """Audit all recorded compose invocations for rogue destructive verbs."""
@@ -535,7 +680,10 @@ def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
     for argv in COMPOSE_INVOCATIONS:
         if "down" in argv and "-v" in argv:
             if sum(1 for arg in argv if arg == "-f") < 2:
-                violations.append(f"Destructive `docker compose down -v` without override: {' '.join(argv)}")
+                violations.append(
+                    f"Destructive `docker compose down -v` without override: "
+                    f"{' '.join(argv)}"
+                )
     if violations:
         sys.stderr.write("\n\n=== DESTRUCTIVE INVOCATION AUDIT FAILED ===\n")
         for v in violations:
