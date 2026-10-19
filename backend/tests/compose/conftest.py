@@ -67,7 +67,7 @@ import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 from types import ModuleType
-from typing import Any, Iterator, Mapping, Optional, Sequence
+from typing import Any, AsyncGenerator, Iterator, Mapping, Optional, Sequence
 
 import httpx
 import pytest
@@ -143,7 +143,7 @@ def destructive_allowed() -> bool:
 COMPOSE_PYTESTMARK = [
     pytest.mark.compose,
     pytest.mark.skipif(
-        lambda: not compose_tests_enabled(),
+        not compose_tests_enabled(),
         reason=(
             f"compose suite is opt-in and runs the real Docker daemon: set "
             f"{FORCE_ENV}=1 (issue #134). `make test` and a bare `pytest` are "
@@ -276,8 +276,8 @@ class ComposeRun:
         return (
             f"Command: {' '.join(self.argv)}\n"
             f"Exit code: {self.returncode}\n"
-            "Stdout:\n{self.stdout}\n"
-            "Stderr:\n{self.stderr}"
+            f"Stdout:\n{self.stdout}\n"
+            f"Stderr:\n{self.stderr}"
         )
 
 
@@ -453,9 +453,9 @@ def _mint_jwt(compose_stack: ComposeStack, shared_token: str) -> str:
     return r.json()["access_token"]
 
 
-def assert_override_engaged(argv: list[str]) -> None:
+def assert_override_engaged(argv: list[str], override_file: Path) -> None:
     """Fail if the override file is not among the -f arguments."""
-    if not any(str(COMPOSE_FILE) in arg or str(self.override_file) in arg for arg in argv):
+    if not any(str(COMPOSE_FILE) in arg or str(override_file) in arg for arg in argv):
         raise InterlockViolation("override file not engaged")
 
 
@@ -471,7 +471,7 @@ def assert_not_checked_in_volumes(override_file: Path) -> None:
 def assert_override_renames_volumes(override_file: Path) -> None:
     """Fail if the merged config still has the checked-in volume names."""
     result = subprocess.run(
-        ["docker", "compose", "-f", str(COMPOSE_FILE), "-f", str(self.override_file), "config"],
+        ["docker", "compose", "-f", str(COMPOSE_FILE), "-f", str(override_file), "config"],
         capture_output=True,
         text=True,
         cwd=str(REPO_ROOT),
