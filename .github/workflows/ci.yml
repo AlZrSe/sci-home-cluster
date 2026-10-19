@@ -401,7 +401,7 @@ jobs:
           SHC_COMPOSE_SENTINEL_BUILD: ${{ (github.event_name == 'schedule' || github.event_name == 'push') && '1' || '0' }}
         run: |
           set -o pipefail
-          pytest tests/compose -m compose --color=no 2>&1 | tee compose-suite.log
+          SHC_COMPOSE_TESTS=1 SHC_COMPOSE_ALLOW_DESTRUCTIVE=1 pytest tests/compose -m compose --color=no 2>&1 | tee compose-suite.log
 
       - name: Verify the suite's own summary (AC-5, AC-12, AC-15)
         # pytest's output, parsed. Not a re-run and not a re-derivation: the
