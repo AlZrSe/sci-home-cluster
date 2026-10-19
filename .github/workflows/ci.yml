@@ -358,7 +358,8 @@ jobs:
           SHC_COMPOSE_TESTS: ""
           SHC_COMPOSE_ALLOW_DESTRUCTIVE: ""
         run: |
-          set -o pipefail
+          # Do NOT use `set -o pipefail` here: pytest exits with code 5 when all
+          # tests are skipped (no tests collected), which is exactly what we expect.
           # -v is required so pytest prints skip reasons; otherwise the grep below
           # finds nothing and the negative control fails vacuously.
           # -x stops on first failure so we see the first error.
@@ -373,7 +374,7 @@ jobs:
             echo "=== End log ==="
             exit 1
           fi
-          if grep -qE '^[0-9]+ passed' compose-not-opted-in.log; then
+          if grep -qE '[0-9]+ passed' compose-not-opted-in.log; then
             echo "::error::the compose suite ran without SHC_COMPOSE_TESTS=1; the interlock is not working"
             exit 1
           fi
