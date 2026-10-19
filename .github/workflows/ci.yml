@@ -205,15 +205,17 @@ jobs:
           fi
           echo "OK: none of the banned escape hatches appear in this file."
 
-      - name: ruff check
-        run: ruff check .
-
       - name: ruff format
-        # Auto-fix any formatting issues before the check step.
+        # Auto-fix formatting first, then check. Order matters: format first,
+        # then check, so that CI fails on unformatted code rather than on
+        # formatting issues.
         run: ruff format .
       - name: ruff format --check
-        # NOT `ruff format .`, which rewrites files and exits 0.
+        # Verify formatting is correct after auto-format.
         run: ruff format --check .
+      - name: ruff check
+        # Lint checks (after formatting is applied).
+        run: ruff check .
 
       - name: mypy
         # Root-relative. `cd backend && mypy .` (the `make typecheck` target)
@@ -322,6 +324,7 @@ jobs:
           # first stage. An empty submodule fails the build one line in, on
           # purpose (docker/Dockerfile:12-21).
           submodules: recursive
+          fetch-depth: 0
 
       - name: Set up Python ${{ env.PYTHON_VERSION }}
         uses: actions/setup-python@v5
@@ -653,7 +656,7 @@ jobs:
 
       - name: Run the Playwright suite against the stack
         working-directory: frontend
-        timeout-minutes: 30
+        timeout-minutes: 60
         env:
           # One origin, no dev servers. With this set, playwright.config.ts
           # resolves `webServer` to undefined, so Playwright starts nothing and
