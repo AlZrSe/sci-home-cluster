@@ -358,12 +358,12 @@ jobs:
           SHC_COMPOSE_TESTS: ""
           SHC_COMPOSE_ALLOW_DESTRUCTIVE: ""
         run: |
-          # Do NOT use `set -o pipefail` here: pytest exits with code 5 when all
-          # tests are skipped (no tests collected), which is exactly what we expect.
-          # -v is required so pytest prints skip reasons; otherwise the grep below
-          # finds nothing and the negative control fails vacuously.
-          # -x stops on first failure so we see the first error.
-          pytest tests/compose -m compose -v -x 2>&1 | tee compose-not-opted-in.log
+          # Do NOT use `set -o pipefail` or `tee` here:
+          # - pytest exits with code 5 when all tests are skipped (no tests collected)
+          # - tee can cause race conditions with the verification step reading the log
+          # - ANSI color codes from pytest can break grep pattern matching
+          # Redirect to file directly with --color=no, then the next step cats it.
+          pytest tests/compose -m compose -v -x --color=no > compose-not-opted-in.log 2>&1; exit 0
 
       - name: Verify the negative control
         run: |
@@ -399,7 +399,7 @@ jobs:
           SHC_COMPOSE_SENTINEL_BUILD: ${{ (github.event_name == 'schedule' || github.event_name == 'push') && '1' || '0' }}
         run: |
           set -o pipefail
-          pytest tests/compose -m compose 2>&1 | tee compose-suite.log
+          pytest tests/compose -m compose --color=no 2>&1 | tee compose-suite.log
 
       - name: Verify the suite's own summary (AC-5, AC-12, AC-15)
         # pytest's output, parsed. Not a re-run and not a re-derivation: the
