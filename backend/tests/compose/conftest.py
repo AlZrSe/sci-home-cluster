@@ -143,19 +143,20 @@ COMPOSE_PYTESTMARK = [
     pytest.mark.compose,
 ]
 
-# Opt-in gate: session-scoped autouse fixture that skips the entire session
-# if SHC_COMPOSE_TESTS != "1". This runs once per session and is more
-# reliable than a module-level skipif in pytestmark (which can be tricky
-# with list markers) or a function-scoped autouse fixture (which may not
-# show the skip reason prominently in -v output).
-@pytest.fixture(scope="session", autouse=True)
-def _require_compose_opt_in():
-    if not compose_tests_enabled():
-        pytest.skip(
+# Opt-in gate: module-level skipif marker that skips all tests if
+# SHC_COMPOSE_TESTS != "1". This runs at collection time and is more
+# reliable than fixtures or pytest_collection_modifyitems hook.
+COMPOSE_PYTESTMARK = [
+    pytest.mark.compose,
+    pytest.mark.skipif(
+        not compose_tests_enabled(),
+        reason=(
             f"compose suite is opt-in and runs the real Docker daemon: set "
             f"{FORCE_ENV}=1 (issue #134). `make test` and a bare `pytest` are "
             "unaffected."
-        )
+        ),
+    ),
+]
 
 
 # ---------------------------------------------------------------------------

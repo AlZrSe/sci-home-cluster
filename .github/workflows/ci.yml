@@ -214,8 +214,8 @@ jobs:
         # Verify formatting is correct after auto-format.
         run: ruff format --check .
       - name: ruff check
-        # Lint checks (after formatting is applied).
-        run: ruff check .
+        # Lint checks with auto-fix for fixable issues.
+        run: ruff check --fix .
 
       - name: mypy
         # Root-relative. `cd backend && mypy .` (the `make typecheck` target)
