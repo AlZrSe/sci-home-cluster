@@ -383,14 +383,8 @@ jobs:
           echo "OK: without the opt-in variable every compose test reports SKIPPED and pytest exits 0."
 
       - name: Run the opt-in compose suite against the real Docker daemon
-        # Use env command to explicitly pass env vars to pytest subprocess.
-        # GitHub Actions step env: vars may not be exported to subprocesses
-        # in all shells, and the export in run: may not persist across the
-        # pipe to tee. The env command guarantees the vars are set for pytest.
         run: |
-          # Debug: verify env vars are visible to Python subprocess
-          env SHC_COMPOSE_TESTS=1 SHC_COMPOSE_ALLOW_DESTRUCTIVE=1 python -c "import os; print('SHC_COMPOSE_TESTS=', repr(os.environ.get('SHC_COMPOSE_TESTS'))); print('SHC_COMPOSE_ALLOW_DESTRUCTIVE=', repr(os.environ.get('SHC_COMPOSE_ALLOW_DESTRUCTIVE')))"
-          env SHC_COMPOSE_TESTS=1 SHC_COMPOSE_ALLOW_DESTRUCTIVE=1 pytest tests/compose -m compose -v --color=no 2>&1 | tee compose-suite.log
+          env SHC_COMPOSE_TESTS=1 SHC_COMPOSE_ALLOW_DESTRUCTIVE=1 pytest tests/compose -m compose -v --color=no > compose-suite.log 2>&1; exit ${PIPESTATUS[0]}
 
       - name: Verify the suite's own summary (AC-5, AC-12, AC-15)
         # pytest's output, parsed. Not a re-run and not a re-derivation: the
