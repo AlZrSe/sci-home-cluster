@@ -118,7 +118,9 @@ DESTRUCTIVE_ENV = "SHC_COMPOSE_ALLOW_DESTRUCTIVE"
 
 def compose_tests_enabled() -> bool:
     val = os.environ.get(FORCE_ENV)
-    print(f"[DEBUG compose_tests_enabled] {FORCE_ENV}={repr(val)}", flush=True)
+    import sys
+    sys.stderr.write(f"[DEBUG compose_tests_enabled] {FORCE_ENV}={repr(val)}\n")
+    sys.stderr.flush()
     return val == "1"
 
 
@@ -139,7 +141,7 @@ def destructive_allowed() -> bool:
 COMPOSE_PYTESTMARK = [
     pytest.mark.compose,
     pytest.mark.skipif(
-        lambda: not compose_tests_enabled(),
+        lambda: (import sys, sys.stderr.write(f"[DEBUG skipif lambda] calling compose_tests_enabled\n"), sys.stderr.flush()) or not compose_tests_enabled(),
         reason=(
             f"compose suite is opt-in and runs the real Docker daemon: set "
             f"{FORCE_ENV}=1 (issue #134). `make test` and a bare `pytest` are "
