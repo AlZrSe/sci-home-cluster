@@ -384,7 +384,7 @@ jobs:
 
       - name: Run the opt-in compose suite against the real Docker daemon
         run: |
-          env SHC_COMPOSE_TESTS=1 SHC_COMPOSE_ALLOW_DESTRUCTIVE=1 pytest tests/compose -m compose -v --color=no > compose-suite.log 2>&1; exit ${PIPESTATUS[0]}
+          SHC_COMPOSE_TESTS=1 SHC_COMPOSE_ALLOW_DESTRUCTIVE=1 pytest tests/compose -m compose -v --color=no > compose-suite.log 2>&1; exit ${PIPESTATUS[0]}
 
       - name: Verify the suite's own summary (AC-5, AC-12, AC-15)
         # pytest's output, parsed. Not a re-run and not a re-derivation: the
