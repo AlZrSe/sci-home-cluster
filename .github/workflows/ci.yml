@@ -388,6 +388,8 @@ jobs:
         # in all shells, and the export in run: may not persist across the
         # pipe to tee. The env command guarantees the vars are set for pytest.
         run: |
+          # Debug: verify env vars are visible to Python subprocess
+          env SHC_COMPOSE_TESTS=1 SHC_COMPOSE_ALLOW_DESTRUCTIVE=1 python -c "import os; print('SHC_COMPOSE_TESTS=', repr(os.environ.get('SHC_COMPOSE_TESTS'))); print('SHC_COMPOSE_ALLOW_DESTRUCTIVE=', repr(os.environ.get('SHC_COMPOSE_ALLOW_DESTRUCTIVE')))"
           env SHC_COMPOSE_TESTS=1 SHC_COMPOSE_ALLOW_DESTRUCTIVE=1 pytest tests/compose -m compose -v --color=no 2>&1 | tee compose-suite.log
 
       - name: Verify the suite's own summary (AC-5, AC-12, AC-15)
