@@ -416,12 +416,16 @@ jobs:
           total = int(collected[-1]) if collected else 0
           check(total >= 48, f"collected {total} tests (>= 48)")
 
-          tail = re.findall(r"=+ ([^\n]*?) in [\d.]+s =+", text)
+          # More flexible regex for pytest summary line - matches various formats
+          tail = re.findall(r"=+\s+([^\n]*?)\s+in\s+[\d.]+s\s*=+", text)
+          if not tail:
+              # Fallback: look for the final summary line
+              tail = re.findall(r"(?:passed|failed|error|skipped|xfailed|xpassed).*?in\s+[\d.]+s", text)
           summary = tail[-1] if tail else ""
           print("\npytest summary: " + (summary or "<none>"))
 
           def count(word):
-              found = re.search(r"(\d+) " + word, summary)
+              found = re.search(r"(\d+)\s+" + word, summary)
               return int(found.group(1)) if found else 0
 
           check(count("failed") == 0, "0 failed")
