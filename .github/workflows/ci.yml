@@ -400,8 +400,10 @@ jobs:
           # have caught.
           SHC_COMPOSE_SENTINEL_BUILD: ${{ (github.event_name == 'schedule' || github.event_name == 'push') && '1' || '0' }}
         run: |
-          # Use env command to ensure env vars are passed to pytest subprocess
-          env SHC_COMPOSE_TESTS=1 SHC_COMPOSE_ALLOW_DESTRUCTIVE=1 pytest tests/compose -m compose --color=no 2>&1 | tee compose-suite.log
+          # Explicitly export so pytest subprocess inherits them
+          export SHC_COMPOSE_TESTS=1
+          export SHC_COMPOSE_ALLOW_DESTRUCTIVE=1
+          pytest tests/compose -m compose --color=no > compose-suite.log 2>&1; exit ${PIPESTATUS[0]}
 
       - name: Verify the suite's own summary (AC-5, AC-12, AC-15)
         # pytest's output, parsed. Not a re-run and not a re-derivation: the
