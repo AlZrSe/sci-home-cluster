@@ -145,17 +145,24 @@ def pytest_collection_modifyitems(config, items):
     This hook runs at collection time, after all test modules are imported,
     so the environment variable is guaranteed to be visible.
     """
-    if not compose_tests_enabled():
-        skip_marker = pytest.mark.skip(
-            reason=(
-                f"compose suite is opt-in and runs the real Docker daemon: set "
-                f"{FORCE_ENV}=1 (issue #134). `make test` and a bare `pytest` are "
-                "unaffected."
+    try:
+        if not compose_tests_enabled():
+            skip_marker = pytest.mark.skip(
+                reason=(
+                    f"compose suite is opt-in and runs the real Docker daemon: set "
+                    f"{FORCE_ENV}=1 (issue #134). `make test` and a bare `pytest` are "
+                    "unaffected."
+                )
             )
-        )
-        for item in items:
-            if "compose" in item.keywords:
-                item.add_marker(skip_marker)
+            for item in items:
+                if "compose" in item.keywords:
+                    item.add_marker(skip_marker)
+    except Exception as e:
+        import sys
+        sys.stderr.write(f"[ERROR in pytest_collection_modifyitems] {e}\n")
+        import traceback
+        traceback.print_exc(file=sys.stderr)
+        raise
 
 
 # ---------------------------------------------------------------------------
