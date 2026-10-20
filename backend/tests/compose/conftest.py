@@ -117,7 +117,9 @@ DESTRUCTIVE_ENV = "SHC_COMPOSE_ALLOW_DESTRUCTIVE"
 
 
 def compose_tests_enabled() -> bool:
-    return os.environ.get(FORCE_ENV) == "1"
+    val = os.environ.get(FORCE_ENV)
+    print(f"[DEBUG compose_tests_enabled] {FORCE_ENV}={repr(val)}", flush=True)
+    return val == "1"
 
 
 def destructive_allowed() -> bool:
