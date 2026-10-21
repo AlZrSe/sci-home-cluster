@@ -319,6 +319,14 @@ class Settings(BaseSettings):
     # "null" opens a fresh connection per session, which the test suite uses
     # so that connections are never shared between event loops.
     DB_POOL: str = "pooled"
+
+    @field_validator("DB_POOL")
+    @classmethod
+    def validate_db_pool(cls, v: str) -> str:
+        if v not in ("null", "pooled"):
+            raise ValueError(f"DB_POOL must be 'null' or 'pooled', got {v!r}")
+        return v
+
     # Seed the 10 demo jobs / 4 demo nodes (a port of the frontend mock
     # server) into an empty database on first use.
     #

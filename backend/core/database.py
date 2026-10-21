@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import AsyncGenerator, Optional
 
 from sqlalchemy import event
-from sqlalchemy.pool import NullPool, QueuePool
+from sqlalchemy.pool import AsyncAdaptedQueuePool, NullPool
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -20,6 +20,19 @@ from sqlalchemy.ext.asyncio import (
 from backend.core.config import absolute_sqlite_path, settings
 
 logger = logging.getLogger(__name__)
+
+
+def _get_pool_class(db_pool: str):
+    """Return the appropriate SQLAlchemy pool class for the given DB_POOL setting."""
+    if db_pool == "null":
+        return NullPool
+    elif db_pool == "pooled":
+        return AsyncAdaptedQueuePool
+    else:
+        raise ValueError(
+            f"Invalid DB_POOL value: {db_pool!r}. " f"Valid values: 'null', 'pooled'"
+        )
+
 
 # Global engine and session factory
 _engine: AsyncEngine | None = None
@@ -105,7 +118,8 @@ def get_engine() -> AsyncEngine:
             # A pooled connection created in one loop and reused in the next
             # is what produces the intermittent "Event loop is closed"
             # failures, so the test session asks for NullPool.
-            poolclass=NullPool if settings.DB_POOL == "null" else QueuePool,
+            # Production uses AsyncAdaptedQueuePool for async compatibility.
+            poolclass=_get_pool_class(settings.DB_POOL),
         )
         if db_url.startswith("sqlite"):
             event.listen(_engine.sync_engine, "connect", _configure_sqlite)
