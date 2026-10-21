@@ -35,16 +35,15 @@ async def verify_token(
     if not authorization or not authorization.startswith("Bearer "):
         return TokenValidationResponse(valid=False)
 
-    # Localhost bypass: if the request comes from a localhost host, the
-    # `get_current_token_payload` dependency returns a payload with
-    # `sub: "localhost_user"`. In this case we consider the token valid
-    # regardless of its value, since the backend itself bypasses auth for
-    # localhost. This allows the frontend to use the bypass token and the
-    # e2e tests to exercise the login flow without a real shared token.
-    if payload.get("sub") == "localhost_user":
-        return TokenValidationResponse(valid=True)
-
     token = authorization[7:]  # Remove "Bearer " prefix
+
+    # Localhost bypass: if the request comes from a localhost host AND the
+    # token is the localhost bypass token ("localhost-no-auth"), we consider
+    # it valid. The `get_current_token_payload` dependency returns a payload
+    # with `sub: "localhost_user"` for localhost hosts, but we only bypass
+    # validation for the specific bypass token to avoid interfering with tests.
+    if payload.get("sub") == "localhost_user" and token == "localhost-no-auth":
+        return TokenValidationResponse(valid=True)
     auth_service = AuthService()
     is_valid = await auth_service.validate_token(token)
     return TokenValidationResponse(valid=is_valid)
@@ -58,8 +57,12 @@ async def validate_token(
     """
     Validate bearer token via POST with JSON body.
     """
-    # Localhost bypass: same logic as GET /verify
-    if payload.get("sub") == "localhost_user":
+    # Localhost bypass: if the request comes from a localhost host AND the
+    # token is the localhost bypass token ("localhost-no-auth"), we consider
+    # it valid. The `get_current_token_payload` dependency returns a payload
+    # with `sub: "localhost_user"` for localhost hosts, but we only bypass
+    # validation for the specific bypass token to avoid interfering with tests.
+    if payload.get("sub") == "localhost_user" and request.token == "localhost-no-auth":
         return TokenValidationResponse(valid=True)
 
     auth_service = AuthService()
@@ -122,5 +125,8 @@ async def refresh_token(request: TokenRefreshRequest):
         token_type="bearer",
         expires_in=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
     )
+
+
+
 
 
