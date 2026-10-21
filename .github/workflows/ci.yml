@@ -567,7 +567,7 @@ jobs:
         # The checked-in file, unmodified, with no override. `docker-compose.yaml`
         # is the artefact under test; a CI-side override would be a second
         # source of truth for it.
-        run: docker compose up -d --build
+        run: docker compose build --no-cache && docker compose up -d
 
       - name: Wait for the API to answer
         # Readiness only - deliberately weaker than the step below, and that
