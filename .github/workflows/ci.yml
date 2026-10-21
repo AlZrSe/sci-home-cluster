@@ -364,7 +364,8 @@ jobs:
           # - ANSI color codes from pytest can break grep pattern matching
           # Redirect to file directly with --color=no, then the next step cats it.
           # Added --no-header to remove platform/version header for cleaner parsing.
-          pytest tests/compose -m compose -v -x -r s --color=no --no-header > compose-not-opted-in.log 2>&1; exit 0
+          # Removed -x flag: if a collection error occurs, we still want all skip reasons logged.
+          pytest tests/compose -m compose -v -r s --color=no --no-header > compose-not-opted-in.log 2>&1; exit 0
 
       - name: Verify the negative control
         run: |
