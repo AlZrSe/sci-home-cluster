@@ -211,3 +211,43 @@ class TestCrossReferences:
         )
         assert "frontend/src/lib/settings.ts" in backend_source
         assert "localhost_hosts.json" in backend_source
+
+
+@pytest.mark.unit
+class TestE2ETestUtilsBypassAlignment:
+    """
+    Verify that the bypass detection logic in frontend/tests/e2e/test-utils.ts
+    matches the logic in frontend/src/lib/settings.ts.
+
+    This prevents the test-utils from drifting away from the application's
+    actual bypass behavior.
+    """
+
+    def test_test_utils_has_bypass_detection(self):
+        """test-utils.ts must contain the isBypassHost detection logic."""
+        test_utils_path = REPO_ROOT / "frontend" / "tests" / "e2e" / "test-utils.ts"
+        if not test_utils_path.is_file():
+            pytest.skip("test-utils.ts not found (frontend submodule not checked out)")
+
+        source = test_utils_path.read_text(encoding="utf-8")
+
+        # Must have the exact bypass detection logic
+        assert (
+            "isBypassHost" in source
+        ), "test-utils.ts must export isBypassHost function"
+
+        # Must check exact hosts
+        assert "localhost" in source
+        assert "127.0.0.1" in source
+        assert "::1" in source
+
+        # Must check suffixes
+        assert ".local" in source
+        assert ".lovable.app" in source
+
+        # Must use the same normalization (trim, lowercase, bracket stripping)
+        assert "toLowerCase" in source
+        assert "trim" in source
+        assert "startsWith" in source and "[" in source
+        assert "endsWith" in source and "]" in source
+        assert "slice" in source
