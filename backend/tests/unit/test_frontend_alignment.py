@@ -216,38 +216,40 @@ class TestCrossReferences:
 @pytest.mark.unit
 class TestE2ETestUtilsBypassAlignment:
     """
-    Verify that the bypass detection logic in frontend/tests/e2e/test-utils.ts
-    matches the logic in frontend/src/lib/settings.ts.
+    Verify that the e2e test-utils.ts correctly handles bypass hosts.
 
-    This prevents the test-utils from drifting away from the application's
-    actual bypass behavior.
+    Since the fix for issue #150, the login form renders on ALL hosts
+    (including bypass hosts), and the `login()` helper drives the actual
+    login form on all hosts. The bypass token `localhost-no-auth` is
+    accepted by the backend on bypass hosts.
     """
 
-    def test_test_utils_has_bypass_detection(self):
-        """test-utils.ts must contain the isBypassHost detection logic."""
+    def test_test_utils_drives_login_form_on_all_hosts(self):
+        """test-utils.ts login() should drive the login form on all hosts."""
         test_utils_path = REPO_ROOT / "frontend" / "tests" / "e2e" / "test-utils.ts"
         if not test_utils_path.is_file():
             pytest.skip("test-utils.ts not found (frontend submodule not checked out)")
 
         source = test_utils_path.read_text(encoding="utf-8")
 
-        # Must have the exact bypass detection logic
+        # Must have the login function that drives the form
         assert (
-            "isBypassHost" in source
-        ), "test-utils.ts must export isBypassHost function"
+            "async function login" in source or "export async function login" in source
+        )
+        assert "page.goto" in source
+        assert "page.fill" in source
+        assert "page.click" in source
+        assert 'button:has-text("Connect")' in source
+        assert "toHaveURL" in source
 
-        # Must check exact hosts
-        assert "localhost" in source
-        assert "127.0.0.1" in source
-        assert "::1" in source
+    def test_test_utils_uses_bypass_token(self):
+        """test-utils.ts should use the TEST_TOKEN (localhost-no-auth)."""
+        test_utils_path = REPO_ROOT / "frontend" / "tests" / "e2e" / "test-utils.ts"
+        if not test_utils_path.is_file():
+            pytest.skip("test-utils.ts not found (frontend submodule not checked out)")
 
-        # Must check suffixes
-        assert ".local" in source
-        assert ".lovable.app" in source
+        source = test_utils_path.read_text(encoding="utf-8")
 
-        # Must use the same normalization (trim, lowercase, bracket stripping)
-        assert "toLowerCase" in source
-        assert "trim" in source
-        assert "startsWith" in source and "[" in source
-        assert "endsWith" in source and "]" in source
-        assert "slice" in source
+        # Must use the bypass token
+        assert "localhost-no-auth" in source
+        assert "TEST_TOKEN" in source
