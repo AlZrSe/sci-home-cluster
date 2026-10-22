@@ -4,14 +4,13 @@ Provides thread-safe, atomic operations for YAML files with validation.
 """
 
 import json
-import os
 import yaml
-import tempfile
 import logging
 from typing import Type, TypeVar, Callable
 from pydantic import BaseModel as PydanticBaseModel
 
 from shared.file_ops.path_utils import normalize_path
+from shared.file_ops.atomic_write import atomic_write
 
 logger = logging.getLogger(__name__)
 
@@ -111,29 +110,10 @@ def write_yaml(file_path: str, data: PydanticBaseModel) -> None:
         logger.error(f"Failed to serialize data to YAML: {e}")
         raise
 
-    # Write atomically using temporary file
+    # Write atomically using shared atomic_write utility (with Windows retry)
     try:
-        # Create temporary file in same directory
-        with tempfile.NamedTemporaryFile(
-            mode="w",
-            dir=directory,
-            prefix=path_obj.name + ".",
-            suffix=".tmp",
-            delete=False,
-        ) as tmp_file:
-            tmp_file.write(yaml_content)
-            tmp_file_path = tmp_file.name
-
-        # Atomically replace target file with temporary file
-        os.replace(tmp_file_path, path_obj)
-
+        atomic_write(path_obj, yaml_content, mode=0o644)
     except Exception as e:
-        # Clean up temporary file on error
-        if "tmp_file_path" in locals() and os.path.exists(tmp_file_path):
-            try:
-                os.unlink(tmp_file_path)
-            except OSError:
-                pass
         logger.error(f"Failed to write YAML file {file_path}: {e}")
         raise
 

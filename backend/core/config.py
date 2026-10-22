@@ -13,6 +13,8 @@ from pydantic import AnyHttpUrl, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from typing import Final, List, Optional, Union
 
+from shared.file_ops.atomic_write import atomic_write
+
 logger = logging.getLogger(__name__)
 
 # The repository root, derived from this file's own location rather than from
@@ -172,21 +174,13 @@ def _write_state_secret(state_path: Path, value: str) -> Optional[str]:
     concurrent reader never sees a half-written secret. ``chmod`` runs on the
     temp file BEFORE the rename so the final file is never briefly
     world-readable.
+
+    Uses shared atomic_write utility with Windows-compatible retry logic
+    for PermissionError when destination is open (WinError 5).
     """
     try:
         state_path.parent.mkdir(parents=True, exist_ok=True)
-        tmp_path = state_path.with_suffix(".tmp")
-        tmp_path.write_text(value, encoding="utf-8")
-        try:
-            tmp_path.chmod(0o600)
-        except OSError:
-            # chmod may fail on some filesystems (FAT, network mounts); log
-            # at debug and continue - the key in memory is still usable.
-            logger.debug(
-                "Could not set 0o600 permissions on %s; continuing anyway.",
-                tmp_path,
-            )
-        os.replace(tmp_path, state_path)
+        atomic_write(state_path, value, mode=0o600)
     except OSError:
         return None
 
