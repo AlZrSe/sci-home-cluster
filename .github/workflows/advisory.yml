@@ -1,0 +1,59 @@
+# .github/workflows/advisory.yml
+name: Advisory — E2E Typecheck
+
+on:
+  schedule:
+    - cron: '0 0 * * 1'  # Weekly on Monday 00:00 UTC
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  actions: read  # needed for step summary
+
+jobs:
+  e2e-typecheck:
+    name: E2E TypeScript Typecheck (Advisory)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - name: Checkout repository (with submodules)
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run E2E typecheck
+        id: typecheck
+        run: |
+          # npm run typecheck:e2e exits 0 always; captures stderr+stdout
+          output=$(npm run typecheck:e2e 2>&1)
+          echo "$output"
+          # Extract error count from script output (format: "typecheck:e2e: X error(s) in tests/e2e/**")
+          error_count=$(echo "$output" | grep -oE 'typecheck:e2e: [0-9]+ error' | grep -oE '[0-9]+' | tail -1)
+          error_count=${error_count:-0}
+          echo "error_count=$error_count" >> $GITHUB_OUTPUT
+
+      - name: Write summary
+        run: |
+          echo "### E2E Typecheck Advisory Report" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Errors found:** ${{ steps.typecheck.outputs.error_count }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Baseline:** 8 known errors (7×TS2345 in job-lifecycle.spec.ts, 1×TS7006 in node-monitoring.spec.ts)" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          if [ "${{ steps.typecheck.outputs.error_count }}" -gt 8 ]; then
+            echo "**Status:** ⚠️ REGRESSION" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "**Status:** ✅ Baseline maintained" >> $GITHUB_STEP_SUMMARY
+          fi
