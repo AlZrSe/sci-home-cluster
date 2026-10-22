@@ -533,12 +533,19 @@ jobs:
             exit 1
           fi
           # Verify the submodule has the #141 fix (localStorage.clear() after navigation).
-          # Check commit history, not just the latest commit.
+          # Check commit history for both the issue reference AND the exact commit hash.
           if ! git -C frontend log --oneline --grep="#141" | grep -q .; then
-            echo "::warning::submodule may not have #141 fix; e2e tests may fail with SecurityError"
+            echo "::error::submodule missing #141 fix (localStorage.clear() after navigation)"
             git -C frontend log --oneline -3
+            exit 1
           fi
-          echo "OK: playwright.config.ts reads PLAYWRIGHT_BASE_URL."
+          # Secondary check: verify the exact commit that contains the #141 fix
+          if ! git -C frontend log --oneline | grep -q "820a444"; then
+            echo "::error::submodule not at commit 820a444 (contains #141 fix)"
+            git -C frontend log --oneline -3
+            exit 1
+          fi
+          echo "OK: playwright.config.ts reads PLAYWRIGHT_BASE_URL and submodule has #141 fix."
 
       - name: Set up Node ${{ env.NODE_VERSION }}
         uses: actions/setup-node@v4
@@ -676,7 +683,14 @@ jobs:
           # resolves `webServer` to undefined, so Playwright starts nothing and
           # every `page.goto("/login")` is served by the container.
           PLAYWRIGHT_BASE_URL: "http://localhost:8000"
-        run: npx playwright test --fail-on-flaky-tests --retries=0 --timeout=60000
+        run: |
+          npx playwright test \
+            --fail-on-flaky-tests \
+            --retries=0 \
+            --timeout=60000 \
+            --reporter=line \
+            --output=playwright-results \
+            2>&1 | tee playwright.log
         # `--fail-on-flaky-tests` is the one place this job is STRICTER than the
         # local command on purpose. playwright.config.ts sets `retries: 2`
         # under CI, and Playwright reports a test that passed on retry as flaky
@@ -684,6 +698,16 @@ jobs:
         # AC-16: a spec that fails first and passes on retry must be red here.
         # `--retries=0` fails fast instead of retrying; `--timeout=60000` caps
         # individual test execution at 60s to prevent hangs.
+
+      - name: Diagnose Playwright hang on failure
+        if: failure()
+        run: |
+          echo "=== Last 100 lines of Playwright output ==="
+          tail -100 playwright.log || true
+          echo "=== Playwright report (if exists) ==="
+          ls -la playwright-report/ 2>/dev/null || echo "No report directory"
+          echo "=== Test results (if exists) ==="
+          cat playwright-results/results.json 2>/dev/null | jq '.suites[].specs[] | {title, ok, errors, duration}' 2>/dev/null || true
 
       - name: Upload the Playwright report
         if: always()
