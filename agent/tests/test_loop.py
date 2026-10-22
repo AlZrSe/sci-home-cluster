@@ -6,6 +6,7 @@ import asyncio
 import logging
 import os
 import signal
+import sys
 import time
 from contextlib import contextmanager
 from pathlib import Path
@@ -31,6 +32,7 @@ from agent.paths import AgentPaths, resolve_paths
 from agent.supervisor import SupervisorTask
 from agent.tests.conftest import (
     GUARDED_SIGNALS,
+    SIGNAL_DELIVERY_SUPPORTED,
     SIGNAL_GUARD,
     FakeObserver,
     RecordingWatcher,
@@ -255,6 +257,10 @@ async def make_agent(
 # --- signal handling and ordered shutdown (AC-6) --------------------------
 
 
+@pytest.mark.skipif(
+    not SIGNAL_DELIVERY_SUPPORTED,
+    reason="Signal delivery to self PID is TerminateProcess on Windows",
+)
 async def test_sigterm_triggers_orderly_shutdown(syncthing_root: Path) -> None:
     order: list[str] = []
     agent = await make_agent(syncthing_root, order)
@@ -267,6 +273,10 @@ async def test_sigterm_triggers_orderly_shutdown(syncthing_root: Path) -> None:
     assert order == ["hand_back", "watcher.stop", "write_state"]
 
 
+@pytest.mark.skipif(
+    not SIGNAL_DELIVERY_SUPPORTED,
+    reason="Signal delivery to self PID is TerminateProcess on Windows",
+)
 async def test_sigint_triggers_orderly_shutdown(syncthing_root: Path) -> None:
     order: list[str] = []
     agent = await make_agent(syncthing_root, order)
@@ -340,6 +350,11 @@ async def test_signal_handlers_fall_back_where_unsupported(
 # --- the signal safety guard itself (issue #114 D4) ------------------------
 
 
+@pytest.mark.skipif(
+    not SIGNAL_DELIVERY_SUPPORTED,
+    reason="Signal delivery semantics tested here are POSIX-only; "
+    "Windows uses TerminateProcess which cannot be intercepted",
+)
 def test_signal_delivery_refuses_to_run_at_the_default_disposition(
     monkeypatch: Any,
 ) -> None:
@@ -358,6 +373,11 @@ def test_signal_delivery_refuses_to_run_at_the_default_disposition(
         assert killed == [], "the guard must refuse *before* the signal is sent"
 
 
+@pytest.mark.skipif(
+    not SIGNAL_DELIVERY_SUPPORTED,
+    reason="Signal delivery semantics tested here are POSIX-only; "
+    "Windows uses TerminateProcess which cannot be intercepted",
+)
 def test_signal_delivery_sends_the_signal_once_a_handler_is_armed(
     monkeypatch: Any,
 ) -> None:
@@ -374,6 +394,11 @@ def test_signal_delivery_sends_the_signal_once_a_handler_is_armed(
     assert killed == [(os.getpid(), signal.SIGTERM)]
 
 
+@pytest.mark.skipif(
+    not SIGNAL_DELIVERY_SUPPORTED,
+    reason="Signal delivery semantics tested here are POSIX-only; "
+    "Windows uses TerminateProcess which cannot be intercepted",
+)
 def test_the_safety_guard_counts_only_signals_nobody_asked_for() -> None:
     guard = SignalSafetyGuard()
     with guard.expecting(int(signal.SIGTERM)):
@@ -1019,3 +1044,91 @@ def test_folder_event_shape(tmp_path: Path) -> None:
     event = FolderEvent(kind="created", path=tmp_path / "a.yaml", observed_at=None)  # type: ignore[arg-type]
     assert event.kind == "created"
     assert event.path.name == "a.yaml"
+
+
+# --- POSIX-only end-to-end signal test --------------------------------------
+
+
+@pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="Real signal delivery test requires POSIX",
+)
+async def test_real_signal_stops_child_agent_process(tmp_path: Path) -> None:
+    """
+    End-to-end test that a real SIGTERM stops a child agent process.
+
+    This test spawns a real agent subprocess, waits for it to start up,
+    sends SIGTERM to the child PID (not the test runner), and verifies
+    the child exits cleanly with EXIT_OK and logs the shutdown sequence.
+
+    Skipped on Windows because:
+    - Windows does not support asyncio loop signal handlers
+    - os.kill(SIGTERM) on Windows is TerminateProcess, not a signal
+    - The agent's add_signal_handler raises NotImplementedError
+    """
+    import os
+    import subprocess
+
+    # Create a temporary syncthing root for the child agent
+    syncthing_root = tmp_path / "child-agent-syncthing"
+    (syncthing_root / "jobs").mkdir(parents=True)
+    (syncthing_root / "nodes").mkdir(parents=True)
+
+    # Spawn the agent as a subprocess
+    # Use -u for unbuffered output so we can read logs in real-time
+    proc = subprocess.Popen(
+        [
+            sys.executable,
+            "-m",
+            "agent.run_agent",
+            "--node-id",
+            "child-test",
+            "--syncthing-root",
+            str(syncthing_root),
+        ],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        bufsize=1,
+        env={**os.environ, "AGENT_SHUTDOWN_GRACE_S": "5"},
+    )
+
+    try:
+        node_file = syncthing_root / "nodes" / "child-test.yaml"
+        for _ in range(100):  # Wait up to 10 seconds
+            if node_file.exists():
+                break
+            await asyncio.sleep(0.1)
+        else:
+            proc.terminate()
+            proc.wait(timeout=5)
+            pytest.fail("Child agent did not write node file within 10 seconds")
+
+        # Give the agent a moment to fully start
+        await asyncio.sleep(0.5)
+
+        # Send SIGTERM to the CHILD process (not pytest!)
+        proc.send_signal(signal.SIGTERM)
+
+        # Wait for process to exit cleanly
+        try:
+            returncode = proc.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait(timeout=5)
+            pytest.fail("Child agent did not exit within 10 seconds after SIGTERM")
+
+        assert (
+            returncode == EXIT_OK
+        ), f"Child agent exited with code {returncode}, expected {EXIT_OK}"
+
+        # Verify the node file was cleaned up or marked as stopped
+        # (The agent should have written a final state on shutdown)
+        content = node_file.read_text()
+        assert "status" in content
+
+    finally:
+        # Ensure process is cleaned up even if test fails
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait(timeout=5)

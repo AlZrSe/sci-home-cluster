@@ -18,6 +18,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import signal
 import sys
 from pathlib import Path
 from typing import Any, Callable, Iterator, NamedTuple
@@ -257,6 +258,28 @@ def real_watch_supported() -> bool:
 
 REAL_WATCH_SUPPORTED = real_watch_supported()
 
+
+def signal_delivery_is_supported() -> bool:
+    """Whether this platform can deliver signals to a running asyncio loop.
+
+    On Windows, ``loop.add_signal_handler`` raises NotImplementedError and
+    ``os.kill(pid, SIGTERM)`` is TerminateProcess, not a signal.
+    """
+    if sys.platform == "win32":
+        return False
+    # Additional check: some POSIX environments may not support it either
+    try:
+        loop = asyncio.get_event_loop()
+        loop.add_signal_handler(signal.SIGTERM, lambda: None)
+        loop.remove_signal_handler(signal.SIGTERM)
+        return True
+    except (NotImplementedError, RuntimeError, AttributeError):
+        return False
+
+
+SIGNAL_DELIVERY_SUPPORTED = signal_delivery_is_supported()
+
+
 __all__ = [
     "GUARDED_SIGNALS",
     "REPO_ROOT",
@@ -276,6 +299,8 @@ __all__ = [
     "tree_command",
     "write_tree_script",
     "sys",
+    "signal_delivery_is_supported",
+    "SIGNAL_DELIVERY_SUPPORTED",
 ]
 
 
