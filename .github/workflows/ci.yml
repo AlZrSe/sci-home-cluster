@@ -649,7 +649,7 @@ jobs:
         # E2E tests depend on this data being present.
         run: |
           for attempt in $(seq 1 60); do
-            cid=$(docker compose ps -q db-seed)
+            cid=$(docker compose ps -q --all db-seed)
             if [ -n "$cid" ]; then
               state=$(docker inspect -f '{{.State.Status}}' "$cid")
               code=$(docker inspect -f '{{.State.ExitCode}}' "$cid")
