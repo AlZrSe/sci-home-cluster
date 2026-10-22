@@ -644,6 +644,21 @@ jobs:
           fi
           echo "OK: :5173 has no listener, so the suite ran against the image's own bundle."
 
+      - name: Wait for db-seed to complete
+        # The db-seed service runs after backend is healthy and seeds test data.
+        # E2E tests depend on this data being present.
+        run: |
+          for attempt in $(seq 1 60); do
+            if docker compose ps db-seed --format json | jq -e '.[0].State == "exited" and .[0].ExitCode == 0' >/dev/null 2>&1; then
+              echo "db-seed completed successfully after ${attempt} poll(s)"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "::error::db-seed did not complete successfully"
+          docker compose logs db-seed
+          exit 1
+
       - name: Run the Playwright suite against the stack
         working-directory: frontend
         timeout-minutes: 60

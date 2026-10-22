@@ -310,6 +310,19 @@ services:
     # breaks on Docker Desktop and on Windows. Known, documented, not hidden.
     restart: unless-stopped
 
+  db-seed:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.seed
+    depends_on:
+      backend:
+        condition: service_healthy
+    environment:
+      - BASE_URL=http://backend:8000/api/v1
+      - SHARED_TOKEN=${SHARED_TOKEN:-}
+    restart: "no"
+    # No volumes, no ports - runs once and exits
+
 # Named volumes, with the names PINNED.
 #
 # `name:` is explicit on purpose. Without it compose prefixes the project name,

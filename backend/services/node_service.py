@@ -29,3 +29,7 @@ class NodeService:
     async def update_node(self, node_id: str, **kwargs: object) -> Optional[NodeSpec]:
         """Update a node's fields and return the updated node."""
         return await self._store.update_node(node_id, **kwargs)
+
+    async def create_node(self, node_spec: NodeSpec) -> NodeSpec:
+        """Create a new node and return the created node spec."""
+        return await self._store.create_node(node_spec)

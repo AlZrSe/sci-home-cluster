@@ -61,3 +61,22 @@ async def get_node_metrics(
             "NODE_METRICS_NOT_FOUND",
         )
     return metrics
+
+
+@router.post("/", response_model=NodeSpec, status_code=status.HTTP_201_CREATED)
+async def create_node(
+    node_spec: NodeSpec,
+    payload: dict = Depends(get_current_token_payload),
+):
+    """
+    Create a new node (for test seeding).
+    """
+    node_service = NodeService()
+    try:
+        return await node_service.create_node(node_spec)
+    except ValueError as e:
+        raise APIError(
+            status.HTTP_409_CONFLICT,
+            str(e),
+            "NODE_ALREADY_EXISTS",
+        )
