@@ -125,8 +125,3 @@ async def refresh_token(request: TokenRefreshRequest):
         token_type="bearer",
         expires_in=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
     )
-
-
-
-
-
