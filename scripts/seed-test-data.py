@@ -11,7 +11,20 @@ import httpx
 from datetime import datetime, timezone
 
 BASE_URL = os.getenv("BASE_URL", "http://localhost:8000/api/v1")
-SHARED_TOKEN = os.getenv("SHARED_TOKEN", "")
+SHARED_TOKEN = os.getenv("SHARED_TOKEN", "").strip()
+
+# When running inside the compose stack the shared token is not passed through
+# the environment (CI deliberately leaves SHARED_TOKEN unset). Fall back to the
+# token persisted by the backend in the shared state volume.
+if not SHARED_TOKEN:
+    for candidate in ("/app/.shc/shared_token", "/app/.shc/shared-token"):
+        try:
+            with open(candidate, "r", encoding="utf-8") as fh:
+                SHARED_TOKEN = fh.read().strip()
+                if SHARED_TOKEN:
+                    break
+        except OSError:
+            continue
 
 # Test data definitions - Jobs (7 jobs with varied statuses)
 # Note: The status will be set by the backend after creation (PENDING by default)
@@ -209,10 +222,35 @@ async def main():
 
     print("API is ready. Seeding test data...")
 
-    # Use the localhost bypass token
-    headers = {"Authorization": f"Bearer {SHARED_TOKEN or 'localhost-no-auth'}"}
-
     async with httpx.AsyncClient(base_url=BASE_URL, timeout=30.0) as client:
+        # On localhost bypass hosts the backend accepts the magic token directly.
+        # Elsewhere (e.g. the compose stack, where the request originates from the
+        # db-seed container and the host is "backend"), exchange the shared token
+        # for a JWT access token first.
+        if SHARED_TOKEN:
+            try:
+                token_resp = await client.post(
+                    "/auth/token", json={"shared_token": SHARED_TOKEN}
+                )
+                if token_resp.status_code == 200:
+                    access_token = token_resp.json().get("access_token")
+                else:
+                    print(
+                        "Failed to mint access token:",
+                        token_resp.status_code,
+                        token_resp.text,
+                    )
+                    access_token = None
+            except Exception as exc:  # pragma: no cover - network failure
+                print(f"Failed to mint access token: {exc}")
+                access_token = None
+            if not access_token:
+                print("ERROR: could not obtain an access token for seeding")
+                sys.exit(1)
+            headers = {"Authorization": f"Bearer {access_token}"}
+        else:
+            headers = {"Authorization": "Bearer localhost-no-auth"}
+
         # Seed nodes first (jobs may reference nodes)
         await seed_nodes(client, headers)
 

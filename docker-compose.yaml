@@ -320,6 +320,8 @@ services:
     environment:
       - BASE_URL=http://backend:8000/api/v1
       - SHARED_TOKEN=${SHARED_TOKEN:-}
+    volumes:
+      - shc-state:/app/.shc:ro
     restart: "no"
     # No volumes, no ports - runs once and exits
 
