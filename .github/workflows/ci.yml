@@ -649,9 +649,20 @@ jobs:
         # E2E tests depend on this data being present.
         run: |
           for attempt in $(seq 1 60); do
-            if docker compose ps db-seed --format json | jq -e '.[0].State == "exited" and .[0].ExitCode == 0' >/dev/null 2>&1; then
-              echo "db-seed completed successfully after ${attempt} poll(s)"
-              exit 0
+            cid=$(docker compose ps -q db-seed)
+            if [ -n "$cid" ]; then
+              state=$(docker inspect -f '{{.State.Status}}' "$cid")
+              code=$(docker inspect -f '{{.State.ExitCode}}' "$cid")
+              if [ "$state" = "exited" ]; then
+                if [ "$code" = "0" ]; then
+                  echo "db-seed completed successfully after ${attempt} poll(s)"
+                  exit 0
+                else
+                  echo "::error::db-seed exited with code ${code}"
+                  docker compose logs db-seed
+                  exit 1
+                fi
+              fi
             fi
             sleep 2
           done

@@ -258,7 +258,11 @@ async def main():
         await seed_jobs(client, headers)
 
     print("Test data seeding completed!")
+    sys.exit(0)
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except SystemExit:
+        raise
