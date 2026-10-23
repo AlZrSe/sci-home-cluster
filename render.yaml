@@ -1,0 +1,31 @@
+# render.yaml — Render Blueprint for the Scientific Home Cluster.
+# Deploy: Render Dashboard -> New -> Blueprint -> select this repo,
+# or `render blueprint validate` (Render CLI) before pushing.
+services:
+  - type: web
+    name: scientific-home-cluster
+    runtime: docker
+    plan: starter          # disks require a paid instance type
+    dockerfilePath: ./docker/Dockerfile
+    dockerContext: .
+    healthCheckPath: /api/v1/health
+    autoDeploy: true
+    envVars:
+      - key: SERVE_FRONTEND
+        value: "true"
+      - key: SHC_DATA_DIR
+        value: /app/data
+      - key: SHC_STATE_DIR
+        value: /app/data/.shc
+      - key: SYNCTHING_ROOT
+        value: /tmp/syncthing
+      - key: DB_POOL
+        value: "null"
+      - key: VITE_CLUSTER_BACKEND
+        value: "http"
+      - key: VITE_API_URL
+        value: "https://scientific-home-cluster.onrender.com/api/v1"
+    disk:
+      name: shc-data
+      mountPath: /app/data
+      sizeGB: 1
