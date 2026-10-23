@@ -260,6 +260,7 @@ Standard environment variables, all read by `backend/core/config.py`:
 | `SHC_DATA_DIR` | `/app/data` | Directory containing the SQLite database file. |
 | `SHC_STATE_DIR` | `/app/.shc` | JWT signing key location. |
 | `SYNCTHING_ROOT` | `/tmp/syncthing` | Mount the Syncthing folder here. |
+| `SYNCTHING_HOME` | `/app/data/.syncthing` | Syncthing identity, config and database. Must be on persistent storage. |
 | `DB_POOL` | `null` | `pooled` or `null`. The baked `null` is the *test suite's* setting; `docker compose` overrides it to `pooled`. See above. |
 | `BACKEND_CORS_ORIGINS` | localhost dev origins | Not needed when same-origin; set it if split. |
 
@@ -536,14 +537,34 @@ URL) differs, update the value in `render.yaml` (or the dashboard) and redeploy.
 The frontend settings page can also retarget `apiBaseUrl` at runtime without a
 rebuild, which is the recovery path for a mismatched URL.
 
+### Syncthing daemon
+
+The image runs `syncthing` as a background process started by the entrypoint;
+uvicorn is PID 1. Behaviour:
+
+- State persists under `SYNCTHING_HOME` (default `/app/data/.syncthing`) on the
+  disk/volume: identity (`cert.pem`/`key.pem`), `config.xml` and the Syncthing
+  database all live there, so the device identity survives a container replace.
+- The default folder is `SYNCTHING_ROOT` (`/tmp/syncthing`); `autoAcceptFolders`
+  is enabled, but auto-accepting *devices* is **not** — pair devices manually or
+  via an introducer.
+- Auto-upgrade is disabled (`STNOUPGRADE=1`); bump `SYNCTHING_VERSION` and
+  rebuild to upgrade.
+- Ports: GUI `127.0.0.1:8384` (loopback, not published); sync
+  `22000/tcp` + `22000/udp`; local discovery `21027/udp`. To sync between Docker
+  hosts, publish those in your own compose override; the checked-in file
+  publishes only `8000`.
+
 ### Limitations
 
 - **No worker agents**: Render cannot run GPU workloads. Jobs submitted stay
   pending forever; a Render deployment is API + frontend + store only.
-- **No Syncthing**: `/tmp/syncthing` is ephemeral and empty. `syncthing_status`
-  reports "available" (the directory exists) but no nodes register — the
-  silent-second-cluster caveat from §"The Syncthing folder is bind-mounted".
-- **Single disk**: DB and JWT key share one mount; a disk failure loses both.
+- **Syncthing runs locally but is not reachable for pairing**: the container now
+  runs a Syncthing daemon (state under `SYNCTHING_HOME` on the disk), but on
+  Render its GUI (8384) and sync port (22000) are not publicly reachable (single
+  public port). No peers register; jobs stay pending. This is the expected
+  state for a Render deployment.
+- **Single disk**: DB, JWT key and Syncthing identity share one mount; a disk failure loses all three.
 - **`VITE_API_URL` is build-time**: changing the public URL needs a rebuild (or
   a runtime override in settings).
 - **Free tier**: no persistent disk; use the starter plan or above.

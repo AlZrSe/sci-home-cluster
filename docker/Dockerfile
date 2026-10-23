@@ -129,6 +129,30 @@ ENV SERVE_FRONTEND=true \
     SHC_DATA_DIR=/app/data \
     PYTHONPATH=/app
 
+# Syncthing static build (issue #154). No apt repository: the binary is
+# extracted from the official release tarball. curl + ca-certificates are the
+# only apt packages added, for fetching it.
+ARG SYNCTHING_VERSION=1.27.12
+ARG TARGETARCH=amd64
+
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends curl ca-certificates \
+ && rm -rf /var/lib/apt/lists/* \
+ && case "$TARGETARCH" in \
+        amd64|arm64|arm|386) ARCH="$TARGETARCH" ;; \
+        *) echo "unsupported architecture: $TARGETARCH" >&2; exit 1 ;; \
+    esac \
+ && curl -fsSL \
+        "https://github.com/syncthing/syncthing/releases/download/v${SYNCTHING_VERSION}/syncthing-linux-${ARCH}-v${SYNCTHING_VERSION}.tar.gz" \
+        -o /tmp/syncthing.tar.gz \
+ && tar -xzf /tmp/syncthing.tar.gz -C /tmp \
+ && install -m 0755 "/tmp/syncthing-linux-${ARCH}-v${SYNCTHING_VERSION}/syncthing" /usr/local/bin/syncthing \
+ && rm -rf /tmp/syncthing* \
+ && syncthing --version
+
+COPY docker/entrypoint.sh /usr/local/bin/entrypoint.sh
+RUN chmod +x /usr/local/bin/entrypoint.sh
+
 EXPOSE 8000
 
 # Unauthenticated, so it must not depend on the token. The Syncthing watcher and
@@ -138,4 +162,4 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
     CMD python -c "import os,sys,urllib.request; p=os.environ.get('PORT','8000'); sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:%s/api/v1/health'%p, timeout=4).status == 200 else 1)"
 
-CMD ["sh", "-c", "exec uvicorn backend.main:app --host 0.0.0.0 --port ${PORT:-8000}"]
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]

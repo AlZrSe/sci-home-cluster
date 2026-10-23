@@ -231,18 +231,26 @@ def test_build_arg_defaults_are_byte_identical_to_the_dockerfile(
     two sides are comparable at all. `!override`-free, single-file resolution, so
     this is the checked-in file's own numbers.
     """
+    # Only the VITE_* ARGs are build args shared with compose; the Dockerfile
+    # may declare additional internal ARGs (e.g. SYNCTHING_VERSION, TARGETARCH)
+    # that are not compose build args and are not compared here.
+    dockerfile_build_args = {
+        name: default
+        for name, default in dockerfile_args.items()
+        if name.startswith("VITE_")
+    }
     build_args = compose_config["services"][SERVICE]["build"]["args"]
-    assert set(dockerfile_args) == {"VITE_CLUSTER_BACKEND", "VITE_API_URL"}, (
-        f"docker/Dockerfile declares {sorted(dockerfile_args)}; the compose "
+    assert set(dockerfile_build_args) == {"VITE_CLUSTER_BACKEND", "VITE_API_URL"}, (
+        f"docker/Dockerfile declares {sorted(dockerfile_build_args)}; the compose "
         "file's build-arg block is documented as covering exactly these two "
         "(docker-compose.yaml:82-87)"
     )
-    assert set(build_args) == set(dockerfile_args), (
+    assert set(build_args) == set(dockerfile_build_args), (
         f"compose build args {sorted(build_args)} and Dockerfile ARGs "
         f"{sorted(dockerfile_args)} differ. A knob on one side only is a knob "
         "that silently does nothing on the other."
     )
-    for name, dockerfile_default in dockerfile_args.items():
+    for name, dockerfile_default in dockerfile_build_args.items():
         assert build_args[name] == dockerfile_default, (
             f"{name}: docker-compose.yaml defaults to {build_args[name]!r}, "
             f"docker/Dockerfile to {dockerfile_default!r}. The identity is "

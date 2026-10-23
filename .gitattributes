@@ -1,0 +1,3 @@
+# Keep shell scripts LF even on Windows checkouts; they run inside the Linux
+# container (docker/entrypoint.sh) and CRLF breaks the shebang.
+*.sh text eol=lf
