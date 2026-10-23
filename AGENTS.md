@@ -68,6 +68,21 @@ This project uses the [agent-team skill](.opencode/skills/agent-team/SKILL.md) w
 | **SWE** | Issue is `groomed`, need implementation + tests | "Implement API Server Core per spec in docs/spec.md" |
 | **QA** | PR opened, issue in `needs-review` | "Verify PR #42 against acceptance criteria for issue #3" |
 | **On-Call** | CI/CD fails on `main` branch | "Fix failing pipeline after merge to main" |
+| **On-Call (Post-Commit)** | **After every commit to `main`** | "Check GitHub CI status for latest commit and fix any failures" |
+
+### Post-Commit On-Call Engineer Rule
+**MANDATORY**: After each commit is pushed to `main` (or merged via PR), the orchestrator MUST invoke the On-Call Engineer subagent to:
+
+1. **Check GitHub CI status** for the latest commit on `main` using `gh run list --limit 5` and `gh run view <run-id>`
+2. **Wait for all CI jobs to complete** (the four jobs: `backend-gates`, `frontend-gates`, `compose-suite`, `e2e`)
+3. **If any job fails**:
+   - Analyze the failure logs
+   - Identify the root cause
+   - Implement a fix (following the agent-team workflow: create issue if needed, then SWE → QA → PM)
+   - Push the fix and re-verify CI passes
+4. **Report status** back to the orchestrator (pass/fail, any fixes applied)
+
+This ensures the `main` branch always stays green. The On-Call Engineer should be invoked **automatically** by the orchestrator after every `git push origin main`.
 
 ### Issue Label Flow
 `ready-for-grooming` → `groomed` (PM) → `in-progress` (SWE) → `needs-review` (QA) → `done` (PM accepts)
