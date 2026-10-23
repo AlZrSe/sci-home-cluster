@@ -288,6 +288,62 @@ need this at all - see [`SHARED_TOKEN`](#environment-variables). Reaching it fro
 Full reference, including every environment variable the image understands:
 [`docker/README.md`](docker/README.md).
 
+### Deploy to Render.com
+
+The project includes a **Render Blueprint** (`render.yaml` at the repository root) for
+one-click deploys. Render is a managed PaaS; the container runs the API, frontend, and a
+Syncthing daemon on a single public port.
+
+**Prerequisites:**
+- Render account with the repository connected (GitHub integration)
+- A paid plan (**Starter** or above) — Render's free tier has no persistent disk, which is
+  required for the SQLite database, JWT signing key, and Syncthing state
+
+**Blueprint path (recommended):**
+1. Commit `render.yaml` (already in this repo)
+2. Render Dashboard → **New** → **Blueprint** → select this repository
+3. Render imports the service, disk, and env vars from `render.yaml` and starts the build
+
+**Manual path:**
+1. Render Dashboard → **New** → **Web Service** → **Docker**
+2. Dockerfile path: `docker/Dockerfile`, Docker context: `.` (repository root)
+3. Health check path: `/api/v1/health`
+4. Add a **Disk** mounted at `/app/data` (1 GB minimum)
+5. Set environment variables (see `render.yaml`):
+   - `SERVE_FRONTEND=true`
+   - `SHC_DATA_DIR=/app/data`
+   - `SHC_STATE_DIR=/app/data/syncthing` (JWT key lives here)
+   - `SYNCTHING_ROOT=/tmp/syncthing` (synced folder; **not** the Syncthing home)
+   - `SYNCTHING_HOME=/app/data/syncthing` (Syncthing identity, config, database — **on the disk**)
+   - `DB_POOL=null` (the only value that boots on async SQLAlchemy)
+   - `VITE_CLUSTER_BACKEND=http`
+   - `VITE_API_URL=https://<your-service>.onrender.com/api/v1`
+6. **Do not set `PORT`** — Render injects it automatically
+
+**How it works:**
+- The container binds to `${PORT:-8000}`; on Render `PORT` is injected (default 10000)
+- A single Render Disk at `/app/data` holds everything: SQLite DB, JWT signing key,
+  and Syncthing state (`config.xml`, `cert.pem`, `key.pem`, database)
+- `VITE_API_URL` is a build-time constant; it must be the public HTTPS URL.
+  If the service name changes, update `render.yaml` and redeploy, or retarget it once
+  on the app's Settings page (runtime override without rebuild)
+- The Syncthing daemon runs inside the container but its GUI (8384) and sync port (22000)
+  are **not publicly reachable** on Render (single public port). No peers will register;
+  jobs stay pending. This is expected for a Render deployment — see **Limitations** below.
+
+**Retrieve the generated token:**
+```bash
+# In Render Shell
+cat /app/data/syncthing/shared_token
+```
+
+**Limitations on Render:**
+- No worker agents (Render cannot run GPU workloads)
+- Syncthing runs locally but is not reachable for pairing (single public port)
+- Single disk: DB, JWT key, and Syncthing state share `/app/data`; a disk failure loses all three
+- `VITE_API_URL` is build-time; changing the public URL needs a rebuild (or Settings page override)
+- Submodule dependency: if Render stops initializing submodules, the build fails
+
 ### Production Build
 ```bash
 # Frontend production build
