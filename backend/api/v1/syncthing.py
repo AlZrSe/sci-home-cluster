@@ -63,6 +63,16 @@ async def get_syncthing_status(
     else:
         status_data["nodes_folder"]["state_files"] = 0
 
+    # Add Syncthing GUI info
+    # On Render/container, GUI (8384) not publicly reachable (single public port).
+    # Access via port-forward or locally.
+    status_data["gui"] = {
+        "host": settings.SYNCTHING_GUI_HOST,
+        "port": settings.SYNCTHING_GUI_PORT,
+        "url": f"http://{settings.SYNCTHING_GUI_HOST}:{settings.SYNCTHING_GUI_PORT}",
+        "reachable": settings.SYNCTHING_GUI_HOST != "127.0.0.1",
+    }
+
     return status_data
 
 

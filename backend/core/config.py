@@ -383,6 +383,8 @@ class Settings(BaseSettings):
 
     # Syncthing configuration
     SYNCTHING_ROOT: str = "/tmp/syncthing"
+    SYNCTHING_GUI_HOST: str = "127.0.0.1"
+    SYNCTHING_GUI_PORT: int = 8384
 
     # Local server state directory (holds JWT signing key)
     SHC_STATE_DIR: Optional[str] = None
