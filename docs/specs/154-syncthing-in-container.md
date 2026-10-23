@@ -138,7 +138,7 @@ include the version, so there is no stable unversioned tarball URL.
 ### D2 — Syncthing home lives under the data disk/volume
 
 The home directory is configurable via `SYNCTHING_HOME`, defaulting to
-`/app/data/.syncthing`. That path is inside `SHC_DATA_DIR` (`/app/data`),
+`/app/data/syncthing`. That path is inside `SHC_DATA_DIR` (`/app/data`),
 which is the single Render Disk mount and the `shc-data` named volume on
 Docker. Consequences:
 
@@ -224,14 +224,14 @@ green; the ports are listed in the README instead.
 ### D7 — No compose changes
 
 `docker-compose.yaml` is untouched. The Syncthing home defaults to
-`/app/data/.syncthing`, which is inside the already-mounted `shc-data` volume,
+`/app/data/syncthing`, which is inside the already-mounted `shc-data` volume,
 so state persists without a new mount and the L1 static assertions (one
 service, pinned volumes, one published port, `SYNCTHING_ROOT` literal) survive.
 `SHC_COMPOSE_TESTS` gates are unaffected.
 
 ### D8 — Render blueprint gains `SYNCTHING_HOME`
 
-`render.yaml` sets `SYNCTHING_HOME=/app/data/.syncthing` explicitly (for
+`render.yaml` sets `SYNCTHING_HOME=/app/data/syncthing` explicitly (for
 documentation and to make the env var visible in the dashboard), even though the
 image default already resolves there. `SYNCTHING_ROOT` stays `/tmp/syncthing`.
 The disk at `/app/data` therefore holds the database, the JWT key, and the
@@ -307,7 +307,7 @@ it and an operator can override without rebuilding.
 #!/usr/bin/env bash
 set -euo pipefail
 
-SYNCTHING_HOME="${SYNCTHING_HOME:-/app/data/.syncthing}"
+SYNCTHING_HOME="${SYNCTHING_HOME:-/app/data/syncthing}"
 SYNCTHING_ROOT="${SYNCTHING_ROOT:-/tmp/syncthing}"
 PORT="${PORT:-8000}"
 
@@ -365,7 +365,7 @@ Add `SYNCTHING_HOME` to `envVars` (alongside the existing `SYNCTHING_ROOT`):
 
 ```yaml
       - key: SYNCTHING_HOME
-        value: /app/data/.syncthing
+        value: /app/data/syncthing
 ```
 
 No disk change: the existing disk at `/app/data` already covers it. `PORT` is
@@ -376,7 +376,7 @@ still not listed (Render injects it).
 Add to the existing "Deploying on Render.com" / limitations area and to the
 configuration table:
 
-- New env var row: `SYNCTHING_HOME` (default `/app/data/.syncthing`) —
+- New env var row: `SYNCTHING_HOME` (default `/app/data/syncthing`) —
   Syncthing identity, config and database. Must be on persistent storage.
 - A "Syncthing daemon" subsection documenting:
   - The image runs `syncthing` as a background process started by the
@@ -437,7 +437,7 @@ container entrypoint rather than by the backend. Defer unless SWE wants it.
 - [ ] **AC-6** Documentation covers ports (8384, 22000/tcp+udp, 21027/udp),
       pairing, auto-accept scope, and limitations (Render reachability, no
       workers).
-- [ ] **AC-7** `render.yaml` sets `SYNCTHING_HOME=/app/data/.syncthing`; the
+- [ ] **AC-7** `render.yaml` sets `SYNCTHING_HOME=/app/data/syncthing`; the
       disk at `/app/data` persists it.
 - [ ] **AC-8** Backend gates pass: `ruff check . && ruff format --check . &&
       mypy .` clean; `pytest --cov=backend` green.
@@ -460,7 +460,7 @@ container entrypoint rather than by the backend. Defer unless SWE wants it.
 - `docker run -d --name shc-st -p 8000:8000 -v shc-st-data:/app/data shc:syncthing`
   then `curl http://127.0.0.1:8000/api/v1/health` returns 200 within the
   start period.
-- `docker exec shc-st test -f /app/data/.syncthing/config.xml` succeeds and
+- `docker exec shc-st test -f /app/data/syncthing/config.xml` succeeds and
   `grep`/XML inspection shows `path="/tmp/syncthing"` and
   `autoAcceptFolders` true.
 - `docker exec shc-st pgrep -a syncthing` shows a running daemon.
@@ -481,7 +481,7 @@ container entrypoint rather than by the backend. Defer unless SWE wants it.
 - Import/redeploy the Blueprint; build succeeds (submodule present, tarball
   fetched).
 - First deploy: health check green; Render Shell shows
-  `/app/data/.syncthing/config.xml` and `syncthing.log`.
+  `/app/data/syncthing/config.xml` and `syncthing.log`.
 - Redeploy: config and identity persist (disk works).
 - Document that no peers register and jobs stay pending (expected).
 

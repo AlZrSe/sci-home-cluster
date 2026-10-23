@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-SYNCTHING_HOME="${SYNCTHING_HOME:-/app/data/.syncthing}"
+SYNCTHING_HOME="${SYNCTHING_HOME:-/app/data/syncthing}"
 SYNCTHING_ROOT="${SYNCTHING_ROOT:-/tmp/syncthing}"
 PORT="${PORT:-8000}"
 

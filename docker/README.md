@@ -260,7 +260,7 @@ Standard environment variables, all read by `backend/core/config.py`:
 | `SHC_DATA_DIR` | `/app/data` | Directory containing the SQLite database file. |
 | `SHC_STATE_DIR` | `/app/.shc` | JWT signing key location. |
 | `SYNCTHING_ROOT` | `/tmp/syncthing` | Mount the Syncthing folder here. |
-| `SYNCTHING_HOME` | `/app/data/.syncthing` | Syncthing identity, config and database. Must be on persistent storage. |
+| `SYNCTHING_HOME` | `/app/data/syncthing` | Syncthing identity, config and database. Must be on persistent storage. |
 | `DB_POOL` | `null` | `pooled` or `null`. The baked `null` is the *test suite's* setting; `docker compose` overrides it to `pooled`. See above. |
 | `BACKEND_CORS_ORIGINS` | localhost dev origins | Not needed when same-origin; set it if split. |
 
@@ -542,7 +542,7 @@ rebuild, which is the recovery path for a mismatched URL.
 The image runs `syncthing` as a background process started by the entrypoint;
 uvicorn is PID 1. Behaviour:
 
-- State persists under `SYNCTHING_HOME` (default `/app/data/.syncthing`) on the
+- State persists under `SYNCTHING_HOME` (default `/app/data/syncthing`) on the
   disk/volume: identity (`cert.pem`/`key.pem`), `config.xml` and the Syncthing
   database all live there, so the device identity survives a container replace.
 - The default folder is `SYNCTHING_ROOT` (`/tmp/syncthing`); `autoAcceptFolders`

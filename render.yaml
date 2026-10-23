@@ -20,7 +20,7 @@ services:
       - key: SYNCTHING_ROOT
         value: /tmp/syncthing
       - key: SYNCTHING_HOME
-        value: /app/data/.syncthing
+        value: /app/data/syncthing
       - key: DB_POOL
         value: "null"
       - key: VITE_CLUSTER_BACKEND
