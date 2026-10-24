@@ -100,6 +100,13 @@ class JobService:
                 f"({exc}). Nothing was submitted, so no node will run it."
             ) from exc
 
+        try:
+            from backend.core.metrics import record_job_submitted
+
+            record_job_submitted()
+        except Exception:
+            pass
+
         return created
 
     async def _rollback_created_job(self, job_id: str) -> None:

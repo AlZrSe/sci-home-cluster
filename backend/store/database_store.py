@@ -437,7 +437,7 @@ class DatabaseStore:
             jobs = [self._model_to_job_state(job) for job in job_models]
             return jobs, total
 
-    async def update_job(self, job_id: str, **kwargs: object) -> Optional[JobState]:
+    async def update_job(self, job_id: str, **kwargs: object) -> Optional[JobState]:  # noqa: C901
         """Update a job's fields and return the updated job."""
         await self._ensure_seeded()
         async with get_session() as session:
@@ -448,6 +448,9 @@ class DatabaseStore:
             if not job_model:
                 return None
 
+            old_status = getattr(job_model, "status", None)
+            old_created_at = getattr(job_model, "created_at", None)
+
             for key, value in kwargs.items():
                 if key == "spec" and isinstance(value, JobSpec):
                     setattr(job_model, key, value.model_dump())
@@ -456,6 +459,30 @@ class DatabaseStore:
 
             await session.commit()
             await session.refresh(job_model)
+
+            # Record job lifecycle metrics on terminal transitions.
+            try:
+                new_status = str(getattr(job_model, "status", "")).upper()
+                if old_status is not None and str(old_status).upper() != new_status:
+                    if new_status == "COMPLETED":
+                        from backend.core.metrics import record_job_completed
+
+                        duration = None
+                        created = old_created_at
+                        completed = getattr(job_model, "completed_at", None)
+                        if created is not None and completed is not None:
+                            try:
+                                duration = (completed - created).total_seconds()
+                            except Exception:
+                                duration = None
+                        record_job_completed(duration)
+                    elif new_status == "FAILED":
+                        from backend.core.metrics import record_job_failed
+
+                        record_job_failed()
+            except Exception:
+                pass
+
             return self._model_to_job_state(job_model)
 
     async def delete_job(self, job_id: str) -> bool:

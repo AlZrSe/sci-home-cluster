@@ -208,6 +208,13 @@ class SyncthingService:
         self._running = True
         self._heartbeat_check_task = asyncio.create_task(self._heartbeat_monitor())
 
+        try:
+            from backend.core.metrics import set_syncthing_available
+
+            set_syncthing_available(self.root_path.exists())
+        except Exception:
+            pass
+
         logger.info("Syncthing service started")
 
     async def stop(self):

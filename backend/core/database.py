@@ -4,6 +4,7 @@ Uses SQLAlchemy 2.0 async engine.
 """
 
 import logging
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import AsyncGenerator, Optional
@@ -87,6 +88,35 @@ def _configure_sqlite(dbapi_connection, _connection_record) -> None:
         cursor.close()
 
 
+def _before_cursor_execute(
+    _conn, _cursor, _statement, _parameters, context, _executemany
+) -> None:
+    try:
+        context._shc_metrics_start = time.perf_counter()  # type: ignore[attr-defined]
+    except Exception:
+        pass
+
+
+def _after_cursor_execute(
+    _conn, _cursor, statement, _parameters, context, _executemany
+) -> None:
+    start = getattr(context, "_shc_metrics_start", None)
+    if start is None:
+        return
+    try:
+        duration = time.perf_counter() - float(start)
+        operation = "query"
+        if statement:
+            first = str(statement).strip().split()
+            if first:
+                operation = first[0].lower()
+        from backend.core.metrics import record_db_query
+
+        record_db_query(duration, operation)
+    except Exception:
+        pass
+
+
 def get_engine() -> AsyncEngine:
     """Get or create the async database engine."""
     global _engine
@@ -109,6 +139,10 @@ def get_engine() -> AsyncEngine:
         )
         if db_url.startswith("sqlite"):
             event.listen(_engine.sync_engine, "connect", _configure_sqlite)
+        event.listen(
+            _engine.sync_engine, "before_cursor_execute", _before_cursor_execute
+        )
+        event.listen(_engine.sync_engine, "after_cursor_execute", _after_cursor_execute)
         # Log the absolute location, not just the URL: the URL string alone
         # named a file without saying where it was, which is what made "which
         # database am I on?" unanswerable from the logs (issue #34, AC-8).

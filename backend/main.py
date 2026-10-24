@@ -2,10 +2,12 @@
 Main entry point for the Scientific Home Cluster Backend API.
 """
 
+import asyncio
 import logging
 import time
 import uuid
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict
 
@@ -43,6 +45,7 @@ from backend.store import get_store  # noqa: E402
 from backend.services.syncthing_service import SyncthingService  # noqa: E402
 from backend.core.frontend import register_frontend, serving_frontend  # noqa: E402
 from backend.core.telemetry import configure_telemetry  # noqa: E402
+from backend.core.metrics import record_http_request  # noqa: E402
 
 # basicConfig above already put a handler on root, so this sets the level only:
 # it is a setLevel, not a second configuration, and it is where the operator's
@@ -116,6 +119,35 @@ async def lifespan(app: FastAPI):
     get_store()
     logger.info("Database store initialized")
 
+    # Background metrics updater for gauges that cannot be derived synchronously.
+    async def _metrics_loop() -> None:
+        while True:
+            try:
+                store = get_store()
+                nodes = await store.list_nodes()
+                online = sum(1 for n in nodes if n.status == "ONLINE")
+                from backend.core.metrics import (
+                    set_nodes_online,
+                    set_node_heartbeat_age,
+                    set_syncthing_available,
+                )
+
+                set_nodes_online(online)
+                now = datetime.now(timezone.utc)
+                for node in nodes:
+                    heartbeat = node.last_heartbeat
+                    if heartbeat.tzinfo is None:
+                        heartbeat = heartbeat.replace(tzinfo=timezone.utc)
+                    set_node_heartbeat_age(
+                        node.node_id, (now - heartbeat).total_seconds()
+                    )
+                set_syncthing_available(Path(settings.SYNCTHING_ROOT).exists())
+            except Exception:
+                pass
+            await asyncio.sleep(30)
+
+    app.state.metrics_task = asyncio.create_task(_metrics_loop())
+
     # Name the mode the process is in, on one line, at startup. This flag
     # no longer only controls demo seeding: with it off the backend also
     # refuses to invent metrics and log lines at read time (issue #35), so
@@ -140,6 +172,15 @@ async def lifespan(app: FastAPI):
 
     # Shutdown
     logger.info("Shutting down Scientific Home Cluster API")
+
+    # Stop metrics updater
+    metrics_task = getattr(app.state, "metrics_task", None)
+    if metrics_task is not None:
+        metrics_task.cancel()
+        try:
+            await metrics_task
+        except asyncio.CancelledError:
+            pass
 
     # Stop Syncthing watcher
     if hasattr(app.state, "syncthing_service"):
@@ -181,10 +222,19 @@ async def request_logging_middleware(request: Request, call_next):
     request_id = getattr(request.state, "request_id", "unknown")
 
     # Process request
-    response = await call_next(request)
+    try:
+        response = await call_next(request)
+    except Exception:
+        duration_ms = (time.perf_counter() - start_time) * 1000
+        record_http_request(request.method, request.url.path, 500, duration_ms / 1000.0)
+        raise
 
     # Calculate duration
     duration_ms = (time.perf_counter() - start_time) * 1000
+
+    record_http_request(
+        request.method, request.url.path, response.status_code, duration_ms / 1000.0
+    )
 
     # Log request details
     logger.info(

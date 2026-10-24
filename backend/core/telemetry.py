@@ -25,10 +25,12 @@ from typing import Any, Optional
 logger = logging.getLogger(__name__)
 
 try:  # pragma: no cover - import guard
-    from opentelemetry import trace
+    from opentelemetry import trace, metrics
     from opentelemetry.sdk.resources import Resource
     from opentelemetry.sdk.trace import TracerProvider
     from opentelemetry.sdk.trace.export import BatchSpanProcessor
+    from opentelemetry.sdk.metrics import MeterProvider
+    from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
 
     try:
         from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
@@ -38,11 +40,32 @@ try:  # pragma: no cover - import guard
     OTEL_AVAILABLE = True
 except Exception:  # pragma: no cover
     trace = None  # type: ignore[assignment,misc]
+    metrics = None  # type: ignore[assignment,misc]
     Resource = None  # type: ignore[assignment,misc]
     TracerProvider = None  # type: ignore[assignment,misc]
     BatchSpanProcessor = None  # type: ignore[assignment,misc]
+    MeterProvider = None  # type: ignore[assignment,misc]
+    PeriodicExportingMetricReader = None  # type: ignore[assignment,misc]
     FastAPIInstrumentor = None  # type: ignore[assignment,misc]
     OTEL_AVAILABLE = False
+
+# Optional OTLP metric exporter support.
+OTLPMetricExporter: Any = None
+try:  # pragma: no cover
+    from opentelemetry.exporter.otlp.proto.http.metric_exporter import (
+        OTLPMetricExporter as _HTTPMetricExporter,
+    )
+
+    OTLPMetricExporter = _HTTPMetricExporter
+except Exception:
+    try:  # pragma: no cover
+        from opentelemetry.exporter.otlp.proto.grpc.metric_exporter import (
+            OTLPMetricExporter as _GRPCMetricExporter,
+        )
+
+        OTLPMetricExporter = _GRPCMetricExporter
+    except Exception:
+        OTLPMetricExporter = None
 
 # Optional OTLP exporter support.
 OTLPSpanExporter: Any = None
@@ -268,6 +291,30 @@ def configure_telemetry(  # noqa: C901
             except Exception as exc:  # pragma: no cover
                 logger.debug("Could not set global tracer provider: %s", exc)
 
+    # Metrics provider.
+    meter_provider = None
+    if OTEL_AVAILABLE and MeterProvider is not None:
+        readers = []
+        resolved_endpoint = endpoint or _first_env(
+            ("OTEL_EXPORTER_OTLP_ENDPOINT", "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT")
+        )
+        if resolved_endpoint and OTLPMetricExporter is not None:
+            try:
+                metric_exporter = OTLPMetricExporter(endpoint=resolved_endpoint)  # type: ignore[misc]
+                reader = PeriodicExportingMetricReader(metric_exporter)
+                readers.append(reader)
+            except Exception as exc:  # pragma: no cover
+                logger.warning("Failed to configure OTLP metric exporter: %s", exc)
+        try:
+            meter_provider = MeterProvider(
+                resource=resolved_resource, metric_readers=readers
+            )
+            if metrics is not None:
+                metrics.set_meter_provider(meter_provider)
+        except Exception as exc:  # pragma: no cover
+            logger.warning("Failed to create MeterProvider: %s", exc)
+            meter_provider = None
+
     # Instrument the FastAPI application, if provided.
     if app is not None and OTEL_AVAILABLE and FastAPIInstrumentor is not None:
         try:
@@ -287,6 +334,8 @@ def configure_telemetry(  # noqa: C901
             app.state.otel_environment = resolve_environment(environment)
             app.state.otel_version = resolve_version(version)
             app.state.otel_resource = resolved_resource
+            if meter_provider is not None:
+                app.state.otel_meter_provider = meter_provider
         except Exception:
             pass
 
@@ -339,6 +388,16 @@ def get_tracer(name: str = __name__) -> Any:
         return None
     try:
         return trace.get_tracer(name)
+    except Exception:
+        return None
+
+
+def get_meter(name: str = __name__) -> Any:
+    """Return an OpenTelemetry meter, or ``None`` when unavailable."""
+    if not OTEL_AVAILABLE or metrics is None:
+        return None
+    try:
+        return metrics.get_meter(name)
     except Exception:
         return None
 
@@ -413,6 +472,7 @@ __all__ = [
     "init_opentelemetry",
     "instrument_app",
     "get_tracer",
+    "get_meter",
     "get_tracer_provider",
     "create_tracer_provider",
     "get_resource",
