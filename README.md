@@ -525,6 +525,12 @@ sci-run logs <job-id> --follow
 | `SECRET_KEY` | JWT signing key. See [Where is the signing key?](#where-is-the-signing-key) | generated into `$SHC_STATE_DIR` |
 | `LOCALHOST_BYPASS` | Skip auth on localhost | `true` |
 | `BACKEND_CORS_ORIGINS` | Allowed CORS origins | `["http://localhost:3000", "http://localhost:5173"]` |
+| `OTEL_SERVICE_NAME` | OpenTelemetry service name | project name |
+| `ENVIRONMENT` | Deployment environment | `development` |
+| `APP_VERSION` | Deployed version | from `pyproject.toml` |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | OTLP endpoint for traces/metrics | unset |
+| `OTEL_ENABLED` | Enable OpenTelemetry instrumentation | `true` |
+| `OTEL_SDK_DISABLED` | Disable SDK entirely | `false` |
 
 #### Which database am I using?
 
