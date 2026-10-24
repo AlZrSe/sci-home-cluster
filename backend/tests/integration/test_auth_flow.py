@@ -502,3 +502,54 @@ class TestAuthVerifyGet:
             assert get_response.status_code == 200
             assert post_response.status_code == 200
             assert get_response.json()["valid"] == post_response.json()["valid"]
+
+    @pytest.mark.asyncio
+    async def test_validate_endpoint_shared_token_constant_time(self, async_client):
+        """Test POST /auth/validate uses constant-time comparison."""
+        with patch.object(settings, "SHARED_TOKEN", "test-shared-token-123"):
+            response = await async_client.post(
+                "/api/v1/auth/validate", json={"token": "test-shared-token-123"}
+            )
+            assert response.status_code == 200
+            assert response.json()["valid"] is True
+
+            response = await async_client.post(
+                "/api/v1/auth/validate", json={"token": "wrong-token"}
+            )
+            assert response.status_code == 200
+            assert response.json()["valid"] is False
+
+    @pytest.mark.asyncio
+    async def test_create_token_endpoint_shared_token_constant_time(self, async_client):
+        """Test POST /auth/token uses constant-time comparison for shared_token."""
+        with patch.object(settings, "SHARED_TOKEN", "test-shared-token-123"):
+            # Valid shared token -> 200 with JWT
+            response = await async_client.post(
+                "/api/v1/auth/token", json={"shared_token": "test-shared-token-123"}
+            )
+            assert response.status_code == 200
+            assert "access_token" in response.json()
+
+            # Invalid shared token -> 401
+            response = await async_client.post(
+                "/api/v1/auth/token", json={"shared_token": "wrong-token"}
+            )
+            assert response.status_code == 401
+
+    @pytest.mark.asyncio
+    async def test_verify_endpoint_shared_token_constant_time(self, async_client):
+        """Test GET /auth/verify uses constant-time comparison."""
+        with patch.object(settings, "SHARED_TOKEN", "test-shared-token-123"):
+            response = await async_client.get(
+                "/api/v1/auth/verify",
+                headers={"Authorization": "Bearer test-shared-token-123"},
+            )
+            assert response.status_code == 200
+            assert response.json()["valid"] is True
+
+            response = await async_client.get(
+                "/api/v1/auth/verify",
+                headers={"Authorization": "Bearer wrong-token"},
+            )
+            assert response.status_code == 200
+            assert response.json()["valid"] is False

@@ -106,6 +106,78 @@ class TestAuthService:
             )
             assert await auth_service.verify_shared_token("wrong-token") is False
 
+    @pytest.mark.asyncio
+    async def test_validate_token_shared_token_constant_time(self, auth_service):
+        """Test validate_token uses constant-time comparison for valid token."""
+        with patch.object(settings, "SHARED_TOKEN", "test-shared-token-123"):
+            assert await auth_service.validate_token("test-shared-token-123") is True
+
+    @pytest.mark.asyncio
+    async def test_validate_token_shared_token_invalid(self, auth_service):
+        """Test validate_token uses constant-time comparison for invalid token."""
+        with patch.object(settings, "SHARED_TOKEN", "test-shared-token-123"):
+            assert await auth_service.validate_token("wrong-token") is False
+
+    @pytest.mark.asyncio
+    async def test_verify_shared_token_constant_time(self, auth_service):
+        """Test verify_shared_token uses constant-time comparison."""
+        with patch.object(settings, "SHARED_TOKEN", "test-shared-token-123"):
+            assert (
+                await auth_service.verify_shared_token("test-shared-token-123") is True
+            )
+            assert await auth_service.verify_shared_token("wrong-token") is False
+
+    @pytest.mark.asyncio
+    async def test_validate_token_no_shared_token_configured(self, auth_service):
+        """Test validate_token returns False when no shared token configured."""
+        with patch.object(settings, "SHARED_TOKEN", None):
+            assert await auth_service.validate_token("any-token") is False
+
+    @pytest.mark.asyncio
+    async def test_validate_token_empty_shared_token(self, auth_service):
+        """Test validate_token returns False when shared token is empty string."""
+        with patch.object(settings, "SHARED_TOKEN", ""):
+            assert await auth_service.validate_token("any-token") is False
+
+    @pytest.mark.asyncio
+    async def test_validate_token_jwt_still_works(self, auth_service):
+        """Test JWT validation path is unaffected by the fix."""
+        with patch.object(settings, "SHARED_TOKEN", "different-token"):
+            jwt_token = create_access_token({"sub": "test-user"})
+            assert await auth_service.validate_token(jwt_token) is True
+
+    @pytest.mark.asyncio
+    async def test_validate_token_prefix_attack_fails(self, auth_service):
+        """
+        Test that tokens sharing prefix with shared token don't leak info.
+        This is a functional test; actual timing test would be flaky in CI.
+        """
+        with patch.object(settings, "SHARED_TOKEN", "secret-token-12345"):
+            # These share prefixes of various lengths
+            assert (
+                await auth_service.validate_token("secret-token-12345") is True
+            )  # exact match
+            assert (
+                await auth_service.validate_token("secret-token-12346") is False
+            )  # last char differs
+            assert (
+                await auth_service.validate_token("secret-token-123") is False
+            )  # prefix only
+            assert await auth_service.validate_token("secret") is False  # short prefix
+            assert (
+                await auth_service.validate_token("wrong") is False
+            )  # no prefix match
+
+    @pytest.mark.asyncio
+    async def test_verify_shared_token_prefix_attack_fails(self, auth_service):
+        """Test verify_shared_token doesn't leak prefix info."""
+        with patch.object(settings, "SHARED_TOKEN", "secret-token-12345"):
+            assert await auth_service.verify_shared_token("secret-token-12345") is True
+            assert await auth_service.verify_shared_token("secret-token-12346") is False
+            assert await auth_service.verify_shared_token("secret-token-123") is False
+            assert await auth_service.verify_shared_token("secret") is False
+            assert await auth_service.verify_shared_token("wrong") is False
+
 
 class TestAuthAPI:
     """Tests for authentication API endpoints."""

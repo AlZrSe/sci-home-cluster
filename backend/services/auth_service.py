@@ -2,6 +2,7 @@
 Auth service layer containing business logic for authentication.
 """
 
+import hmac
 from datetime import timedelta
 from typing import Optional
 from jose import JWTError
@@ -35,7 +36,7 @@ class AuthService:
             return False
 
         # Check against shared token (for simple bearer token auth)
-        if self._shared_token and token == self._shared_token:
+        if self._shared_token and hmac.compare_digest(token, self._shared_token):
             return True
 
         # Try to validate as JWT
@@ -96,4 +97,4 @@ class AuthService:
         """Verify token against shared token only (not JWT)."""
         if not self._shared_token:
             return False
-        return token == self._shared_token
+        return hmac.compare_digest(token, self._shared_token)
