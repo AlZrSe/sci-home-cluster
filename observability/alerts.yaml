@@ -1,0 +1,19 @@
+groups:
+  - name: canvas-component-creation
+    rules:
+      - alert: RepeatedCanvasComponentCreationFailures
+        expr: increase(canvas_component_creation_failures_total[5m]) > 5
+        for: 5m
+        labels:
+          severity: warning
+          service: scientific-home-cluster
+          owner: platform-team
+        annotations:
+          summary: "Repeated canvas component-creation failures"
+          description: >
+            Canvas component creation is failing repeatedly
+            ({{ $value }} failures in the last 5 minutes). This indicates
+            real user impact on the authoring flow.
+          dashboard_url: "https://grafana.com/d/shc-overview/scientific-home-cluster-overview"
+          environment: "{{ $labels.deployment_environment }}"
+          deployed_version: "{{ $labels.service_version }}"
