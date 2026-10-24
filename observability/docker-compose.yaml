@@ -1,0 +1,43 @@
+# observability/docker-compose.yaml
+#
+# Separate Compose project for the OpenTelemetry Collector + Grafana Cloud.
+#
+# This is intentionally NOT part of the application stack in docker-compose.yaml
+# at the repository root. It runs as its own project (`shc-observability`) and
+# can be started/stopped independently:
+#
+#     cd observability
+#     docker compose up -d
+#     docker compose down
+#
+# The application backend exports OTLP traces/metrics/logs to the collector's
+# published ports (4317 gRPC, 4318 HTTP). Point the backend at it with:
+#
+#     OTEL_EXPORTER_OTLP_ENDPOINT=http://<host>:4318
+#
+# (`host.docker.internal` from a container on Docker Desktop, or the host IP on
+# Linux). When unset, the backend's telemetry is configured but not exported.
+
+name: shc-observability
+
+services:
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:latest
+    command: ["--config=/etc/otel-collector-config.yaml"]
+    volumes:
+      - ./otel-collector-config.yaml:/etc/otel-collector-config.yaml:ro
+    ports:
+      - "4317:4317"   # OTLP gRPC
+      - "4318:4318"   # OTLP HTTP
+      - "8888:8888"   # Collector metrics
+      - "13133:13133" # Health check
+    environment:
+      - GRAFANA_OTLP_ENDPOINT=${GRAFANA_OTLP_ENDPOINT}
+      - GRAFANA_OTLP_AUTH=${GRAFANA_OTLP_AUTH}
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:13133/"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
