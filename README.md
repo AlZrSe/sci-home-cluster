@@ -864,6 +864,57 @@ already exist - those are permanently unattributable.
 
 ---
 
+## Observability
+
+The backend is instrumented with OpenTelemetry (traces + metrics). Service name,
+deployment environment and deployed version are attached to every span and metric
+via the OpenTelemetry `Resource`.
+
+### Configuration
+
+| Variable | Description |
+|---|---|
+| `OTEL_SERVICE_NAME` | Override the service name (default: project name) |
+| `ENVIRONMENT` | Deployment environment (default: `development`) |
+| `APP_VERSION` | Deployed version (default: version from `pyproject.toml`) |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | OTLP endpoint for traces and metrics |
+| `OTEL_ENABLED` | Enable/disable instrumentation (default: `true`) |
+| `OTEL_SDK_DISABLED` | Disable the SDK entirely (default: `false`) |
+
+### Observability stack
+
+A separate Compose project lives in `observability/`:
+
+```bash
+cd observability
+cp .env.example .env   # fill in Grafana Cloud values
+docker compose up -d
+```
+
+The application backend exports to the collector's published ports (4317 gRPC,
+4318 HTTP). Point the backend at it with:
+
+```
+OTEL_EXPORTER_OTLP_ENDPOINT=http://host.docker.internal:4318
+```
+
+### Dashboard and alerts
+
+- `observability/grafana-dashboard.json` — importable Grafana dashboard with
+  the MVP metrics, filterable by `environment` and `deployed version`.
+- `observability/alerts.yaml` — actionable alert for repeated canvas
+  component-creation failures.
+
+### On-call engineer
+
+`on-call-engineer/poll_alerts.py` polls the observability alert API every
+minute and passes firing alerts to a headless coding agent.
+
+```bash
+cd on-call-engineer
+python poll_alerts.py
+```
+
 ## Project Structure
 
 ```
@@ -876,6 +927,8 @@ scientific-home-cluster/
 ├── backend/tests/         # Unit & integration tests
 ├── docker/                # Dockerfile + container reference (image built from the root context)
 ├── docker-compose.yaml    # Single-container deployment (see Docker Compose above)
+├── observability/         # Separate Compose project: OTel Collector + Grafana Cloud
+├── on-call-engineer/      # Alert polling script for the on-call workflow
 ├── docs/                  # Architecture specs (API, tests, routers, etc.)
 ├── stubs/                 # Type stubs
 ├── openapi.yaml           # OpenAPI 3.0 specification
