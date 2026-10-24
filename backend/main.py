@@ -42,6 +42,7 @@ from shared.schemas.error_response import ErrorResponse  # noqa: E402
 from backend.store import get_store  # noqa: E402
 from backend.services.syncthing_service import SyncthingService  # noqa: E402
 from backend.core.frontend import register_frontend, serving_frontend  # noqa: E402
+from backend.core.telemetry import configure_telemetry  # noqa: E402
 
 # basicConfig above already put a handler on root, so this sets the level only:
 # it is a setLevel, not a second configuration, and it is where the operator's
@@ -390,3 +391,8 @@ async def health_check():
 # registered first or this catch-all would take them instead. A no-op unless
 # SERVE_FRONTEND is on.
 register_frontend(app)
+
+# OpenTelemetry instrumentation. Configured last so the FastAPI app is fully
+# assembled (routers, middleware, exception handlers) before it is instrumented.
+if settings.OTEL_ENABLED and not settings.OTEL_SDK_DISABLED:
+    configure_telemetry(app)

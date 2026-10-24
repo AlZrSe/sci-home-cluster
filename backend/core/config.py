@@ -511,6 +511,14 @@ class Settings(BaseSettings):
     # Logging
     LOG_LEVEL: str = "INFO"
 
+    # OpenTelemetry / observability. All optional; environment variables win
+    # at runtime via backend.core.telemetry resolution.
+    OTEL_SERVICE_NAME: Optional[str] = None
+    ENVIRONMENT: str = "development"
+    APP_VERSION: Optional[str] = None
+    OTEL_EXPORTER_OTLP_ENDPOINT: Optional[str] = None
+    OTEL_ENABLED: bool = True
+    OTEL_SDK_DISABLED: bool = False
     # Localhost bypass for development
     LOCALHOST_BYPASS: bool = True
 
