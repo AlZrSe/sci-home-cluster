@@ -45,7 +45,7 @@ except Exception:  # pragma: no cover
     OTEL_AVAILABLE = False
 
 # Optional OTLP exporter support.
-OTLPSpanExporter = None
+OTLPSpanExporter: Any = None
 try:  # pragma: no cover
     from opentelemetry.exporter.otlp.proto.http.trace_exporter import (
         OTLPSpanExporter as _HTTPExporter,
