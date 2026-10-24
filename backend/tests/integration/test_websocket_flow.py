@@ -5,6 +5,7 @@ Integration tests for job logs endpoints (HTTP fallback and history).
 import pytest
 from typing import AsyncGenerator
 from httpx import AsyncClient, ASGITransport
+from starlette.testclient import TestClient
 from backend.main import app
 
 
@@ -124,3 +125,119 @@ class TestJobLogsHTTP:
 
         assert response.status_code == 404
         assert response.json()["error_code"] == "LOGS_NOT_FOUND"
+
+
+# ============================================================================
+# Issue #156 - WebSocket auth via query parameter removed (security)
+# ============================================================================
+# These integration tests verify the full WebSocket flow with new auth methods.
+# ============================================================================
+
+
+@pytest.mark.integration
+class TestWebSocketAuthFlow:
+    """Integration tests for WebSocket authentication flow (issue #156)."""
+
+    @pytest.fixture
+    async def auth_client(self) -> AsyncGenerator[AsyncClient, None]:
+        """Create an async client with localhost bypass auth for job creation."""
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://testserver"
+        ) as client:
+            client.headers["Authorization"] = "Bearer localhost-no-auth"
+            yield client
+
+    @pytest.fixture
+    async def test_job_id(self, auth_client):
+        """Create a test job and return its ID."""
+        from backend.store import get_store
+        from backend.tests.factories import create_job_spec
+        from shared.schemas.job_status import JobStatus
+
+        job_spec = create_job_spec(name="ws-auth-test-job")
+        store = get_store()
+        job = await store.create_job(job_spec)
+        # Set job to RUNNING to enable log streaming
+        await store.update_job(
+            job.job_id, status=JobStatus.RUNNING, node_id="node-alpha"
+        )
+        return job.job_id
+
+    @pytest.fixture
+    def jwt_token(self):
+        """Create a valid JWT token."""
+        from backend.core.security import create_access_token
+
+        return create_access_token({"sub": "test-user"})
+
+    def test_websocket_flow_with_auth_header(self, test_job_id, jwt_token):
+        """Full integration: create job, start it, stream logs via auth header."""
+        # Set job to RUNNING to enable log streaming
+        from backend.store import get_store
+        from shared.schemas.job_status import JobStatus
+
+        store = get_store()
+        # Use the event loop from the async fixture
+        import asyncio
+
+        asyncio.get_event_loop().run_until_complete(
+            store.update_job(
+                test_job_id, status=JobStatus.RUNNING, node_id="node-alpha"
+            )
+        )
+
+        client = TestClient(app, base_url="http://evil.com")
+        with client.websocket_connect(
+            f"/api/v1/jobs/{test_job_id}/logs",
+            headers={"Authorization": f"Bearer {jwt_token}", "Host": "evil.com"},
+        ) as ws:
+            # Receive at least one log message (synchronous)
+            message = ws.receive_text()
+            assert isinstance(message, str)
+            assert len(message) > 0
+
+    def test_websocket_flow_with_subprotocol(self, test_job_id, jwt_token):
+        """Full integration: stream logs via Sec-WebSocket-Protocol."""
+        # Set job to RUNNING to enable log streaming
+        from backend.store import get_store
+        from shared.schemas.job_status import JobStatus
+
+        store = get_store()
+        import asyncio
+
+        asyncio.get_event_loop().run_until_complete(
+            store.update_job(
+                test_job_id, status=JobStatus.RUNNING, node_id="node-alpha"
+            )
+        )
+
+        client = TestClient(app, base_url="http://evil.com")
+        with client.websocket_connect(
+            f"/api/v1/jobs/{test_job_id}/logs",
+            headers={
+                "Sec-WebSocket-Protocol": f"bearer, {jwt_token}",
+                "Host": "evil.com",
+            },
+        ) as ws:
+            # Receive at least one log message (synchronous)
+            message = ws.receive_text()
+            assert isinstance(message, str)
+            assert len(message) > 0
+            # Verify subprotocol was echoed back
+            # Note: TestClient's WebSocketTestSession doesn't expose headers
+
+    def test_websocket_query_param_rejected_in_integration(
+        self, test_job_id, jwt_token
+    ):
+        """Integration test: query param token is rejected even with valid token."""
+        client = TestClient(app, base_url="http://evil.com")
+        from starlette.websockets import WebSocketDisconnect
+
+        with pytest.raises(WebSocketDisconnect) as excinfo:
+            with client.websocket_connect(
+                f"/api/v1/jobs/{test_job_id}/logs?token={jwt_token}",
+                headers={"Host": "evil.com"},
+            ) as _ws:
+                pass
+        assert excinfo.value.code == 1008
+        assert "Query parameter authentication is not supported" in excinfo.value.reason

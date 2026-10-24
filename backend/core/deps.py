@@ -51,7 +51,8 @@ async def get_ws_token_payload(
 ) -> dict:
     """
     Validate the token for WebSocket connections and return the payload.
-    Extracts token from query params (?token=xxx) or Authorization header.
+    Extracts token from Authorization header or Sec-WebSocket-Protocol subprotocol.
+    Query parameter authentication is NOT supported (security: tokens in URLs leak).
     If LOCALHOST_BYPASS is True and the host is local, return a fake payload.
     """
     # Check if we are in localhost bypass mode
@@ -62,20 +63,28 @@ async def get_ws_token_payload(
             # Bypass authentication: return a fixed payload
             return {"sub": "localhost_user"}
 
-    # Extract token from query parameters
-    token = websocket.query_params.get("token")
+    # FIRST: Check Authorization header (preferred for non-browser clients)
+    auth_header = websocket.headers.get("Authorization")
+    if auth_header and auth_header.startswith("Bearer "):
+        token = auth_header[7:]  # Remove "Bearer " prefix
+    else:
+        token = None
 
-    # If not in query params, try Authorization header
-    if not token:
-        auth_header = websocket.headers.get("Authorization")
-        if auth_header and auth_header.startswith("Bearer "):
-            token = auth_header[7:]  # Remove "Bearer " prefix
-
-    # Fall back to the WebSocket subprotocol. A browser's WebSocket
-    # constructor can set neither query parameters nor headers, so this is
-    # the only way a web client can authenticate a log stream.
+    # SECOND: Check Sec-WebSocket-Protocol subprotocol (required for browsers)
     if not token:
         token = _token_from_subprotocol(websocket)
+
+    # THIRD: Reject query parameter tokens with clear error
+    query_token = websocket.query_params.get("token")
+    if query_token:
+        raise WebSocketException(
+            code=status.WS_1008_POLICY_VIOLATION,
+            reason=(
+                "Authentication required. Query parameter authentication "
+                "is not supported. Use Authorization header or WebSocket "
+                "subprotocol."
+            ),
+        )
 
     if not token:
         raise WebSocketException(

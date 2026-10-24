@@ -149,6 +149,10 @@ Lovable preview flow is blocked by CORS, which is a separate issue, not by this 
 
 - **Endpoint**: `GET /jobs/{id}/logs` (WebSocket upgrade)
 - **Messages**: Plain text log lines (one line per message)
+- **Authentication**:
+  - **Browser clients**: `Sec-WebSocket-Protocol: bearer, <token>` subprotocol
+  - **Non-browser clients**: `Authorization: Bearer <token>` header
+  - Query parameter `?token=` is **not supported** (security: tokens in URLs leak in proxy logs, browser history, and Referer headers)
 - **Status values**: Provided via `onStatus` callback: `"connecting" | "open" | "closed"`
 - **Reconnect**: Exponential backoff (configurable via `wsReconnectMs`, default 3000ms)
 - **Fallback**: HTTP `GET /jobs/{id}/logs/history` for initial load

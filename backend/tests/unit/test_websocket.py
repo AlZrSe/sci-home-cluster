@@ -10,7 +10,7 @@ from datetime import timedelta
 from typing import Any, AsyncGenerator
 
 import pytest
-from fastapi import WebSocket, WebSocketException
+from fastapi import WebSocket, WebSocketException, status
 from httpx import AsyncClient, ASGITransport
 from starlette.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
@@ -56,7 +56,7 @@ class TestWebSocketConnection:
     async def test_websocket_connect_success(self, async_client, test_job_id):
         """Test successful WebSocket connection to log stream."""
         async with async_client.websocket_connect(
-            f"/api/v1/jobs/{test_job_id}/logs/stream"
+            f"/api/v1/jobs/{test_job_id}/logs"
         ) as ws:
             # Connection established successfully
             assert ws is not None
@@ -67,7 +67,7 @@ class TestWebSocketConnection:
         with pytest.raises(Exception):
             # WebSocket connection should be rejected
             async with async_client.websocket_connect(
-                "/api/v1/jobs/job-999999/logs/stream"
+                "/api/v1/jobs/job-999999/logs"
             ) as _ws:
                 pass  # Should not reach here
 
@@ -75,7 +75,7 @@ class TestWebSocketConnection:
     async def test_websocket_receive_messages(self, async_client, test_job_id):
         """Test receiving structured messages via WebSocket."""
         async with async_client.websocket_connect(
-            f"/api/v1/jobs/{test_job_id}/logs/stream"
+            f"/api/v1/jobs/{test_job_id}/logs"
         ) as ws:
             # Receive first message (should be a log line or status)
             # The implementation sends log lines as plain text
@@ -123,7 +123,7 @@ class TestWebSocketAuthentication:
         """Test WebSocket connection works with localhost bypass."""
         # TestClient with base_url="http://test" simulates localhost
         async with unauthenticated_client.websocket_connect(
-            f"/api/v1/jobs/{test_job_id}/logs/stream"
+            f"/api/v1/jobs/{test_job_id}/logs"
         ) as ws:
             assert ws is not None
 
@@ -136,7 +136,7 @@ class TestWebSocketAuthentication:
                 transport=ASGITransport(app=app), base_url="http://test"
             ) as client:
                 async with client.websocket_connect(
-                    f"/api/v1/jobs/{test_job_id}/logs/stream?token={token}"
+                    f"/api/v1/jobs/{test_job_id}/logs?token={token}"
                 ) as _ws:
                     assert _ws is not None
 
@@ -149,7 +149,7 @@ class TestWebSocketAuthentication:
                 transport=ASGITransport(app=app), base_url="http://test"
             ) as client:
                 async with client.websocket_connect(
-                    f"/api/v1/jobs/{test_job_id}/logs/stream",
+                    f"/api/v1/jobs/{test_job_id}/logs",
                     headers={"Authorization": f"Bearer {token}"},
                 ) as _ws:
                     assert _ws is not None
@@ -163,7 +163,7 @@ class TestWebSocketAuthentication:
             ) as client:
                 with pytest.raises(Exception):
                     async with client.websocket_connect(
-                        "/api/v1/jobs/job-999999/logs/stream?token=invalid"
+                        "/api/v1/jobs/job-999999/logs?token=invalid"
                     ) as _ws:
                         pass
 
@@ -205,7 +205,7 @@ class TestWebSocketMessageStreaming:
     async def test_websocket_receives_log_lines(self, async_client, running_job_id):
         """Test WebSocket receives log lines for RUNNING job."""
         async with async_client.websocket_connect(
-            f"/api/v1/jobs/{running_job_id}/logs/stream"
+            f"/api/v1/jobs/{running_job_id}/logs"
         ) as _ws:
             # Should receive log lines
             messages = []
@@ -225,7 +225,7 @@ class TestWebSocketMessageStreaming:
     async def test_websocket_log_line_format(self, async_client, running_job_id):
         """Test log lines have expected format with timestamp."""
         async with async_client.websocket_connect(
-            f"/api/v1/jobs/{running_job_id}/logs/stream"
+            f"/api/v1/jobs/{running_job_id}/logs"
         ) as _ws:
             try:
                 message = await asyncio.wait_for(_ws.receive_text(), timeout=3.0)
@@ -244,7 +244,7 @@ class TestWebSocketMessageStreaming:
         try:
             for _ in range(3):
                 ws = await async_client.websocket_connect(
-                    f"/api/v1/jobs/{running_job_id}/logs/stream"
+                    f"/api/v1/jobs/{running_job_id}/logs"
                 )
                 connections.append(ws)
 
@@ -292,9 +292,7 @@ class TestWebSocketDisconnect:
     @pytest.mark.asyncio
     async def test_websocket_client_disconnect(self, async_client, running_job_id):
         """Test graceful handling of client disconnect."""
-        ws = await async_client.websocket_connect(
-            f"/api/v1/jobs/{running_job_id}/logs/stream"
-        )
+        ws = await async_client.websocket_connect(f"/api/v1/jobs/{running_job_id}/logs")
         # Receive one message
         try:
             await asyncio.wait_for(ws.receive_text(), timeout=3.0)
@@ -315,9 +313,7 @@ class TestWebSocketDisconnect:
         store = get_store()
 
         # Connect and immediately disconnect
-        ws = await async_client.websocket_connect(
-            f"/api/v1/jobs/{running_job_id}/logs/stream"
-        )
+        ws = await async_client.websocket_connect(f"/api/v1/jobs/{running_job_id}/logs")
         await ws.close()
 
         # Give some time for cleanup
@@ -338,13 +334,13 @@ class TestWebSocketDisconnect:
         """Test reconnecting after disconnect works."""
         # First connection
         ws1 = await async_client.websocket_connect(
-            f"/api/v1/jobs/{running_job_id}/logs/stream"
+            f"/api/v1/jobs/{running_job_id}/logs"
         )
         await ws1.close()
 
         # Second connection should work
         ws2 = await async_client.websocket_connect(
-            f"/api/v1/jobs/{running_job_id}/logs/stream"
+            f"/api/v1/jobs/{running_job_id}/logs"
         )
         try:
             message = await asyncio.wait_for(ws2.receive_text(), timeout=3.0)
@@ -382,9 +378,7 @@ class TestWebSocketEdgeCases:
         job_id = response.json()["job_id"]
 
         # PENDING job - WebSocket should connect but not stream
-        async with async_client.websocket_connect(
-            f"/api/v1/jobs/{job_id}/logs/stream"
-        ) as _ws:
+        async with async_client.websocket_connect(f"/api/v1/jobs/{job_id}/logs") as _ws:
             # For PENDING jobs, the stream worker exits immediately
             # Client might receive nothing or connection closes
             try:
@@ -406,9 +400,7 @@ class TestWebSocketEdgeCases:
         store = get_store()
         await store.update_job(job_id, status=JobStatus.COMPLETED, exit_code=0)
 
-        async with async_client.websocket_connect(
-            f"/api/v1/jobs/{job_id}/logs/stream"
-        ) as _ws:
+        async with async_client.websocket_connect(f"/api/v1/jobs/{job_id}/logs") as _ws:
             # For COMPLETED jobs, the stream worker exits immediately
             try:
                 _ = await asyncio.wait_for(_ws.receive_text(), timeout=1.0)
@@ -419,7 +411,7 @@ class TestWebSocketEdgeCases:
     async def test_websocket_heartbeat_keepalive(self, async_client, running_job_id):
         """Test WebSocket stays alive with periodic messages."""
         async with async_client.websocket_connect(
-            f"/api/v1/jobs/{running_job_id}/logs/stream"
+            f"/api/v1/jobs/{running_job_id}/logs"
         ) as ws:
             # Try to receive multiple messages over time
             messages = []
@@ -481,7 +473,7 @@ class TestWebSocketWithJWTAuth:
                 transport=ASGITransport(app=app), base_url="http://testserver"
             ) as ws_client:
                 async with ws_client.websocket_connect(
-                    f"/api/v1/jobs/{job_id}/logs/stream?token={jwt_token}"
+                    f"/api/v1/jobs/{job_id}/logs?token={jwt_token}"
                 ) as ws:
                     assert ws is not None
                     try:
@@ -521,7 +513,7 @@ class TestWebSocketWithJWTAuth:
                 transport=ASGITransport(app=app), base_url="http://test"
             ) as ws_client:
                 async with ws_client.websocket_connect(
-                    f"/api/v1/jobs/{job_id}/logs/stream",
+                    f"/api/v1/jobs/{job_id}/logs",
                     headers={"Authorization": f"Bearer {jwt_token}"},
                 ) as ws:
                     assert ws is not None
@@ -573,8 +565,11 @@ class TestWebSocketAuthRejection:
         with patch.object(settings, "LOCALHOST_BYPASS", True):
             try:
                 with client_non_bypass.websocket_connect(
-                    "/api/v1/jobs/any/logs?token=invalid",
-                    headers={"Host": "evil-localhost.com"},
+                    "/api/v1/jobs/any/logs",
+                    headers={
+                        "Host": "evil-localhost.com",
+                        "Authorization": "Bearer invalid",
+                    },
                 ) as _ws:
                     pytest.fail("Expected WebSocketDisconnect to be raised")
             except WebSocketDisconnect as e:
@@ -590,8 +585,11 @@ class TestWebSocketAuthRejection:
             )
             try:
                 with client_non_bypass.websocket_connect(
-                    f"/api/v1/jobs/any/logs?token={expired_token}",
-                    headers={"Host": "evil-localhost.com"},
+                    "/api/v1/jobs/any/logs",
+                    headers={
+                        "Host": "evil-localhost.com",
+                        "Authorization": f"Bearer {expired_token}",
+                    },
                 ) as _ws:
                     pytest.fail("Expected WebSocketDisconnect to be raised")
             except WebSocketDisconnect as e:
@@ -622,8 +620,11 @@ class TestWebSocketAuthRejection:
             client = TestClient(app, base_url="http://evil-localhost.com")
             try:
                 with client.websocket_connect(
-                    f"/api/v1/jobs/any/logs?token={token}",
-                    headers={"Host": "evil-localhost.com"},
+                    "/api/v1/jobs/any/logs",
+                    headers={
+                        "Host": "evil-localhost.com",
+                        "Authorization": f"Bearer {token}",
+                    },
                 ) as ws:
                     # Connection accepted (auth passes); route fails with
                     # "Job not found" after auth
@@ -787,3 +788,220 @@ class TestWebSocketLocalhostBypass:
                 await get_ws_token_payload(websocket=_ws("::1"))
         assert excinfo.value.code == 1008
         assert "Authentication required" in excinfo.value.reason
+
+
+# ============================================================================
+# Issue #156 - WebSocket auth via query parameter removed (security)
+# ============================================================================
+# These tests verify that query parameter authentication is rejected and
+# Authorization header / Sec-WebSocket-Protocol are accepted.
+# These tests use TestClient with base_url="http://evil-localhost.com" to
+# simulate a non-bypass host.
+# ============================================================================
+
+
+@pytest.mark.unit
+class TestWebSocketQueryParamRejection:
+    """Tests for WebSocket query parameter rejection (issue #156)."""
+
+    @pytest.fixture
+    def jwt_token(self):
+        """Create a valid JWT token."""
+        return create_access_token({"sub": "test-user"})
+
+    @pytest.fixture
+    def client_non_bypass(self) -> TestClient:
+        """Create a test client with a non-bypass host."""
+        return TestClient(app, base_url="http://evil-localhost.com")
+
+    def test_websocket_rejects_query_param_token(self, client_non_bypass, jwt_token):
+        """Test WebSocket rejects token in query parameter (AC-1)."""
+        with patch.object(settings, "LOCALHOST_BYPASS", False):
+            try:
+                with client_non_bypass.websocket_connect(
+                    f"/api/v1/jobs/job-123/logs?token={jwt_token}",
+                    headers={"Host": "evil-localhost.com"},
+                ) as _ws:
+                    pytest.fail("Expected WebSocketDisconnect to be raised")
+            except WebSocketDisconnect as e:
+                assert e.code == status.WS_1008_POLICY_VIOLATION
+                assert "Query parameter authentication is not supported" in e.reason
+
+    def test_websocket_accepts_auth_header(self, client_non_bypass, jwt_token):
+        """Test WebSocket accepts token in Authorization header (AC-2)."""
+        with patch.object(settings, "LOCALHOST_BYPASS", False):
+            with client_non_bypass.websocket_connect(
+                "/api/v1/jobs/job-123/logs",
+                headers={
+                    "Authorization": f"Bearer {jwt_token}",
+                    "Host": "evil-localhost.com",
+                },
+            ) as ws:
+                # Connection accepted; route may fail with "Job not found" after auth
+                assert ws is not None
+
+    def test_websocket_accepts_subprotocol(self, client_non_bypass, jwt_token):
+        """Test WebSocket accepts token in Sec-WebSocket-Protocol (AC-3)."""
+        with patch.object(settings, "LOCALHOST_BYPASS", False):
+            with client_non_bypass.websocket_connect(
+                "/api/v1/jobs/job-123/logs",
+                headers={
+                    "Sec-WebSocket-Protocol": f"bearer, {jwt_token}",
+                    "Host": "evil-localhost.com",
+                },
+            ) as ws:
+                # Connection accepted (auth passes); route will fail with
+                # "Job not found" after auth since job-123 doesn't exist
+                assert ws is not None
+
+    @pytest.mark.asyncio
+    async def test_websocket_localhost_bypass_unchanged(self):
+        """Test localhost bypass still works without any token (AC-4)."""
+        bypass_hosts = [
+            "localhost:8000",
+            "127.0.0.1:8000",
+            "[::1]:8000",
+            "0.0.0.0:8000",
+            "testserver",
+            "myhost.local",
+            "preview.lovable.app",
+        ]
+        for host_header in bypass_hosts:
+            with patch.object(settings, "LOCALHOST_BYPASS", True):
+                payload = await get_ws_token_payload(websocket=_ws(host_header))
+            assert payload == {"sub": "localhost_user"}
+
+    def test_websocket_rejects_invalid_token_in_header(self, client_non_bypass):
+        """Test WebSocket rejects invalid token in Authorization header (AC-5)."""
+        with patch.object(settings, "LOCALHOST_BYPASS", False):
+            try:
+                with client_non_bypass.websocket_connect(
+                    "/api/v1/jobs/job-123/logs",
+                    headers={
+                        "Authorization": "Bearer invalid-token",
+                        "Host": "evil-localhost.com",
+                    },
+                ) as _ws:
+                    pytest.fail("Expected WebSocketDisconnect to be raised")
+            except WebSocketDisconnect as e:
+                assert e.code == status.WS_1008_POLICY_VIOLATION
+                assert "Invalid or expired token" in e.reason
+
+    def test_websocket_rejects_invalid_token_in_subprotocol(self, client_non_bypass):
+        """Test WebSocket rejects invalid token in Sec-WebSocket-Protocol (AC-5)."""
+        with patch.object(settings, "LOCALHOST_BYPASS", False):
+            try:
+                with client_non_bypass.websocket_connect(
+                    "/api/v1/jobs/job-123/logs",
+                    headers={
+                        "Sec-WebSocket-Protocol": "bearer, invalid-token",
+                        "Host": "evil-localhost.com",
+                    },
+                ) as _ws:
+                    pytest.fail("Expected WebSocketDisconnect to be raised")
+            except WebSocketDisconnect as e:
+                assert e.code == status.WS_1008_POLICY_VIOLATION
+                assert "Invalid or expired token" in e.reason
+
+    def test_websocket_rejects_no_token(self, client_non_bypass):
+        """Test WebSocket rejects connection with no token on non-bypass host (AC-6)."""
+        with patch.object(settings, "LOCALHOST_BYPASS", False):
+            try:
+                with client_non_bypass.websocket_connect(
+                    "/api/v1/jobs/job-123/logs",
+                    headers={"Host": "evil-localhost.com"},
+                ) as _ws:
+                    pytest.fail("Expected WebSocketDisconnect to be raised")
+            except WebSocketDisconnect as e:
+                assert e.code == status.WS_1008_POLICY_VIOLATION
+                assert "Authentication required" in e.reason
+
+    def test_websocket_subprotocol_echo(self, client_non_bypass, jwt_token):
+        """Test server echoes 'bearer' subprotocol when client offers it (AC-3)."""
+        with patch.object(settings, "LOCALHOST_BYPASS", False):
+            with client_non_bypass.websocket_connect(
+                "/api/v1/jobs/job-123/logs",
+                headers={
+                    "Sec-WebSocket-Protocol": f"bearer, {jwt_token}, other-protocol",
+                    "Host": "evil-localhost.com",
+                },
+            ) as ws:
+                # Connection accepted (auth passes); route will fail with
+                # "Job not found" after auth since job-123 doesn't exist
+                assert ws is not None
+
+
+@pytest.mark.unit
+class TestGetWsTokenPayloadDirect:
+    """Direct unit tests for get_ws_token_payload dependency (issue #156)."""
+
+    @pytest.fixture
+    def jwt_token(self):
+        """Create a valid JWT token."""
+        return create_access_token({"sub": "test-user"})
+
+    @pytest.mark.asyncio
+    async def test_get_ws_token_payload_rejects_query_param(self, jwt_token):
+        """Test get_ws_token_payload rejects token from query_params (AC-1)."""
+        with patch.object(settings, "LOCALHOST_BYPASS", False):
+            ws = _ws("evil.com")
+            ws._query_params = {"token": jwt_token}
+            with pytest.raises(WebSocketException) as excinfo:
+                await get_ws_token_payload(websocket=ws)
+            assert excinfo.value.code == status.WS_1008_POLICY_VIOLATION
+            assert (
+                "Query parameter authentication is not supported"
+                in excinfo.value.reason
+            )
+
+    @pytest.mark.asyncio
+    async def test_get_ws_token_payload_accepts_auth_header(self, jwt_token):
+        """Test get_ws_token_payload accepts token from Authorization header (AC-2)."""
+        with patch.object(settings, "LOCALHOST_BYPASS", False):
+            ws = _ws("evil.com")
+            ws._headers = {"Authorization": f"Bearer {jwt_token}"}
+            payload = await get_ws_token_payload(websocket=ws)
+            assert payload["sub"] == "test-user"
+
+    @pytest.mark.asyncio
+    async def test_get_ws_token_payload_accepts_subprotocol(self, jwt_token):
+        """Test get_ws_token_payload accepts token from Sec-WebSocket-Protocol."""
+        with patch.object(settings, "LOCALHOST_BYPASS", False):
+            ws = _ws("evil.com")
+            ws._headers = {"sec-websocket-protocol": f"bearer, {jwt_token}"}
+            payload = await get_ws_token_payload(websocket=ws)
+            assert payload["sub"] == "test-user"
+
+    @pytest.mark.asyncio
+    async def test_get_ws_token_payload_rejects_no_token(self):
+        """Test get_ws_token_payload rejects when no token provided (AC-6)."""
+        with patch.object(settings, "LOCALHOST_BYPASS", False):
+            ws = _ws("evil.com")
+            ws._headers = {}
+            ws._query_params = {}
+            with pytest.raises(WebSocketException) as excinfo:
+                await get_ws_token_payload(websocket=ws)
+            assert excinfo.value.code == status.WS_1008_POLICY_VIOLATION
+            assert "Authentication required" in excinfo.value.reason
+
+    @pytest.mark.asyncio
+    async def test_get_ws_token_payload_rejects_invalid_token(self):
+        """Test get_ws_token_payload rejects invalid token (AC-5)."""
+        with patch.object(settings, "LOCALHOST_BYPASS", False):
+            ws = _ws("evil.com")
+            ws._headers = {"Authorization": "Bearer invalid-token"}
+            with pytest.raises(WebSocketException) as excinfo:
+                await get_ws_token_payload(websocket=ws)
+            assert excinfo.value.code == status.WS_1008_POLICY_VIOLATION
+            assert "Invalid or expired token" in excinfo.value.reason
+
+    @pytest.mark.asyncio
+    async def test_get_ws_token_payload_localhost_bypass_ignores_query_param(
+        self, jwt_token
+    ):
+        """Test localhost bypass ignores query param token (AC-4)."""
+        with patch.object(settings, "LOCALHOST_BYPASS", True):
+            ws = _ws("localhost:8000")
+            ws._query_params = {"token": jwt_token}
+            payload = await get_ws_token_payload(websocket=ws)
+            assert payload == {"sub": "localhost_user"}
