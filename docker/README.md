@@ -208,9 +208,24 @@ down -v` deletes **`shc-data` and `shc-state`**: the former is your cluster, and
 the latter is the JWT signing key, so every token ever issued stops verifying and
 every user is logged out.
 
-One more host-side consequence worth knowing before you go looking for files:
-the Dockerfile has no `USER`, so the container runs as root and anything it
-writes into `shc-data` is root-owned on a Linux host.
+### Non-root user (UID 1000 / GID 1000)
+
+The container runs as a dedicated non-root user `shc` (UID 1000, GID 1000).
+This follows Docker security best practices and ensures:
+
+- **Security**: A compromise of the application or Syncthing does not grant root privileges
+- **Host filesystem hygiene**: Files created in bind-mounted volumes (`./syncthing`, `shc-data`, `shc-state`) are owned by UID 1000/GID 1000
+
+**For bind mounts**: If you bind-mount a host directory (e.g., `./syncthing` → `/tmp/syncthing`), files written by the container will be owned by UID 1000 on the host. To avoid permission issues:
+
+```bash
+# On Linux hosts, ensure the bind mount directory is owned by UID 1000
+sudo chown -R 1000:1000 ./syncthing
+```
+
+**For named volumes** (`shc-data`, `shc-state`): The entrypoint wrapper automatically fixes ownership on first run, so no manual intervention is needed when upgrading from a root-running image.
+
+**For `docker run`**: Use `--user 1000:1000` if you need to override, but the image defaults to this user.
 
 ### Single-container alternative: `docker run`
 

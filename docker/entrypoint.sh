@@ -5,6 +5,8 @@ SYNCTHING_HOME="${SYNCTHING_HOME:-/app/data/syncthing}"
 SYNCTHING_ROOT="${SYNCTHING_ROOT:-/tmp/syncthing}"
 PORT="${PORT:-8000}"
 
+# Directories already exist with correct ownership (created in Dockerfile / entrypoint-root.sh)
+# mkdir -p kept for defense-in-depth (handles edge cases where volume mount is empty)
 mkdir -p "$SYNCTHING_HOME" "$SYNCTHING_ROOT"
 
 export STNOUPGRADE=1

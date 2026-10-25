@@ -114,6 +114,23 @@ RUN pip install --no-cache-dir .
 # nitro server bundle all stay behind.
 COPY --from=frontend /build/frontend/.output/public/ /app/frontend/
 
+# Create non-root user and group (UID/GID 1000 - standard first non-root user)
+RUN groupadd -g 1000 shc \
+ && useradd -u 1000 -g 1000 -m -s /bin/bash -d /home/shc shc
+
+# Install gosu for privilege dropping (used by official images like PostgreSQL, Redis)
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends gosu \
+ && rm -rf /var/lib/apt/lists/*
+
+# Create and chown runtime directories BEFORE switching user
+# These will be overlaid by named volumes at runtime, but pre-creating with
+# correct ownership handles the image's own filesystem and documents the expected UID/GID.
+RUN mkdir -p /app/data /app/.shc /tmp/syncthing \
+ && chown -R shc:shc /app/data /app/.shc /tmp/syncthing \
+ && chmod 750 /app/data /tmp/syncthing \
+ && chmod 700 /app/.shc
+
 # These paths are derived from the package location
 # (backend/core/config.py::_REPO_ROOT), so they land under /app regardless of
 # the working directory. Both are written at runtime and must survive a
@@ -143,15 +160,16 @@ RUN apt-get update \
         *) echo "unsupported architecture: $TARGETARCH" >&2; exit 1 ;; \
     esac \
  && curl -fsSL \
-        "https://github.com/syncthing/syncthing/releases/download/v${SYNCTHING_VERSION}/syncthing-linux-${ARCH}-v${SYNCTHING_VERSION}.tar.gz" \
-        -o /tmp/syncthing.tar.gz \
+         "https://github.com/syncthing/syncthing/releases/download/v${SYNCTHING_VERSION}/syncthing-linux-${ARCH}-v${SYNCTHING_VERSION}.tar.gz" \
+         -o /tmp/syncthing.tar.gz \
  && tar -xzf /tmp/syncthing.tar.gz -C /tmp \
  && install -m 0755 "/tmp/syncthing-linux-${ARCH}-v${SYNCTHING_VERSION}/syncthing" /usr/local/bin/syncthing \
  && rm -rf /tmp/syncthing* \
  && syncthing --version
 
 COPY docker/entrypoint.sh /usr/local/bin/entrypoint.sh
-RUN chmod +x /usr/local/bin/entrypoint.sh
+COPY docker/entrypoint-root.sh /usr/local/bin/entrypoint-root.sh
+RUN chmod +x /usr/local/bin/entrypoint.sh /usr/local/bin/entrypoint-root.sh
 
 EXPOSE 8000
 
@@ -162,4 +180,6 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
     CMD python -c "import os,sys,urllib.request; p=os.environ.get('PORT','8000'); sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:%s/api/v1/health'%p, timeout=4).status == 200 else 1)"
 
-ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
+# Root entrypoint wrapper fixes volume ownership then drops to shc user
+USER root
+ENTRYPOINT ["/usr/local/bin/entrypoint-root.sh"]
