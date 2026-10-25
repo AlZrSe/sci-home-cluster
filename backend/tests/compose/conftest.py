@@ -840,7 +840,12 @@ class ComposeStack:
         return run_destructive_compose(self.override_path, *args, check=check, **kwargs)
 
     # -- lifecycle ---------------------------------------------------------
-    def up(self, *extra: str, timeout: int = HEALTH_TIMEOUT_S) -> ComposeRun:
+    def up(
+        self,
+        *extra: str,
+        timeout: int = HEALTH_TIMEOUT_S,
+        env_extra: Optional[Mapping[str, str]] = None,
+    ) -> ComposeRun:
         """``up -d --wait``, which waits on the image's own HEALTHCHECK.
 
         ``--wait`` / ``--wait-timeout`` confirmed present in Compose v5.6.0.
@@ -849,7 +854,13 @@ class ComposeStack:
         """
         self.assert_not_checked_in_volumes()
         return self.compose(
-            "up", "-d", "--wait", "--wait-timeout", str(timeout), *extra
+            "up",
+            "-d",
+            "--wait",
+            "--wait-timeout",
+            str(timeout),
+            *extra,
+            env_extra=env_extra,
         )
 
     def down(self) -> ComposeRun:
@@ -1394,6 +1405,68 @@ def compose_stack(tmp_path_factory, image_id) -> Iterator[ComposeStack]:
     finally:
         # D4(d): remove ONLY the job directories this session created, by exact
         # name. Never clear the folder wholesale - it is operator data.
+        problems = remove_submitted_job_dirs(stack)
+        problems += teardown_stack(stack, created_volumes, created_temp)
+        if problems:
+            raise AssertionError(
+                "compose suite teardown:\n  - " + "\n  - ".join(problems)
+            )
+
+
+@pytest.fixture(scope="session")
+def compose_stack_with_auto_accept(
+    tmp_path_factory, image_id
+) -> Iterator[ComposeStack]:
+    """
+    A compose stack with SYNCTHING_AUTO_ACCEPT_FOLDERS=true.
+
+    Separate fixture so tests can opt into the insecure mode without affecting
+    the default secure stack. Uses a separate tag/volumes to avoid interference.
+    """
+    stack = ComposeStack(
+        tag=f"shc-e2e-autoaccept-{uuid.uuid4().hex[:12]}",
+        port=free_port(),
+        override_path=tmp_path_factory.mktemp("shc-compose-e2e-autoaccept")
+        / "override.yaml",
+        workdir=tmp_path_factory.mktemp("shc-compose-e2e-autoaccept-work"),
+    )
+
+    # (c.2) Refuse to proceed if anything this stack would own already exists.
+    for name in stack.volume_names:
+        if volume_exists(name):
+            raise InterlockViolation(
+                f"refusing to start: volume {name} already exists. The names are "
+                "uuid4-derived, so a hit means the name was reused rather than "
+                "freshly minted, and proceeding would delete data this suite did "
+                "not create."
+            )
+
+    created_volumes = list(stack.volume_names)
+    created_temp = Path(stack.workdir)
+
+    stack.override_path.parent.mkdir(parents=True, exist_ok=True)
+    stack.override_path.write_text(_override_yaml(stack), encoding="utf-8")
+
+    # D5: preflight and skip loudly rather than fail obscurely.
+    holder = port_holder(stack.port)
+    with contextlib.closing(socket.socket(socket.AF_INET, socket.SOCK_STREAM)) as sock:
+        try:
+            sock.bind(("127.0.0.1", stack.port))
+        except OSError:
+            pytest.skip(
+                f"the dynamically chosen published port {stack.port} is already "
+                f"held by {holder}. Re-run; the suite picks a free port per "
+                "session and refuses to fight for one (D5)."
+            )
+
+    try:
+        stack.preflight_bind_root()
+        # Pass SYNCTHING_AUTO_ACCEPT_FOLDERS=true to enable auto-accept
+        stack.up(env_extra={"SYNCTHING_AUTO_ACCEPT_FOLDERS": "true"})
+        stack.first_start_logs = stack.logs()
+        stack.first_start_token = stack.shared_token()
+        yield stack
+    finally:
         problems = remove_submitted_job_dirs(stack)
         problems += teardown_stack(stack, created_volumes, created_temp)
         if problems:

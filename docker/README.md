@@ -276,6 +276,7 @@ Standard environment variables, all read by `backend/core/config.py`:
 | `SHC_STATE_DIR` | `/app/.shc` | JWT signing key location. |
 | `SYNCTHING_ROOT` | `/tmp/syncthing` | Mount the Syncthing folder here. |
 | `SYNCTHING_HOME` | `/app/data/syncthing` | Syncthing identity, config and database. Must be on persistent storage. |
+| `SYNCTHING_AUTO_ACCEPT_FOLDERS` | `false` | Set `true` to auto-accept folder shares from paired devices. **Security risk**: a compromised peer can write files into `SYNCTHING_ROOT`. See issue #160. |
 | `DB_POOL` | `null` | `pooled` or `null`. The baked `null` is the *test suite's* setting; `docker compose` overrides it to `pooled`. See above. |
 | `BACKEND_CORS_ORIGINS` | localhost dev origins | Not needed when same-origin; set it if split. |
 
@@ -561,8 +562,7 @@ uvicorn is PID 1. Behaviour:
   disk/volume: identity (`cert.pem`/`key.pem`), `config.xml` and the Syncthing
   database all live there, so the device identity survives a container replace.
 - The default folder is `SYNCTHING_ROOT` (`/tmp/syncthing`); `autoAcceptFolders`
-  is enabled, but auto-accepting *devices* is **not** — pair devices manually or
-  via an introducer.
+  is **disabled by default** (secure). Set `SYNCTHING_AUTO_ACCEPT_FOLDERS=true` to enable (logs a WARNING). Auto-accepting *devices* is **not** enabled — pair devices manually or via an introducer.
 - Auto-upgrade is disabled (`STNOUPGRADE=1`); bump `SYNCTHING_VERSION` and
   rebuild to upgrade.
 - Ports: GUI `127.0.0.1:8384` (loopback, not published); sync
