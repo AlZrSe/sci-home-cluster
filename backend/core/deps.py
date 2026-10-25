@@ -2,11 +2,14 @@ from typing import Optional
 
 from fastapi import Depends, Request, Response, WebSocket, WebSocketException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from backend.core.config import settings
+from backend.core.config import settings, LocalhostBypassMode
 from backend.core.errors import auth_token_expired, auth_token_missing
 from backend.core.security import decode_access_token
-from backend.core.utils import is_localhost
+from backend.core.utils import is_localhost, is_loopback_ip
 from backend.core.ws_tickets import validate_ws_ticket
+import logging
+
+logger = logging.getLogger(__name__)
 
 reusable_oauth2 = HTTPBearer(
     scheme_name="Authorization",
@@ -15,21 +18,94 @@ reusable_oauth2 = HTTPBearer(
 )
 
 
+def _check_localhost_bypass_http(request: Request) -> Optional[dict]:
+    """
+    Check if localhost bypass should activate for HTTP request.
+
+    Returns a fake payload if bypass activates, None otherwise.
+    """
+    if settings.LOCALHOST_BYPASS_MODE == LocalhostBypassMode.DISABLED:
+        return None
+
+    client_host = request.client.host if request.client else None
+
+    if settings.LOCALHOST_BYPASS_MODE == LocalhostBypassMode.SOCKET:
+        # NEW: Trust the socket peer address
+        if is_loopback_ip(client_host):
+            logger.info(
+                "Auth bypass activated for %s via socket (path: %s, ua: %s)",
+                client_host,
+                request.url.path,
+                request.headers.get("user-agent", "unknown"),
+            )
+            return {"sub": "localhost_user"}
+
+    elif settings.LOCALHOST_BYPASS_MODE == LocalhostBypassMode.HOST_HEADER:
+        # DEPRECATED: Trust the client-supplied Host header
+        hostname = request.url.hostname
+        if is_localhost(hostname):
+            logger.warning(
+                "Auth bypass activated for %s via host_header "
+                "(DEPRECATED, path: %s, ua: %s)",
+                client_host,
+                request.url.path,
+                request.headers.get("user-agent", "unknown"),
+            )
+            return {"sub": "localhost_user"}
+
+    return None
+
+
+def _check_localhost_bypass_ws(websocket: WebSocket) -> Optional[dict]:
+    """
+    Check if localhost bypass should activate for WebSocket connection.
+
+    Returns a fake payload if bypass activates, None otherwise.
+    """
+    if settings.LOCALHOST_BYPASS_MODE == LocalhostBypassMode.DISABLED:
+        return None
+
+    client_host = websocket.client.host if websocket.client else None
+
+    if settings.LOCALHOST_BYPASS_MODE == LocalhostBypassMode.SOCKET:
+        # NEW: Trust the socket peer address
+        if is_loopback_ip(client_host):
+            logger.info(
+                "WS auth bypass activated for %s via socket (path: %s)",
+                client_host,
+                websocket.url.path,
+            )
+            return {"sub": "localhost_user"}
+
+    elif settings.LOCALHOST_BYPASS_MODE == LocalhostBypassMode.HOST_HEADER:
+        # DEPRECATED: Trust the client-supplied Host header
+        hostname = websocket.url.hostname
+        if is_localhost(hostname):
+            logger.warning(
+                "WS auth bypass activated for %s via host_header "
+                "(DEPRECATED, path: %s)",
+                client_host,
+                websocket.url.path,
+            )
+            return {"sub": "localhost_user"}
+
+    return None
+
+
 async def get_current_token_payload(
     request: Request,
     token: HTTPAuthorizationCredentials = Depends(reusable_oauth2),
 ) -> dict:
     """
     Validate the token and return the payload.
-    If LOCALHOST_BYPASS is True and the host is local, return a fake payload.
+
+    If LOCALHOST_BYPASS_MODE is not disabled and conditions are met,
+    return a fake payload.
     """
     # Check if we are in localhost bypass mode
-    if settings.LOCALHOST_BYPASS:
-        # Get the hostname from the request
-        hostname = request.url.hostname
-        if is_localhost(hostname):
-            # Bypass authentication: return a fixed payload
-            return {"sub": "localhost_user"}
+    bypass_payload = _check_localhost_bypass_http(request)
+    if bypass_payload is not None:
+        return bypass_payload
 
     # If not bypassing, then we require a token
     if token is None:
@@ -52,20 +128,23 @@ async def get_ws_token_payload(
 ) -> dict:
     """
     Validate the token for WebSocket connections and return the payload.
+
     Extracts token from:
     1. Authorization header (preferred for non-browser clients)
     2. Sec-WebSocket-Protocol subprotocol: ["bearer", "<token>"] (legacy JWT)
-    3. Sec-WebSocket-Protocol subprotocol: ["bearer", "<ticket>"] (new WebSocket ticket)
-    Query parameter authentication is NOT supported (security: tokens in URLs leak).
-    If LOCALHOST_BYPASS is True and the host is local, return a fake payload.
+    3. Sec-WebSocket-Protocol subprotocol: ["bearer", "<ticket>"]
+       (new WebSocket ticket)
+
+    Query parameter authentication is NOT supported
+    (security: tokens in URLs leak).
+
+    If LOCALHOST_BYPASS_MODE is not disabled and conditions are met,
+    return a fake payload.
     """
     # Check if we are in localhost bypass mode
-    if settings.LOCALHOST_BYPASS:
-        # Get the hostname from the websocket
-        hostname = websocket.url.hostname
-        if is_localhost(hostname):
-            # Bypass authentication: return a fixed payload
-            return {"sub": "localhost_user"}
+    bypass_payload = _check_localhost_bypass_ws(websocket)
+    if bypass_payload is not None:
+        return bypass_payload
 
     # FIRST: Check Authorization header (preferred for non-browser clients)
     auth_header = websocket.headers.get("Authorization")

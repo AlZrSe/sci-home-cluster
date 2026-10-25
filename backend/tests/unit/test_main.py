@@ -4,9 +4,20 @@ Integration tests for the main application.
 
 from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
+
+from backend.core.config import LocalhostBypassMode, settings
 from backend.main import _database_display_name, app
-from backend.core.config import absolute_sqlite_path, settings
+from backend.core.config import absolute_sqlite_path
+
+
+@pytest.fixture(autouse=True)
+def set_host_header_mode_for_tests(monkeypatch):
+    """Use host_header mode for main tests to ensure testserver bypass works."""
+    monkeypatch.setattr(
+        settings, "LOCALHOST_BYPASS_MODE", LocalhostBypassMode.HOST_HEADER
+    )
 
 
 def test_root_endpoint():

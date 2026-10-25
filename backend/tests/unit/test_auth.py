@@ -186,7 +186,12 @@ class TestAuthAPI:
     def client(self):
         from fastapi.testclient import TestClient
         from backend.main import app
+        from backend.core.config import settings, LocalhostBypassMode
 
+        # Use host_header mode so TestClient's "testserver" host triggers bypass
+        # This maintains compatibility with the legacy behavior these tests expect
+        # Patch the settings object directly since it's initialized at import time
+        settings.LOCALHOST_BYPASS_MODE = LocalhostBypassMode.HOST_HEADER
         return TestClient(app)
 
     def test_validate_token_endpoint_valid_shared(self, client):
@@ -289,10 +294,22 @@ class TestLocalhostBypassHostHeader:
     No `Authorization` header is sent anywhere in this class. A 200 therefore
     means the bypass fired and a 401 means it did not - there is no third
     outcome that could be mistaken for success.
+
+    These tests explicitly use LOCALHOST_BYPASS_MODE=host_header to test the
+    legacy Host-header-based bypass behavior.
     """
 
     # A protected endpoint with no side effects and no fixtures to arrange.
     ENDPOINT = "/api/v1/nodes/"
+
+    @pytest.fixture(autouse=True)
+    def set_host_header_mode(self, monkeypatch):
+        """Set host_header mode for all tests in this class (legacy behavior)."""
+        from backend.core.config import LocalhostBypassMode, settings
+
+        monkeypatch.setattr(
+            settings, "LOCALHOST_BYPASS_MODE", LocalhostBypassMode.HOST_HEADER
+        )
 
     @pytest.fixture
     def client(self):
@@ -327,8 +344,8 @@ class TestLocalhostBypassHostHeader:
         ],
     )
     def test_host_header_decides_the_bypass(self, client, host_header, expected):
-        with patch.object(settings, "LOCALHOST_BYPASS", True):
-            response = self._get(client, host_header)
+        # Mode is already set to HOST_HEADER by the autouse fixture
+        response = self._get(client, host_header)
         assert (
             response.status_code == expected
         ), f"Host: {host_header} -> {response.status_code}"
@@ -339,9 +356,8 @@ class TestLocalhostBypassHostHeader:
         fired for the wrong reason would still be a 200, so assert the
         bracketed loopback form resolves to the same payload `localhost` does.
         """
-        with patch.object(settings, "LOCALHOST_BYPASS", True):
-            localhost = self._get(client, "localhost:8000")
-            bracketed = self._get(client, "[::1]:8000")
+        localhost = self._get(client, "localhost:8000")
+        bracketed = self._get(client, "[::1]:8000")
 
         assert localhost.status_code == bracketed.status_code == 200
         assert bracketed.json() == localhost.json()
@@ -396,29 +412,38 @@ class TestLocalhostBypassHostHeader:
         }
         assert Request(scope).url.hostname is None
 
-        with patch.object(settings, "LOCALHOST_BYPASS", True):
-            response = self._get(client, "::1")
+        response = self._get(client, "::1")
         assert response.status_code == 401
 
-    def test_bypass_does_not_fire_when_disabled(self, client):
+    def test_bypass_does_not_fire_when_disabled(self, client, monkeypatch):
         """
-        The bypass is opt-out, not implicit: with LOCALHOST_BYPASS off a local
-        host is no longer special and must fall back to requiring a token.
+        The bypass is opt-out, not implicit: with LOCALHOST_BYPASS_MODE=disabled a
+        local host is no longer special and must fall back to requiring a token.
         """
-        with patch.object(settings, "LOCALHOST_BYPASS", False):
-            response = self._get(client, "[::1]:8000")
+        from backend.core.config import LocalhostBypassMode
+
+        monkeypatch.setattr(
+            settings, "LOCALHOST_BYPASS_MODE", LocalhostBypassMode.DISABLED
+        )
+        response = self._get(client, "[::1]:8000")
         assert response.status_code == 401
 
-    def test_bypass_off_accepts_a_valid_token_on_ipv6_loopback(self, client):
+    def test_bypass_off_accepts_a_valid_token_on_ipv6_loopback(
+        self, client, monkeypatch
+    ):
         """
         The assertion above is only meaningful if the endpoint really can
         succeed: with the bypass off, a real token over `Host: [::1]:8000` must
         still authenticate.
         """
+        from backend.core.config import LocalhostBypassMode
+
         token = create_access_token({"sub": "test-user"})
-        with patch.object(settings, "LOCALHOST_BYPASS", False):
-            response = client.get(
-                self.ENDPOINT,
-                headers={"Host": "[::1]:8000", "Authorization": f"Bearer {token}"},
-            )
+        monkeypatch.setattr(
+            settings, "LOCALHOST_BYPASS_MODE", LocalhostBypassMode.DISABLED
+        )
+        response = client.get(
+            self.ENDPOINT,
+            headers={"Host": "[::1]:8000", "Authorization": f"Bearer {token}"},
+        )
         assert response.status_code == 200

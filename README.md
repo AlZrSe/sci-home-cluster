@@ -523,7 +523,8 @@ sci-run logs <job-id> --follow
 | `SEED_DEMO_DATA` | Demo mode: seed the 10 demo jobs / 4 demo nodes on first use, **and** allow metrics and logs to be generated on read when nothing is stored | `false` |
 | `SHARED_TOKEN` | Shared bearer token for API. **Not generated** - unset by default, so `POST /api/v1/auth/token` answers `SHARED_TOKEN_NOT_CONFIGURED` until you set it | none (unset) |
 | `SECRET_KEY` | JWT signing key. See [Where is the signing key?](#where-is-the-signing-key) | generated into `$SHC_STATE_DIR` |
-| `LOCALHOST_BYPASS` | Skip auth on localhost | `true` |
+| `LOCALHOST_BYPASS` | Skip auth on localhost (legacy; prefer `LOCALHOST_BYPASS_MODE`) | `true` |
+| `LOCALHOST_BYPASS_MODE` | Bypass mode: `disabled` (secure), `socket` (peer IP, default dev), `host_header` (legacy, insecure) | `socket` (if `LOCALHOST_BYPASS=true`) / `disabled` (if `LOCALHOST_BYPASS=false`) |
 | `BACKEND_CORS_ORIGINS` | Allowed CORS origins | `["http://localhost:3000", "http://localhost:5173"]` |
 | `OTEL_SERVICE_NAME` | OpenTelemetry service name | project name |
 | `ENVIRONMENT` | Deployment environment | `development` |

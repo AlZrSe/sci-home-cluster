@@ -2,7 +2,12 @@
 Utility functions for the backend.
 """
 
+import ipaddress
+import logging
+from enum import Enum
 from typing import Optional
+
+logger = logging.getLogger(__name__)
 
 # Hosts that get the localhost bypass, and the suffixes whose subdomains do.
 #
@@ -62,6 +67,22 @@ LOCALHOST_SUFFIXES = [
 # See docs/spec.md#authentication.
 
 
+class LocalhostBypassMode(str, Enum):
+    """
+    Enum for localhost bypass modes.
+
+    - DISABLED: Bypass never activates (secure default for production).
+    - SOCKET: Bypass activates only for loopback socket peers
+      (new default for development).
+    - HOST_HEADER: Legacy behavior (client-controlled Host header)
+      - DEPRECATED.
+    """
+
+    DISABLED = "disabled"
+    SOCKET = "socket"
+    HOST_HEADER = "host_header"
+
+
 def get_settings():
     """Get application settings."""
     from backend.core.config import settings
@@ -74,7 +95,7 @@ def is_localhost(hostname: Optional[str]) -> bool:
     Check if a hostname is localhost or a local development domain.
 
     This is used for the localhost bypass logic where authentication
-    may be bypassed for development convenience.
+    may be bypassed for development convenience (HOST_HEADER mode).
 
     The input is normalised before matching: surrounding whitespace is
     trimmed (RFC 7230 s3.2.4 lets a sender append optional whitespace to a
@@ -95,3 +116,30 @@ def is_localhost(hostname: Optional[str]) -> bool:
     return host in LOCALHOST_EXACT_HOSTS or any(
         host.endswith(suffix) for suffix in LOCALHOST_SUFFIXES
     )
+
+
+def is_loopback_ip(ip: Optional[str]) -> bool:
+    """
+    Check if an IP address is a loopback address.
+
+    Handles:
+    - IPv4: 127.0.0.1, 127.0.0.0/8
+    - IPv6: ::1
+    - IPv6: ::ffff:127.0.0.1 (IPv4-mapped)
+    - IPv6: ::ffff:127.0.0.0/104 (IPv4-mapped loopback range)
+
+    Args:
+        ip: The IP address string to check. Can be None or empty.
+
+    Returns:
+        True if the IP is a loopback address, False otherwise.
+    """
+    if not ip:
+        return False
+
+    try:
+        addr = ipaddress.ip_address(ip)
+        return addr.is_loopback
+    except ValueError:
+        logger.debug("Invalid IP address for loopback check: %s", ip)
+        return False

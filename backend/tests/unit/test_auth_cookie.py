@@ -8,12 +8,21 @@ from unittest.mock import patch
 import pytest
 from fastapi.testclient import TestClient
 
+from backend.core.config import LocalhostBypassMode, settings
 from backend.main import app
 
 # Constants for long patch paths to avoid E501 line-too-long errors
 GET_SHARED_TOKEN = "backend.services.auth_service.AuthService.get_shared_token"
 VERIFY_SHARED_TOKEN = "backend.services.auth_service.AuthService.verify_shared_token"
 VALIDATE_TOKEN = "backend.services.auth_service.AuthService.validate_token"
+
+
+@pytest.fixture(autouse=True)
+def set_host_header_mode_for_tests(monkeypatch):
+    """Use host_header mode for cookie tests to ensure testserver bypass works."""
+    monkeypatch.setattr(
+        settings, "LOCALHOST_BYPASS_MODE", LocalhostBypassMode.HOST_HEADER
+    )
 
 
 @pytest.fixture

@@ -114,7 +114,13 @@ All defined in `src/lib/types.ts` — mirrored in OpenAPI `components/schemas`:
 
 - **Scheme**: Bearer token in `Authorization: Bearer <token>`
 - **Storage**: localStorage (`shc.settings.token`)
-- **Localhost bypass**: On `localhost`, `127.0.0.1`, `::1`, `.local`, `.lovable.app` → token optional, auto-set to `"localhost-no-auth"`. Matching is case-insensitive and strips one surrounding `[` `]` pair, so IPv6 loopback matches in both the browser's `[::1]` form and the backend's `::1` form. The backend additionally accepts `0.0.0.0` (wildcard bind) and `testserver` (test-client default); a browser reports neither.
+- **Localhost bypass**: Controlled by `LOCALHOST_BYPASS_MODE` (see below). When enabled,
+  on `localhost`, `127.0.0.1`, `::1`, `.local`, `.lovable.app` → token optional,
+  auto-set to `"localhost-no-auth"`. Matching is case-insensitive and strips one
+  surrounding `[` `]` pair, so IPv6 loopback matches in both the browser's
+  `[::1]` form and the backend's `::1` form. The backend additionally accepts
+  `0.0.0.0` (wildcard bind) and `testserver` (test-client default); a browser
+  reports neither.
 - **Validation**: `GET /auth/verify` with Bearer header → `{ valid: boolean }`
 - **Token min length**: 8 characters
 - **Signing key**: `SECRET_KEY` is **locally generated**, not shipped. On first
@@ -129,21 +135,50 @@ All defined in `src/lib/types.ts` — mirrored in OpenAPI `components/schemas`:
   or key path is exposed over `GET /health`, which has no auth dependency
   (issue #56).
 
-The bypass reads the client-supplied `Host` header, so **it is a developer-convenience list, not a
-security boundary**: any client that can reach the backend and set an arbitrary `Host` can already
-claim `localhost` and get the bypass. Adding a loopback-shaped entry therefore grants no capability
-`localhost` does not already grant. Behind a real deployment, pin the allowed hosts at the proxy.
+#### LOCALHOST_BYPASS_MODE
 
-The list is duplicated by necessity — `backend/core/utils.py` and
-`frontend/src/lib/settings.ts` each keep a literal copy, because the frontend bundler cannot import
-from outside its own repository. The entries they share live in
-`shared/auth/localhost_hosts.json`, and `backend/tests/unit/test_frontend_alignment.py` fails if the
-two lists drift. Change both together.
+The localhost bypass is configured via the `LOCALHOST_BYPASS_MODE` environment
+variable with three possible values:
 
-`.lovableproject.com` was on the frontend's list here and is on neither side's now. It is the one
-entry in the whole list that a third party could plausibly present in a `Host` header, so it was
-removed from the frontend rather than mirrored into the backend (issue #31). Do not re-add it: the
-Lovable preview flow is blocked by CORS, which is a separate issue, not by this list.
+| Mode | Description | Security |
+|------|-------------|----------|
+| `disabled` | Bypass never activates. **Secure default for production.** | ✅ Secure |
+| `socket` | Bypass activates only for loopback socket peers (peer IP is `127.0.0.1`, `::1`, or `::ffff:127.0.0.1`). **Default for development.** | 🔒 Secure-by-default |
+| `host_header` | Legacy behavior: bypass activates based on the client-supplied `Host` header. **DEPRECATED and INSECURE.** | ⚠️ Insecure |
+
+**Default resolution** (priority order):
+1. Explicit `LOCALHOST_BYPASS_MODE` (if set)
+2. `LOCALHOST_BYPASS=false` → `disabled`
+3. `LOCALHOST_BYPASS=true` (default) → `socket`
+
+**Startup logging**: When the bypass is enabled (mode `socket` or `host_header`), an
+INFO log is emitted: `"Localhost authentication bypass is ENABLED (mode: <mode>).
+This is a developer convenience, not a security boundary."` When `host_header`
+mode is used, an additional WARNING is emitted: `"LOCALHOST_BYPASS_MODE=host_header
+is DEPRECATED and INSECURE: it trusts the client-supplied Host header. Use 'socket'
+mode instead."`
+
+**Socket mode accepted IPs**: `127.0.0.1`, `::1`, `::ffff:127.0.0.1` (IPv4-mapped IPv6).
+
+The `host_header` mode reads the client-supplied `Host` header, so **it is a
+developer-convenience list, not a security boundary**: any client that can reach
+the backend and set an arbitrary `Host` can already claim `localhost` and get the
+bypass. Adding a loopback-shaped entry therefore grants no capability `localhost`
+does not already grant. Behind a real deployment, pin the allowed hosts at the
+proxy.
+
+The host list is duplicated by necessity — `backend/core/utils.py` and
+`frontend/src/lib/settings.ts` each keep a literal copy, because the frontend
+bundler cannot import from outside its own repository. The entries they share
+live in `shared/auth/localhost_hosts.json`, and
+`backend/tests/unit/test_frontend_alignment.py` fails if the two lists drift.
+Change both together.
+
+`.lovableproject.com` was on the frontend's list here and is on neither side's
+now. It is the one entry in the whole list that a third party could plausibly
+present in a `Host` header, so it was removed from the frontend rather than
+mirrored into the backend (issue #31). Do not re-add it: the Lovable preview
+flow is blocked by CORS, which is a separate issue, not by this list.
 
 ### Real-time: WebSocket Log Streaming
 

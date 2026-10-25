@@ -8,6 +8,7 @@ import logging
 import os
 import secrets
 import tomllib
+from enum import Enum
 from pathlib import Path
 from pydantic import AnyHttpUrl, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -79,6 +80,22 @@ PUBLISHED_KEY_SHA256: Final[frozenset[str]] = frozenset(
 )
 
 _SQLITE_DIALECT: Final[str] = "sqlite"
+
+
+class LocalhostBypassMode(str, Enum):
+    """
+    Enum for localhost bypass modes.
+
+    - DISABLED: Bypass never activates (secure default for production).
+    - SOCKET: Bypass activates only for loopback socket peers
+      (new default for development).
+    - HOST_HEADER: Legacy behavior (client-controlled Host header)
+      - DEPRECATED.
+    """
+
+    DISABLED = "disabled"
+    SOCKET = "socket"
+    HOST_HEADER = "host_header"
 
 
 def sqlite_path_from_url(url: str) -> Optional[Path]:
@@ -556,6 +573,28 @@ class Settings(BaseSettings):
     OTEL_SDK_DISABLED: bool = False
     # Localhost bypass for development
     LOCALHOST_BYPASS: bool = True
+    LOCALHOST_BYPASS_MODE: Optional[LocalhostBypassMode] = None
+
+    @field_validator("LOCALHOST_BYPASS_MODE", mode="before")
+    @classmethod
+    def _resolve_localhost_bypass_mode(
+        cls, v: Union[str, LocalhostBypassMode, None]
+    ) -> Optional[LocalhostBypassMode]:
+        """
+        Parse LOCALHOST_BYPASS_MODE from env/constructor.
+        Returns None if not explicitly set, to be resolved in model_post_init.
+        """
+        if v is not None and v != "":
+            if isinstance(v, str):
+                try:
+                    return LocalhostBypassMode(v.lower())
+                except ValueError:
+                    logger.warning(
+                        "Invalid LOCALHOST_BYPASS_MODE=%r, defaulting to 'socket'", v
+                    )
+                    return LocalhostBypassMode.SOCKET
+            return v
+        return None
 
     # Heartbeat contract (issue #96)
     HEARTBEAT_TIMEOUT_SECONDS: int = 90
@@ -646,6 +685,48 @@ class Settings(BaseSettings):
             data_dir = Path(self.SHC_DATA_DIR)
             db_path = data_dir / "scientific_home_cluster.db"
             self.DATABASE_URL = "sqlite:///" + db_path.as_posix()
+
+        # Resolve LOCALHOST_BYPASS_MODE with backward compatibility
+        # Priority:
+        # 1. Explicit LOCALHOST_BYPASS_MODE (already set by validator if provided)
+        # 2. LOCALHOST_BYPASS=false -> DISABLED
+        # 3. LOCALHOST_BYPASS=true (default) -> SOCKET
+        if self.LOCALHOST_BYPASS_MODE is None:
+            if self.LOCALHOST_BYPASS is False:
+                self.LOCALHOST_BYPASS_MODE = LocalhostBypassMode.DISABLED
+            else:
+                self.LOCALHOST_BYPASS_MODE = LocalhostBypassMode.SOCKET
+
+        # Log localhost bypass configuration
+        self._log_localhost_bypass_config()
+
+    def _log_localhost_bypass_config(self) -> None:
+        """Log localhost bypass configuration at startup."""
+        mode = self.LOCALHOST_BYPASS_MODE
+        if mode == LocalhostBypassMode.DISABLED:
+            logger.info("Localhost authentication bypass is DISABLED")
+            return
+
+        # At this point mode is guaranteed to be non-None
+        assert mode is not None
+        logger.info(
+            "Localhost authentication bypass is ENABLED (mode: %s). "
+            "This is a developer convenience, not a security boundary.",
+            mode.value,
+        )
+
+        if mode == LocalhostBypassMode.HOST_HEADER:
+            logger.warning(
+                "LOCALHOST_BYPASS_MODE=host_header is DEPRECATED and INSECURE: "
+                "it trusts the client-supplied Host header. Use 'socket' mode instead."
+            )
+
+        # Log accepted loopback IPs for socket mode
+        if mode == LocalhostBypassMode.SOCKET:
+            loopback_ips = ["127.0.0.1", "::1", "::ffff:127.0.0.1"]
+            logger.info(
+                "Accepted loopback IPs for socket mode: %s", ", ".join(loopback_ips)
+            )
 
 
 settings = Settings()
