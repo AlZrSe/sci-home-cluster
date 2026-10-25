@@ -605,6 +605,13 @@ class Settings(BaseSettings):
     )
     CSP_REPORT_ONLY: bool = False
 
+    # Interactive API documentation (Swagger UI / ReDoc / OpenAPI schema)
+    #
+    # Disabled by default in production for security (issue #161).
+    # Enabled implicitly when ENVIRONMENT=development or ENVIRONMENT=test.
+    # Can be explicitly overridden with ENABLE_API_DOCS=true/false.
+    ENABLE_API_DOCS: bool = False
+
     model_config = SettingsConfigDict(
         case_sensitive=True,
         env_file=_REPO_ROOT / ".env",

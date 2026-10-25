@@ -527,6 +527,7 @@ sci-run logs <job-id> --follow
 | `BACKEND_CORS_ORIGINS` | Allowed CORS origins | `["http://localhost:3000", "http://localhost:5173"]` |
 | `OTEL_SERVICE_NAME` | OpenTelemetry service name | project name |
 | `ENVIRONMENT` | Deployment environment | `development` |
+| `ENABLE_API_DOCS` | Enable Swagger UI (`/docs`), ReDoc (`/redoc`), and OpenAPI schema (`/openapi.json`) in production. Disabled by default in production for security; enabled implicitly when `ENVIRONMENT=development` or `ENVIRONMENT=test`. | `false` |
 | `APP_VERSION` | Deployed version | from `pyproject.toml` |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | OTLP endpoint for traces/metrics | unset |
 | `OTEL_ENABLED` | Enable OpenTelemetry instrumentation | `true` |

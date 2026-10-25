@@ -201,13 +201,32 @@ async def lifespan(app: FastAPI):
     logger.info("Shutdown complete")
 
 
+# Compute API docs enablement before FastAPI instantiation.
+# Priority: explicit ENABLE_API_DOCS > ENVIRONMENT in (development, test)
+enable_docs = settings.ENABLE_API_DOCS or settings.ENVIRONMENT in (
+    "development",
+    "test",
+)
+docs_url = "/docs" if enable_docs else None
+redoc_url = "/redoc" if enable_docs else None
+openapi_url = f"{settings.API_V1_STR}/openapi.json" if enable_docs else None
+
+# Log the docs state at startup (INFO level)
+if enable_docs:
+    if settings.ENABLE_API_DOCS:
+        logger.info("API docs ENABLED (ENABLE_API_DOCS=true)")
+    else:
+        logger.info(f"API docs ENABLED (ENVIRONMENT={settings.ENVIRONMENT})")
+else:
+    logger.info("API docs DISABLED (production mode)")
+
 app = FastAPI(
     title=settings.PROJECT_NAME,
     version=settings.VERSION,
-    openapi_url=f"{settings.API_V1_STR}/openapi.json",
+    openapi_url=openapi_url,
     lifespan=lifespan,
-    docs_url="/docs",
-    redoc_url="/redoc",
+    docs_url=docs_url,
+    redoc_url=redoc_url,
 )
 
 
