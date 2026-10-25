@@ -11,7 +11,7 @@
           "auth"
         ],
         "summary": "Verify Token",
-        "description": "Validate bearer token via GET with Authorization header.",
+        "description": "Validate bearer token via GET.\n\nReads token from Cookie header (preferred for browsers) or Authorization header\n(fallback for CLI, agent, and other non-browser clients).",
         "operationId": "verify_token_api_v1_auth_verify_get",
         "security": [
           {
@@ -106,7 +106,7 @@
           "auth"
         ],
         "summary": "Create Token",
-        "description": "Create a new JWT access token by validating against shared token.\n\nThis endpoint accepts a shared token and returns a JWT token if valid.",
+        "description": "Create a new JWT access token by validating against shared token.\n\nThis endpoint accepts a shared token and returns a JWT token if valid.\nFor browser clients, also sets an httpOnly cookie with the token.",
         "operationId": "create_token_api_v1_auth_token_post",
         "requestBody": {
           "content": {
@@ -182,6 +182,53 @@
             }
           }
         }
+      }
+    },
+    "/api/v1/auth/logout": {
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Logout",
+        "description": "Log out by clearing the authentication cookie.",
+        "operationId": "logout_api_v1_auth_logout_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/auth/ws-ticket": {
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Create Ws Ticket Endpoint",
+        "description": "Create a short-lived WebSocket ticket for authentication.\n\nThis endpoint requires valid cookie-based authentication.\nThe returned ticket is valid for 5 minutes (configurable) and single-use.",
+        "operationId": "create_ws_ticket_endpoint_api_v1_auth_ws_ticket_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WSTicketResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "Authorization": []
+          }
+        ]
       }
     },
     "/api/v1/jobs/": {
@@ -1725,6 +1772,25 @@
           "type"
         ],
         "title": "ValidationError"
+      },
+      "WSTicketResponse": {
+        "properties": {
+          "ticket": {
+            "type": "string",
+            "title": "Ticket"
+          },
+          "expires_in": {
+            "type": "integer",
+            "title": "Expires In"
+          }
+        },
+        "type": "object",
+        "required": [
+          "ticket",
+          "expires_in"
+        ],
+        "title": "WSTicketResponse",
+        "description": "A short-lived WebSocket authentication ticket."
       }
     },
     "securitySchemes": {

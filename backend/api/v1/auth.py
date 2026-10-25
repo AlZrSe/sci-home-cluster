@@ -3,8 +3,14 @@ Authentication API endpoints.
 """
 
 from datetime import timedelta
+
 from fastapi import APIRouter, Depends, Header, Request, Response
 from backend.core.config import settings
+from backend.core.cookies import (
+    clear_auth_cookie,
+    get_token_from_cookie,
+    set_auth_cookie,
+)
 from backend.core.deps import get_current_token_payload
 from backend.core.errors import (
     auth_rate_limited,
@@ -13,6 +19,7 @@ from backend.core.errors import (
     shared_token_not_configured,
 )
 from backend.core.rate_limit import get_rate_limiter
+from backend.core.ws_tickets import create_ws_ticket
 from shared.schemas.token_validation import (
     TokenValidationRequest,
     TokenValidationResponse,
@@ -20,6 +27,7 @@ from shared.schemas.token_validation import (
     TokenCreateResponse,
     TokenRefreshRequest,
     TokenRefreshResponse,
+    WSTicketResponse,
 )
 from backend.services.auth_service import AuthService
 
@@ -43,24 +51,20 @@ async def verify_token(
     payload: dict = Depends(get_current_token_payload),
 ):
     """
-    Validate bearer token via GET with Authorization header.
+    Validate bearer token via GET.
+
+    Reads token from Cookie header (preferred for browsers) or Authorization header
+    (fallback for CLI, agent, and other non-browser clients).
     """
     limiter = get_rate_limiter()
     endpoint = "/api/v1/auth/verify"
 
-    if not authorization or not authorization.startswith("Bearer "):
-        # Check rate limit for invalid request
-        allowed, error_detail = await limiter.check_rate_limit(
-            request, response, endpoint
-        )
-        _store_rate_limit_headers(request, response)
-        if not allowed:
-            retry_after = int(response.headers.get("Retry-After", "60"))
-            raise auth_rate_limited(error_detail or "Rate limited", retry_after)
-        await limiter.record_failure(request, endpoint, "missing_or_malformed_header")
-        return TokenValidationResponse(valid=False)
+    # Try to get token from cookie first (browser clients)
+    token = get_token_from_cookie(request)
 
-    token = authorization[7:]  # Remove "Bearer " prefix
+    # Fallback to Authorization header (non-browser clients)
+    if not token and authorization and authorization.startswith("Bearer "):
+        token = authorization[7:]  # Remove "Bearer " prefix
 
     # Localhost bypass: if the request comes from a localhost host AND the
     # token is the localhost bypass token ("localhost-no-auth"), we consider
@@ -73,6 +77,18 @@ async def verify_token(
         await limiter.check_rate_limit(request, response, endpoint)
         _store_rate_limit_headers(request, response)
         return TokenValidationResponse(valid=True)
+
+    if not token:
+        # Check rate limit for invalid request
+        allowed, error_detail = await limiter.check_rate_limit(
+            request, response, endpoint
+        )
+        _store_rate_limit_headers(request, response)
+        if not allowed:
+            retry_after = int(response.headers.get("Retry-After", "60"))
+            raise auth_rate_limited(error_detail or "Rate limited", retry_after)
+        await limiter.record_failure(request, endpoint, "missing_token")
+        return TokenValidationResponse(valid=False)
 
     auth_service = AuthService()
     is_valid = await auth_service.validate_token(token)
@@ -156,6 +172,7 @@ async def create_token(
     Create a new JWT access token by validating against shared token.
 
     This endpoint accepts a shared token and returns a JWT token if valid.
+    For browser clients, also sets an httpOnly cookie with the token.
     """
     limiter = get_rate_limiter()
     endpoint = "/api/v1/auth/token"
@@ -198,6 +215,9 @@ async def create_token(
     # Create new JWT token
     expires_delta = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
     access_token = await auth_service.create_token(expires_delta=expires_delta)
+
+    # Set httpOnly cookie for browser clients
+    set_auth_cookie(response, access_token, request)
 
     await limiter.record_success(request)
     # Add rate limit headers for successful request
@@ -244,6 +264,9 @@ async def refresh_token(
             "Please log in again to get a new access token."
         )
 
+    # Set httpOnly cookie for browser clients
+    set_auth_cookie(response, new_token, request)
+
     await limiter.record_success(request)
     # Add rate limit headers for successful request
     await limiter.check_rate_limit(request, response, endpoint)
@@ -253,4 +276,51 @@ async def refresh_token(
         access_token=new_token,
         token_type="bearer",
         expires_in=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+    )
+
+
+@router.post("/logout")
+async def logout(
+    request: Request,
+    response: Response,
+):
+    """
+    Log out by clearing the authentication cookie.
+    """
+    clear_auth_cookie(response, request)
+    return {"message": "Logged out successfully"}
+
+
+@router.post("/ws-ticket", response_model=WSTicketResponse)
+async def create_ws_ticket_endpoint(
+    request: Request,
+    response: Response,
+    payload: dict = Depends(get_current_token_payload),
+):
+    """
+    Create a short-lived WebSocket ticket for authentication.
+
+    This endpoint requires valid cookie-based authentication.
+    The returned ticket is valid for 5 minutes (configurable) and single-use.
+    """
+    limiter = get_rate_limiter()
+    endpoint = "/api/v1/auth/ws-ticket"
+
+    # Check rate limit
+    allowed, error_detail = await limiter.check_rate_limit(request, response, endpoint)
+    _store_rate_limit_headers(request, response)
+    if not allowed:
+        retry_after = int(response.headers.get("Retry-After", "60"))
+        raise auth_rate_limited(error_detail or "Rate limited", retry_after)
+
+    # Create the WebSocket ticket
+    ticket = create_ws_ticket()
+
+    await limiter.record_success(request)
+    await limiter.check_rate_limit(request, response, endpoint)
+    _store_rate_limit_headers(request, response)
+
+    return WSTicketResponse(
+        ticket=ticket,
+        expires_in=settings.AUTH_WS_TICKET_TTL_SECONDS,
     )

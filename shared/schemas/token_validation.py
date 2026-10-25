@@ -57,3 +57,18 @@ class TokenRefreshResponse(BaseModel):
     expires_in: int
 
     model_config = {"from_attributes": True}
+
+
+class WSTicketRequest(BaseModel):
+    """Request for a WebSocket ticket (empty body, auth via cookie)."""
+
+    model_config = {"from_attributes": True}
+
+
+class WSTicketResponse(BaseModel):
+    """A short-lived WebSocket authentication ticket."""
+
+    ticket: str
+    expires_in: int
+
+    model_config = {"from_attributes": True}

@@ -337,6 +337,41 @@ def _resolve_shared_token(shc_state_dir: Union[Optional[str], _Unset] = _UNSET) 
     return generated
 
 
+def _resolve_cookie_secret(shc_state_dir: Union[Optional[str], _Unset] = _UNSET) -> str:
+    """
+    Resolve the cookie signing secret, generating and persisting one if needed.
+
+    Separate from JWT signing key for defense in depth - rotating this key
+    invalidates all auth cookies without affecting JWT tokens.
+
+    Order of preference:
+      1. an explicitly configured ``AUTH_COOKIE_SECRET``
+      2. a secret persisted under ``SHC_STATE_DIR``
+      3. a freshly generated one, persisted for next time
+    """
+    state_path = Path(_state_dir(shc_state_dir)) / "cookie_secret"
+    try:
+        existing = state_path.read_text(encoding="utf-8").strip()
+    except (OSError, UnicodeDecodeError):
+        existing = ""
+
+    if existing:
+        return existing
+
+    generated = secrets.token_urlsafe(32)
+    written = _write_state_secret(state_path, generated)
+    if written is None:
+        logger.warning(
+            "Could not persist the generated AUTH_COOKIE_SECRET to %s; "
+            "cookies will not survive a restart.",
+            state_path,
+        )
+        return generated
+
+    logger.info("Generated a new cookie signing secret at %s.", written)
+    return generated
+
+
 def _state_dir(shc_state_dir: Union[Optional[str], _Unset] = _UNSET) -> str:
     """
     Directory for locally persisted server state.
@@ -548,6 +583,28 @@ class Settings(BaseSettings):
     AUTH_RATE_LIMIT_LOCKOUT_THRESHOLD: int = 11
     AUTH_RATE_LIMIT_LOCKOUT_SECONDS: int = 3600
 
+    # Cookie-based authentication configuration (issue #158)
+    AUTH_COOKIE_NAME: str = "shc_token"
+    AUTH_COOKIE_MAX_AGE_SECONDS: int = 86400  # 24 hours
+    AUTH_COOKIE_SECURE: bool = True
+    AUTH_COOKIE_SAME_SITE: str = "strict"  # "strict", "lax", or "none"
+    AUTH_COOKIE_SECRET: Optional[str] = None  # Separate signing key for cookies
+    AUTH_WS_TICKET_TTL_SECONDS: int = 300  # 5 minutes
+
+    # Content-Security-Policy configuration (issue #158)
+    CSP_POLICY: str = (
+        "default-src 'self'; "
+        "script-src 'self'; "
+        "style-src 'self' 'unsafe-inline'; "
+        "img-src 'self' data:; "
+        "font-src 'self'; "
+        "connect-src 'self' wss:; "
+        "frame-ancestors 'none'; "
+        "base-uri 'self'; "
+        "form-action 'self'"
+    )
+    CSP_REPORT_ONLY: bool = False
+
     model_config = SettingsConfigDict(
         case_sensitive=True,
         env_file=_REPO_ROOT / ".env",
@@ -567,6 +624,11 @@ class Settings(BaseSettings):
         # an operator who sets one never sees this path.
         if not self.SHARED_TOKEN:
             self.SHARED_TOKEN = _resolve_shared_token(self.SHC_STATE_DIR)
+
+        # Cookie signing key (separate from JWT key for defense in depth)
+        # Same pattern: generate and persist if not configured.
+        if not self.AUTH_COOKIE_SECRET:
+            self.AUTH_COOKIE_SECRET = _resolve_cookie_secret(self.SHC_STATE_DIR)
 
         # Resolve DATABASE_URL from SHC_DATA_DIR if provided and not explicitly
         # set to a non-default value. This allows mounting the database at any

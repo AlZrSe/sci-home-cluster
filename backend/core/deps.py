@@ -6,6 +6,7 @@ from backend.core.config import settings
 from backend.core.errors import auth_token_expired, auth_token_missing
 from backend.core.security import decode_access_token
 from backend.core.utils import is_localhost
+from backend.core.ws_tickets import validate_ws_ticket
 
 reusable_oauth2 = HTTPBearer(
     scheme_name="Authorization",
@@ -51,7 +52,10 @@ async def get_ws_token_payload(
 ) -> dict:
     """
     Validate the token for WebSocket connections and return the payload.
-    Extracts token from Authorization header or Sec-WebSocket-Protocol subprotocol.
+    Extracts token from:
+    1. Authorization header (preferred for non-browser clients)
+    2. Sec-WebSocket-Protocol subprotocol: ["bearer", "<token>"] (legacy JWT)
+    3. Sec-WebSocket-Protocol subprotocol: ["bearer", "<ticket>"] (new WebSocket ticket)
     Query parameter authentication is NOT supported (security: tokens in URLs leak).
     If LOCALHOST_BYPASS is True and the host is local, return a fake payload.
     """
@@ -70,11 +74,17 @@ async def get_ws_token_payload(
     else:
         token = None
 
-    # SECOND: Check Sec-WebSocket-Protocol subprotocol (required for browsers)
+    # SECOND: Check Sec-WebSocket-Protocol subprotocol for ticket or legacy token
     if not token:
         token = _token_from_subprotocol(websocket)
 
-    # THIRD: Reject query parameter tokens with clear error
+    # THIRD: Check for WebSocket ticket (new format: ws_...)
+    if not token:
+        ticket = _ticket_from_subprotocol(websocket)
+        if ticket and validate_ws_ticket(ticket):
+            return {"sub": "user", "auth_method": "ws_ticket"}
+
+    # FOURTH: Reject query parameter tokens with clear error
     query_token = websocket.query_params.get("token")
     if query_token:
         raise WebSocketException(
@@ -103,6 +113,23 @@ async def get_ws_token_payload(
                 "to get a new access token."
             ),
         )
+
+
+def _ticket_from_subprotocol(websocket: WebSocket) -> Optional[str]:
+    """
+    Extract a WebSocket ticket sent as a WebSocket subprotocol.
+
+    The client offers e.g. ["bearer", "ws_<ticket>"]. We accept the handshake
+    only if "bearer" was among the offered protocols.
+    """
+    offered = websocket.headers.get("sec-websocket-protocol")
+    if not offered:
+        return None
+    protocols = [part.strip() for part in offered.split(",") if part.strip()]
+    if "bearer" not in [p.lower() for p in protocols]:
+        return None
+    candidates = [p for p in protocols if p.lower() != "bearer" and p.startswith("ws_")]
+    return candidates[0] if candidates else None
 
 
 def _token_from_subprotocol(websocket: WebSocket) -> Optional[str]:

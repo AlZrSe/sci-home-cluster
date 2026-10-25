@@ -256,6 +256,22 @@ async def request_logging_middleware(request: Request, call_next):
     return response
 
 
+@app.middleware("http")
+async def csp_middleware(request: Request, call_next):
+    """Add Content-Security-Policy header to all responses."""
+    response = await call_next(request)
+
+    csp_header = "Content-Security-Policy"
+    if settings.CSP_REPORT_ONLY:
+        csp_header = "Content-Security-Policy-Report-Only"
+
+    # Only add if not already set (e.g., by frontend serving)
+    if csp_header not in response.headers:
+        response.headers[csp_header] = settings.CSP_POLICY
+
+    return response
+
+
 @app.exception_handler(StarletteHTTPException)
 async def http_exception_handler(request: Request, exc: StarletteHTTPException):
     """Convert HTTPException to ErrorResponse format.
