@@ -1,6 +1,6 @@
 from typing import Optional
 
-from fastapi import Depends, Request, WebSocket, WebSocketException, status
+from fastapi import Depends, Request, Response, WebSocket, WebSocketException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from backend.core.config import settings
 from backend.core.errors import auth_token_expired, auth_token_missing
@@ -138,3 +138,16 @@ def ws_accepted_subprotocol(websocket: WebSocket) -> Optional[str]:
         if part.strip().lower() == "bearer":
             return "bearer"
     return None
+
+
+async def rate_limit_dependency(
+    request: Request,
+    response: Response,
+) -> None:
+    """
+    FastAPI dependency for rate limiting auth endpoints.
+
+    This dependency is DEPRECATED - rate limiting is now done directly in
+    endpoint handlers to ensure headers are properly added to the final response.
+    """
+    pass

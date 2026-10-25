@@ -46,6 +46,7 @@ from backend.services.syncthing_service import SyncthingService  # noqa: E402
 from backend.core.frontend import register_frontend, serving_frontend  # noqa: E402
 from backend.core.telemetry import configure_telemetry  # noqa: E402
 from backend.core.metrics import record_http_request  # noqa: E402
+from backend.core.rate_limit import init_rate_limiter, shutdown_rate_limiter  # noqa: E402
 
 # basicConfig above already put a handler on root, so this sets the level only:
 # it is a setLevel, not a second configuration, and it is where the operator's
@@ -119,6 +120,10 @@ async def lifespan(app: FastAPI):
     get_store()
     logger.info("Database store initialized")
 
+    # Initialize rate limiter
+    await init_rate_limiter()
+    logger.info("Rate limiter initialized")
+
     # Background metrics updater for gauges that cannot be derived synchronously.
     async def _metrics_loop() -> None:
         while True:
@@ -185,6 +190,10 @@ async def lifespan(app: FastAPI):
     # Stop Syncthing watcher
     if hasattr(app.state, "syncthing_service"):
         await app.state.syncthing_service.stop()
+
+    # Shutdown rate limiter
+    await shutdown_rate_limiter()
+    logger.info("Rate limiter shut down")
 
     # Close database connections
     await close_database()
@@ -282,6 +291,14 @@ async def http_exception_handler(request: Request, exc: StarletteHTTPException):
     else:
         title = "Error"
 
+    # Include rate limit headers if present
+    headers = getattr(exc, "headers", None)
+    rate_limit_headers = getattr(request.state, "rate_limit_headers", None)
+    if rate_limit_headers:
+        if headers is None:
+            headers = {}
+        headers.update(rate_limit_headers)
+
     return JSONResponse(
         status_code=exc.status_code,
         content=ErrorResponse(
@@ -294,7 +311,7 @@ async def http_exception_handler(request: Request, exc: StarletteHTTPException):
         # Carried through rather than dropped. A 405 raised by Starlette sets
         # `Allow`, and a 405 without it is a 405 a client cannot act on - the
         # one header that tells it which methods to try.
-        headers=getattr(exc, "headers", None),
+        headers=headers,
     )
 
 

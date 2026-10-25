@@ -78,6 +78,15 @@ def shared_token_not_configured(detail: str) -> APIError:
     )
 
 
+def auth_rate_limited(detail: str, retry_after: int) -> APIError:
+    return APIError(
+        status.HTTP_429_TOO_MANY_REQUESTS,
+        detail,
+        "AUTH_RATE_LIMITED",
+        headers={"Retry-After": str(retry_after)},
+    )
+
+
 # --- Resources --------------------------------------------------------------
 
 

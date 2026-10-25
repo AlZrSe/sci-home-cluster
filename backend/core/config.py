@@ -540,6 +540,14 @@ class Settings(BaseSettings):
             )
         return v
 
+    # Auth rate limiting configuration (issue #157)
+    AUTH_RATE_LIMIT_BASE: int = 5
+    AUTH_RATE_LIMIT_WINDOW_SECONDS: int = 900
+    AUTH_RATE_LIMIT_BACKOFF_BASE_SECONDS: int = 2
+    AUTH_RATE_LIMIT_MAX_BACKOFF_SECONDS: int = 3600
+    AUTH_RATE_LIMIT_LOCKOUT_THRESHOLD: int = 11
+    AUTH_RATE_LIMIT_LOCKOUT_SECONDS: int = 3600
+
     model_config = SettingsConfigDict(
         case_sensitive=True,
         env_file=_REPO_ROOT / ".env",
