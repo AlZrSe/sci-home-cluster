@@ -344,6 +344,43 @@ cat /app/data/syncthing/shared_token
 - `VITE_API_URL` is build-time; changing the public URL needs a rebuild (or Settings page override)
 - Submodule dependency: if Render stops initializing submodules, the build fails
 
+### CI/CD Pipeline
+
+The project uses GitHub Actions for CI/CD with two workflows:
+
+#### CI (`.github/workflows/ci.yml`)
+Runs on every PR and push to `main`. Four independent jobs:
+- `backend-gates` — ruff, mypy, pytest with >80% coverage
+- `frontend-gates` — prettier, eslint, typecheck, vitest
+- `compose-suite` — tests the checked-in `docker-compose.yaml` against a real Docker daemon
+- `e2e` — Playwright tests against the built Docker image
+
+All four are required status checks on `main`.
+
+#### CD (`.github/workflows/cd.yml`)
+Triggers automatically after CI passes on `main`:
+1. **Build & Push** — Builds the Docker image and pushes to GHCR (`ghcr.io/<owner>/<repo>:<sha>`, `:latest`)
+2. **Deploy Staging** — Triggers Render deploy to staging environment (auto-deploy)
+3. **Deploy Production** — **Manual approval required** — triggers Render deploy to production
+
+**Required GitHub Secrets for CD:**
+| Secret | Description |
+|--------|-------------|
+| `RENDER_API_KEY` | Render API key (Account → Settings → API Keys) |
+| `RENDER_SERVICE_ID_STAGING` | Render Service ID for staging (from service URL or API) |
+| `RENDER_SERVICE_ID_PRODUCTION` | Render Service ID for production |
+
+**To get a Render Service ID:**
+```bash
+# Via Render CLI
+render services list
+
+# Or from the service URL: https://dashboard.render.com/web/srv-<SERVICE_ID>
+```
+
+**GitHub Environments:**
+- `production` environment must exist with required reviewers for manual approval
+
 ### Production Build
 ```bash
 # Frontend production build

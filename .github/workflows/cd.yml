@@ -1,0 +1,120 @@
+# CD — Continuous Deployment for Scientific Home Cluster.
+#
+# This workflow runs after CI passes on main branch.
+# It builds and publishes the Docker image to GHCR, then triggers
+# a deployment to Render (staging) with a manual approval for production.
+
+name: CD
+
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types:
+      - completed
+    branches: [main]
+
+permissions:
+  contents: read
+  packages: write  # Required to push to ghcr.io
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+  # Render service name (matches render.yaml)
+  RENDER_SERVICE_NAME: scientific-home-cluster
+
+jobs:
+  # -------------------------------------------------------------------------
+  # Build and publish Docker image to GHCR
+  # -------------------------------------------------------------------------
+  build-and-push:
+    name: Build and Push to GHCR
+    runs-on: ubuntu-latest
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata for Docker
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=sha
+            type=ref,event=branch
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: docker/Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          build-args: |
+            VITE_CLUSTER_BACKEND=http
+            VITE_API_URL=https://${{ env.RENDER_SERVICE_NAME }}.onrender.com/api/v1
+
+  # -------------------------------------------------------------------------
+  # Deploy to Render Staging (auto-deploy via Render Blueprint)
+  # -------------------------------------------------------------------------
+  deploy-staging:
+    name: Deploy to Render Staging
+    runs-on: ubuntu-latest
+    needs: build-and-push
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Trigger Render deploy
+        uses: render/deploy-action@v1
+        with:
+          service-id: ${{ secrets.RENDER_SERVICE_ID_STAGING }}
+          api-key: ${{ secrets.RENDER_API_KEY }}
+          wait-for-completion: true
+          timeout: 600
+
+  # -------------------------------------------------------------------------
+  # Deploy to Render Production (manual approval)
+  # -------------------------------------------------------------------------
+  deploy-production:
+    name: Deploy to Render Production
+    runs-on: ubuntu-latest
+    needs: deploy-staging
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    environment:
+      name: production
+      url: https://${{ env.RENDER_SERVICE_NAME }}.onrender.com
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Trigger Render production deploy
+        uses: render/deploy-action@v1
+        with:
+          service-id: ${{ secrets.RENDER_SERVICE_ID_PRODUCTION }}
+          api-key: ${{ secrets.RENDER_API_KEY }}
+          wait-for-completion: true
+          timeout: 600
