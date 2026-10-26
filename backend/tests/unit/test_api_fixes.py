@@ -43,14 +43,15 @@ class TestSyncthingEndpointsRequireAuth:
         "method,path",
         [("GET", "/api/v1/syncthing/status"), ("POST", "/api/v1/syncthing/scan")],
     )
-    async def test_requires_authentication(self, method, path):
+    async def test_requires_authentication(self, method, path, client_with_syncthing: AsyncClient):
         # A non-local host with the bypass disabled is the only situation in
         # which the token is actually enforced.
-        with patch.object(settings, "LOCALHOST_BYPASS", False):
-            async with AsyncClient(
-                transport=ASGITransport(app=app), base_url="http://cluster.example.com"
-            ) as client:
-                response = await client.request(method, path)
+        # Patch the bypass mode directly to DISABLED to test auth enforcement.
+        from backend.core.config import LocalhostBypassMode
+        with patch.object(settings, "LOCALHOST_BYPASS_MODE", LocalhostBypassMode.DISABLED):
+            response = await client_with_syncthing.request(
+                method, path, headers={"Host": "cluster.example.com"}
+            )
 
         assert response.status_code == 401
         data = response.json()
@@ -58,19 +59,18 @@ class TestSyncthingEndpointsRequireAuth:
         assert data["error_code"] == "AUTH_TOKEN_MISSING"
 
     @pytest.mark.asyncio
-    async def test_status_is_reachable_with_a_valid_token(self):
+    async def test_status_is_reachable_with_a_valid_token(self, client_with_syncthing: AsyncClient):
         token = create_access_token({"sub": "tester"})
-        async with AsyncClient(
-            transport=ASGITransport(app=app, raise_app_exceptions=False),
-            base_url="http://cluster.example.com",
-            headers={"Authorization": f"Bearer {token}"},
-        ) as client:
-            with patch.object(settings, "LOCALHOST_BYPASS", False):
-                response = await client.get("/api/v1/syncthing/status")
+        from backend.core.config import LocalhostBypassMode
+        with patch.object(settings, "LOCALHOST_BYPASS_MODE", LocalhostBypassMode.DISABLED):
+            response = await client_with_syncthing.get(
+                "/api/v1/syncthing/status",
+                headers={"Authorization": f"Bearer {token}", "Host": "cluster.example.com"},
+            )
 
-        # A valid token gets past authentication. The ASGI test client does
-        # not run the app lifespan, so app.state.syncthing_service is absent
-        # and the endpoint returns 500 - crucially not 401.
+        # A valid token gets past authentication. The syncthing_service is
+        # set up in app.state by the fixture.
+        # The endpoint may return 500 if Syncthing is not configured, but not 401.
         assert response.status_code != 401
 
 

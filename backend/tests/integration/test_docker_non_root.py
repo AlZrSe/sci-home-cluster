@@ -3,12 +3,16 @@ Integration tests for Docker non-root user (Issue #159).
 
 These tests verify that the Docker image runs as non-root user (UID 1000/GID 1000)
 with proper filesystem permissions.
+
+These tests require the Docker image to be built and a real Docker daemon.
+They are marked with `@pytest.mark.compose` to run only in the compose-suite job.
 """
 
 import pytest
 import subprocess
 
 
+@pytest.mark.compose
 class TestDockerNonRoot:
     """Tests for non-root user configuration in the Docker image."""
 
@@ -209,6 +213,7 @@ class TestDockerNonRoot:
         assert "Permission denied" in result.stdout or result.returncode != 0
 
 
+@pytest.mark.compose
 class TestDockerEntrypointRoot:
     """Tests for the entrypoint-root.sh wrapper script."""
 

@@ -596,6 +596,18 @@ class Settings(BaseSettings):
             return v
         return None
 
+    @property
+    def localhost_bypass_mode(self) -> LocalhostBypassMode:
+        """
+        Dynamically resolve the localhost bypass mode.
+        This allows tests to patch LOCALHOST_BYPASS and have the mode recomputed.
+        """
+        if self.LOCALHOST_BYPASS_MODE is not None:
+            return self.LOCALHOST_BYPASS_MODE
+        if self.LOCALHOST_BYPASS is False:
+            return LocalhostBypassMode.DISABLED
+        return LocalhostBypassMode.SOCKET
+
     # Heartbeat contract (issue #96)
     HEARTBEAT_TIMEOUT_SECONDS: int = 90
     HEARTBEAT_CHECK_INTERVAL_SECONDS: int = 30

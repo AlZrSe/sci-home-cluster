@@ -586,6 +586,31 @@ async def client() -> AsyncGenerator[AsyncClient, None]:
         yield ac
 
 
+@pytest_asyncio.fixture
+async def client_with_syncthing() -> AsyncGenerator[AsyncClient, None]:
+    """
+    Create an AsyncClient with syncthing_service set up in app state.
+    Use this for tests that need syncthing_service but don't need full lifespan.
+    """
+    from pathlib import Path
+    from backend.services.syncthing_service import SyncthingService
+    import tempfile
+    
+    # Create a temporary directory for Syncthing
+    with tempfile.TemporaryDirectory() as tmpdir:
+        syncthing_service = SyncthingService(Path(tmpdir))
+        await syncthing_service.start()
+        app.state.syncthing_service = syncthing_service
+        try:
+            async with AsyncClient(
+                transport=ASGITransport(app=app), base_url="http://testserver"
+            ) as ac:
+                yield ac
+        finally:
+            await syncthing_service.stop()
+            del app.state.syncthing_service
+
+
 @pytest.fixture
 def auth_client(client: AsyncClient) -> AsyncClient:
     """
