@@ -595,7 +595,7 @@ async def client_with_syncthing() -> AsyncGenerator[AsyncClient, None]:
     from pathlib import Path
     from backend.services.syncthing_service import SyncthingService
     import tempfile
-    
+
     # Create a temporary directory for Syncthing
     with tempfile.TemporaryDirectory() as tmpdir:
         syncthing_service = SyncthingService(Path(tmpdir))
