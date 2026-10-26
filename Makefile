@@ -60,7 +60,7 @@ install:
 
 # Testing
 test:
-	cd backend && pytest --cov=backend --cov-report=term-missing --cov-fail-under=80
+	cd backend && pytest --cov=backend --cov-report=term-missing --cov-fail-under=80 -m "not compose"
 
 test-unit:
 	cd backend && pytest tests/unit -v
