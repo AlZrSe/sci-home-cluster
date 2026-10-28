@@ -516,6 +516,16 @@ jobs:
           fi
           echo "OK: playwright.config.ts reads PLAYWRIGHT_BASE_URL."
 
+      - name: Verify and update frontend submodule to recorded commit
+        # actions/checkout@v4 with submodules:recursive should do this, but there
+        # have been cache-related issues where the submodule stays at an old commit.
+        # Explicitly update to the commit recorded in the parent repo (HEAD).
+        run: |
+          echo "Recorded submodule commit: $(git ls-tree HEAD frontend | awk '{print $3}')"
+          echo "Current submodule HEAD: $(git -C frontend rev-parse HEAD)"
+          git submodule update --init --recursive --remote
+          echo "After update submodule HEAD: $(git -C frontend rev-parse HEAD)"
+
       - name: Set up Node ${{ env.NODE_VERSION }}
         uses: actions/setup-node@v4
         with:
