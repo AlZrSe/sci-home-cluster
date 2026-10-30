@@ -71,7 +71,15 @@ async def verify_token(
     # it valid. The `get_current_token_payload` dependency returns a payload
     # with `sub: "localhost_user"` for localhost hosts, but we only bypass
     # validation for the specific bypass token to avoid interfering with tests.
-    if payload.get("sub") == "localhost_user" and token == "localhost-no-auth":
+    from backend.core.utils import is_localhost, is_loopback_ip
+
+    _host_ok = is_localhost(
+        request.url.hostname or request.headers.get("host", "").split(":")[0]
+    )
+    _peer_ok = is_loopback_ip(request.client.host if request.client else None)
+    if (
+        _host_ok or _peer_ok or payload.get("sub") == "localhost_user"
+    ) and token == "localhost-no-auth":
         await limiter.record_success(request)
         # Add rate limit headers for successful request
         await limiter.check_rate_limit(request, response, endpoint)
@@ -131,7 +139,16 @@ async def validate_token(
     # it valid. The `get_current_token_payload` dependency returns a payload
     # with `sub: "localhost_user"` for localhost hosts, but we only bypass
     # validation for the specific bypass token to avoid interfering with tests.
-    is_localhost = payload.get("sub") == "localhost_user"
+    from backend.core.utils import (
+        is_localhost as _is_localhost_host,
+        is_loopback_ip as _is_loopback,
+    )
+
+    _host_ok = _is_localhost_host(
+        request.url.hostname or request.headers.get("host", "").split(":")[0]
+    )
+    _peer_ok = _is_loopback(request.client.host if request.client else None)
+    is_localhost = _host_ok or _peer_ok or payload.get("sub") == "localhost_user"
     if is_localhost and token_request.token == "localhost-no-auth":
         await limiter.record_success(request)
         # Add rate limit headers for successful request
