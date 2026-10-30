@@ -191,6 +191,13 @@ services:
       # variable name - the part worth saying out loud.
       SYNCTHING_ROOT: "/tmp/syncthing"
 
+      # Enable host-header-based localhost bypass so the e2e suite (and local
+      # dev behind a reverse proxy) can authenticate with the "localhost-no-auth"
+      # token. In CI the request reaches the container via Docker port mapping,
+      # so the socket peer is the Docker gateway (not loopback). The host header
+      # remains "localhost" and this mode lets the bypass work correctly.
+      LOCALHOST_BYPASS_MODE: "host_header"
+
       # DB_POOL is deliberately ABSENT - inherited from the image, which bakes
       # DB_POOL=null (docker/Dockerfile:128). Do not "fix" this by adding
       # DB_POOL=pooled, which is Settings.DB_POOL's own default value
