@@ -645,10 +645,10 @@ class Settings(BaseSettings):
     # Content-Security-Policy configuration (issue #158)
     CSP_POLICY: str = (
         "default-src 'self'; "
-        "script-src 'self'; "
-        "style-src 'self' 'unsafe-inline'; "
+        "script-src 'self' 'unsafe-inline'; "
+        "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
         "img-src 'self' data:; "
-        "font-src 'self'; "
+        "font-src 'self' https://fonts.gstatic.com; "
         "connect-src 'self' wss:; "
         "frame-ancestors 'none'; "
         "base-uri 'self'; "
