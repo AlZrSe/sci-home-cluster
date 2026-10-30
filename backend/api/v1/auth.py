@@ -186,10 +186,15 @@ async def create_token(
     # Docker port mapping (where the socket peer is not loopback).
     from backend.core.utils import is_localhost
 
+    # Check the parsed URL hostname, the raw Host header, and the socket
+    # peer, since request.url.hostname can be None behind certain proxies.
+    _host = request.url.hostname or request.headers.get("host", "").split(":")[0]
+    from backend.core.utils import is_loopback_ip
+
+    _peer = request.client.host if request.client else None
     _localhost_bypass = (
-        is_localhost(request.url.hostname)
-        and token_request.shared_token == "localhost-no-auth"
-    )
+        is_localhost(_host) or is_loopback_ip(_peer)
+    ) and token_request.shared_token == "localhost-no-auth"
 
     # Validate the shared token
     if _localhost_bypass:
