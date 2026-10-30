@@ -179,8 +179,20 @@ async def create_token(
 
     auth_service = AuthService()
 
+    # Localhost bypass: on localhost, accept the bypass token "localhost-no-auth"
+    # as a valid shared token so the e2e suite (and local dev) can log in
+    # without knowing the generated shared token. Mirrors verify_token's bypass.
+    from backend.core.deps import _check_localhost_bypass_http
+
+    _bypass = _check_localhost_bypass_http(request)
+    _localhost_bypass = (
+        _bypass is not None and token_request.shared_token == "localhost-no-auth"
+    )
+
     # Validate the shared token
-    if not auth_service.get_shared_token():
+    if _localhost_bypass:
+        pass  # skip shared token validation on localhost bypass
+    elif not auth_service.get_shared_token():
         # Check rate limit for failed request
         allowed, error_detail = await limiter.check_rate_limit(
             request, response, endpoint
@@ -195,7 +207,10 @@ async def create_token(
             "Set the SHARED_TOKEN environment variable and restart the API server."
         )
 
-    is_valid = await auth_service.verify_shared_token(token_request.shared_token)
+    if _localhost_bypass:
+        is_valid = True
+    else:
+        is_valid = await auth_service.verify_shared_token(token_request.shared_token)
     if not is_valid:
         # Check rate limit for failed request
         allowed, error_detail = await limiter.check_rate_limit(
