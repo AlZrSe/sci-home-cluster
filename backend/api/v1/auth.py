@@ -192,6 +192,15 @@ async def create_token(
     from backend.core.utils import is_loopback_ip
 
     _peer = request.client.host if request.client else None
+    import logging
+
+    logging.getLogger("auth_debug").warning(
+        "CREATE_TOKEN host=%r url.hostname=%r host_header=%r peer=%r",
+        _host,
+        request.url.hostname,
+        request.headers.get("host"),
+        _peer,
+    )
     _localhost_bypass = (
         is_localhost(_host) or is_loopback_ip(_peer)
     ) and token_request.shared_token == "localhost-no-auth"
