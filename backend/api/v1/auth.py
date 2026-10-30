@@ -182,11 +182,13 @@ async def create_token(
     # Localhost bypass: on localhost, accept the bypass token "localhost-no-auth"
     # as a valid shared token so the e2e suite (and local dev) can log in
     # without knowing the generated shared token. Mirrors verify_token's bypass.
-    from backend.core.deps import _check_localhost_bypass_http
+    # Localhost bypass: accept on host-header basis so it works through
+    # Docker port mapping (where the socket peer is not loopback).
+    from backend.core.utils import is_localhost
 
-    _bypass = _check_localhost_bypass_http(request)
     _localhost_bypass = (
-        _bypass is not None and token_request.shared_token == "localhost-no-auth"
+        is_localhost(request.url.hostname)
+        and token_request.shared_token == "localhost-no-auth"
     )
 
     # Validate the shared token
