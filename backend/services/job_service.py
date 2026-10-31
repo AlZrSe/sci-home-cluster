@@ -24,13 +24,18 @@ from backend.core.errors import (
     job_not_retryable,
     syncthing_unavailable,
 )
+import time
+import uuid
+
 from backend.services.job_folder import (
+    command_file,
     is_inside_jobs_root,
     job_dir,
     jobs_dir,
     remove_job_dir,
     write_job_state,
 )
+from shared.schemas.job_command import JobCommand, JobCommandType
 from backend.store import get_store
 from backend.store.database_store import DatabaseStore
 
@@ -330,15 +335,45 @@ class JobService:
                 exc_info=True,
             )
 
-    async def cancel_job(self, job_id: str) -> Optional[JobState]:
-        """Cancel a running/pending job."""
+    async def cancel_job(
+        self, job_id: str, issued_by: str = "localhost_user"
+    ) -> Optional[JobState]:
+        """Cancel a running/pending job.
+
+        Writes a command file *before* updating the row (issue #106, D4): if the
+        file cannot be written the operator gets a 503 and the job stays
+        genuinely RUNNING. A row that says CANCELLED with nothing delivered is
+        the exact defect this issue exists to remove.
+        """
         job: Optional[JobState] = await self._store.get_job(job_id)
         if not job:
             return None
         if job.status not in (JobStatus.RUNNING, JobStatus.PENDING):
             return None
-        # Cancel the job
+        # Mint the command id once: cancel-<epoch_ms>-<hex6>. Sortable and
+        # readable in an `ls` (issue #106 D8).
         now = datetime.now()
+        command_id = f"cancel-{int(time.time() * 1000)}-{uuid.uuid4().hex[:6]}"
+        command = JobCommand(
+            command_id=command_id,
+            command=JobCommandType.CANCEL,
+            issued_at=now,
+            issued_by=issued_by,
+        )
+        root = settings.SYNCTHING_ROOT
+        target = command_file(root, job_id, command_id)
+        try:
+            from shared.file_ops.path_utils import ensure_directory
+            from shared.file_ops.yaml_utils import write_yaml
+
+            ensure_directory(target.parent)
+            write_yaml(str(target), command)
+        except OSError:
+            raise syncthing_unavailable(
+                f"could not write command file {target}: Syncthing folder "
+                f"unavailable"
+            )
+        # Only now update the row. Step 4 is unchanged from before.
         updated_job: Optional[JobState] = await self._store.update_job(
             job_id,
             status=JobStatus.CANCELLED,

@@ -9,6 +9,8 @@ consumes the resulting JSON over HTTP.
 from .cpu_metric import CPUMetric
 from .error_response import ErrorResponse
 from .gpu_metric import GPUInfo, GPUMetric
+from .job_command import JobCommand, JobCommandType
+from .job_command_ack import JobCommandAck, JobCommandResult
 from .job_list_result import JobListResult
 from .job_metrics import JobMetrics, JobMetricsSummary
 from .job_query import JobQuery
@@ -35,6 +37,10 @@ __all__ = [
     "ErrorResponse",
     "GPUInfo",
     "GPUMetric",
+    "JobCommand",
+    "JobCommandAck",
+    "JobCommandResult",
+    "JobCommandType",
     "JobListResult",
     "JobMetrics",
     "JobMetricsSummary",

@@ -769,6 +769,52 @@
         }
       }
     },
+    "/api/v1/jobs/{job_id}/commands": {
+      "get": {
+        "tags": [
+          "jobs"
+        ],
+        "summary": "List Job Commands",
+        "description": "List command/ack pairs for a job (issue #106).",
+        "operationId": "list_job_commands_api_v1_jobs__job_id__commands_get",
+        "security": [
+          {
+            "Authorization": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Job Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/nodes/": {
       "get": {
         "tags": [

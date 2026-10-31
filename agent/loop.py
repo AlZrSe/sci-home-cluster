@@ -81,6 +81,7 @@ class Agent:
         # event was a local in ``_spawn_execution_task`` that nothing could set,
         # so the stop path was unreachable on every platform (issue #125 §2).
         self._job_stop: Optional[asyncio.Event] = None
+        self._job_stop_reason: Optional[str] = None
 
     @property
     def paths(self) -> AgentPaths:
@@ -337,6 +338,9 @@ class Agent:
         self._watcher.start()
         self._watcher_started = True
         logger.info("watching %s and %s", self._paths.jobs_dir, self._paths.nodes_dir)
+        # One-shot sweep for command files that appeared while the agent was
+        # down (issue #106 D9 / Q7). Runs again if the folder appears late.
+        await self._sweep_command_files()
         return True
 
     async def _ensure_folder(self) -> bool:
@@ -421,6 +425,9 @@ class Agent:
         await self._ensure_watcher_started()
         await self._activate_watcher_tasks()
 
+    def _set_job_stop_reason(self, reason: str) -> None:
+        self._job_stop_reason = reason
+
     def _is_job_state_file(self, path: Path | str) -> bool:
         """Check if a path is a jobs/<job_id>/state.yaml file."""
         path = Path(path)
@@ -429,6 +436,72 @@ class Agent:
             and path.parent.name.startswith("job-")
             and path.parent.parent.name == "jobs"
         )
+
+    def _is_command_file(self, path: Path | str) -> bool:
+        """Check if a path is a jobs/<job_id>/commands|acks/<id>.yaml file."""
+        path = Path(path)
+        return (
+            path.suffix.lower() == ".yaml"
+            and path.parent.name in ("commands", "acks")
+            and path.parent.parent.name.startswith("job-")
+            and path.parent.parent.parent.name == "jobs"
+        )
+
+    async def _sweep_command_files(self) -> None:
+        """One-shot sweep of command files already on disk at start-up."""
+        jobs_dir = self._paths.jobs_dir
+        if not jobs_dir.exists():
+            return
+        for job_dir in jobs_dir.iterdir():
+            if not job_dir.is_dir() or not job_dir.name.startswith("job-"):
+                continue
+            commands_dir = job_dir / "commands"
+            if not commands_dir.exists():
+                continue
+            for yaml_file in commands_dir.glob("*.yaml"):
+                if yaml_file.is_file():
+                    await self._maybe_handle_command(yaml_file)
+
+    async def _maybe_handle_command(self, command_path) -> None:
+        """Handle one command file."""
+        from agent.commands import handle_command
+        from shared.file_ops.yaml_utils import read_yaml
+        from shared.schemas.job_state import JobState
+
+        command_path = Path(command_path)
+        # Ignore our own acks on the read path.
+        if command_path.parent.name == "acks":
+            return
+        job_id = command_path.parent.parent.name
+        # Read state.yaml if present.
+        state_file = self._paths.jobs_dir / job_id / "state.yaml"
+        job_state = None
+        try:
+            job_state = read_yaml(str(state_file), JobState)
+        except Exception:
+            job_state = None
+        try:
+            ack = await handle_command(
+                command_path,
+                paths=self._paths,
+                node_id=self._settings.NODE_ID,
+                current=self._current_job_id,
+                job_state=job_state,
+                has_live_process=(
+                    self._current_job_id == job_id and self._job_stop is not None
+                ),
+                already_acked=self._paths.job_ack_file(
+                    job_id, command_path.stem
+                ).exists(),
+                job_stop=self._job_stop,
+                set_reason=self._set_job_stop_reason,
+            )
+        except Exception as e:
+            logger.error("failed to handle command %s: %s", command_path, e)
+            return
+        # If classified TERMINATED, set the stop event + reason.
+        # handle_command is expected to have done that via set_reason + job_stop.
+        logger.debug("command %s handled: %s", command_path, ack)
 
     async def _drain_events(self) -> None:
         """Drain the event queue and route job events to the claim handler.
@@ -443,8 +516,11 @@ class Agent:
             except asyncio.QueueEmpty:
                 return
             logger.info("observed %s %s", event.kind, event.path)
+            # Route command file creation events first.
+            if event.kind == "created" and self._is_command_file(event.path):
+                await self._maybe_handle_command(event.path)
             # Route job state file creation events to claim handler
-            if event.kind == "created" and self._is_job_state_file(event.path):
+            elif event.kind == "created" and self._is_job_state_file(event.path):
                 await self._maybe_claim_job(event.path)
 
     async def _maybe_claim_job(self, state_file_path) -> None:
@@ -530,6 +606,7 @@ class Agent:
                     paths=self._paths,
                     syncthing_root=self._paths.root,
                     stop_event=self._job_stop,
+                    cancel_reason=lambda: self._job_stop_reason,
                     shell=self._settings.SHELL,
                     shutdown_grace_s=self._settings.SHUTDOWN_GRACE_S,
                     watcher=self._watcher,
@@ -544,6 +621,7 @@ class Agent:
                 # reused handle is the same "two jobs share one state" class of
                 # bug as the fixed `/sync/projects/new-run` default (issue #125).
                 self._job_stop = None
+                self._job_stop_reason = None
                 try:
                     updated_node_spec = collect_node_spec(self._settings.NODE_ID)
                     updated_node_spec.current_job_id = None

@@ -16,6 +16,8 @@ from watchdog.events import FileSystemEventHandler
 from shared.schemas.job_state import JobState
 from shared.schemas.node_spec import NodeSpec
 from shared.schemas.job_status import JobStatus
+from shared.schemas.job_command import JobCommand
+from shared.schemas.job_command_ack import JobCommandAck
 from backend.store import get_store
 from shared.file_ops import read_yaml
 from backend.core.config import settings
@@ -142,9 +144,25 @@ class SyncthingEventHandler(FileSystemEventHandler):
                 job_id = relative_path.parts[1]
                 if relative_path.parts[2] == "state.yaml":
                     await self.service._process_job_file(job_id, file_path)
+                elif (
+                    relative_path.parts[2] in ("commands", "acks")
+                    and len(relative_path.parts) == 4
+                    and relative_path.parts[3].endswith(".yaml")
+                ):
+                    command_id = relative_path.parts[3][:-5]
+                    await self.service._process_command_file(
+                        job_id, command_id, file_path
+                    )
+                else:
+                    logger.debug(
+                        "ignoring %s: not a recognised file under a job directory",
+                        file_path,
+                    )
             elif relative_path.parts[0] == "nodes" and len(relative_path.parts) >= 2:
                 node_id = relative_path.parts[1].replace(".yaml", "")
                 await self.service._process_node_file(node_id, file_path)
+            else:
+                logger.debug("ignoring %s: not under jobs/ or nodes/", file_path)
 
         except Exception as e:
             logger.error(f"Error processing file {file_path}: {e}")
@@ -159,6 +177,10 @@ class SyncthingEventHandler(FileSystemEventHandler):
                 job_id = relative_path.parts[1]
                 if relative_path.parts[2] == "state.yaml":
                     await self.service._handle_job_deleted(job_id)
+                elif relative_path.parts[2] in ("commands", "acks"):
+                    logger.debug("command/ack file removed: %s", file_path)
+                else:
+                    logger.debug("ignoring deletion of %s", file_path)
             elif relative_path.parts[0] == "nodes" and len(relative_path.parts) >= 2:
                 node_id = relative_path.parts[1].replace(".yaml", "")
                 await self.service._handle_node_deleted(node_id)
@@ -178,6 +200,7 @@ class SyncthingService:
         self._scan_task: Optional[asyncio.Task] = None
         self._heartbeat_check_task: Optional[asyncio.Task] = None
         self._processed_files: Set[str] = set()
+        self._command_log: Dict[str, Dict[str, Dict[str, Any]]] = {}
 
     async def start(self):
         """Start the Syncthing watcher."""
@@ -247,7 +270,7 @@ class SyncthingService:
 
         logger.info("Syncthing service stopped")
 
-    async def _initial_scan(self):
+    async def _initial_scan(self):  # noqa: C901
         """Perform initial scan of existing files."""
         logger.info("Performing initial scan of Syncthing folder")
 
@@ -261,6 +284,16 @@ class SyncthingService:
                     state_file = job_dir / "state.yaml"
                     if state_file.exists():
                         await self._process_job_file(job_dir.name, str(state_file))
+                    # D1: sweep commands/ and acks/ per job dir (no new top-level root)
+                    for kind in ("commands", "acks"):
+                        kind_dir = job_dir / kind
+                        if kind_dir.exists() and kind_dir.is_dir():
+                            for yaml_file in kind_dir.glob("*.yaml"):
+                                if yaml_file.is_file():
+                                    command_id = yaml_file.stem
+                                    await self._process_command_file(
+                                        job_dir.name, command_id, str(yaml_file)
+                                    )
 
         # Scan nodes
         if nodes_dir.exists():
@@ -289,21 +322,30 @@ class SyncthingService:
             store = get_store()
             existing_job = await store.get_job(job_id)
             if existing_job:
-                # MONOTONICITY: If existing job is in a terminal state, reject any write
-                # that would change status, exit_code, error, or completed_at.
+                # MONOTONICITY: If existing job is in a terminal state, reject any
+                # write that would change status. Agreement is the normal path of
+                # every cancel (issue #106 Q9) and is logged at DEBUG; disagreement
+                # is the case that matters and stays at WARNING.
                 if existing_job.status in (
                     JobStatus.COMPLETED,
                     JobStatus.FAILED,
                     JobStatus.CANCELLED,
                 ):
-                    # Terminal states are final. Log and ignore.
-                    logger.warning(
-                        "Job %s is already %s; "
-                        "ignoring agent write attempting to set %s",
-                        job_id,
-                        existing_job.status.value,
-                        job_state.status.value,
-                    )
+                    if existing_job.status == job_state.status:
+                        logger.debug(
+                            "Job %s is already %s; agent write agrees " "(%s)",
+                            job_id,
+                            existing_job.status.value,
+                            job_state.status.value,
+                        )
+                    else:
+                        logger.warning(
+                            "Job %s is already %s; "
+                            "ignoring agent write attempting to set %s",
+                            job_id,
+                            existing_job.status.value,
+                            job_state.status.value,
+                        )
                     return
 
                 # Allow PENDING -> RUNNING, RUNNING -> terminal
@@ -339,6 +381,52 @@ class SyncthingService:
 
         except Exception as e:
             logger.error(f"Error processing job file {file_path}: {e}")
+
+    async def _process_command_file(self, job_id: str, command_id: str, file_path: str):
+        """Process a command or ack YAML file under a job directory."""
+        try:
+            path_obj = Path(file_path)
+            kind = path_obj.parent.name  # "commands" or "acks"
+            if kind == "commands":
+                command = read_yaml(str(path_obj), JobCommand)
+                if command.command_id != command_id:
+                    logger.warning(
+                        "command_id mismatch for %s: file says %s",
+                        file_path,
+                        command.command_id,
+                    )
+                    return
+                if command.command.value != "cancel":
+                    logger.warning(
+                        "unsupported command %r in %s", command.command, file_path
+                    )
+                    return
+                # record in the in-memory command log
+                log = self._command_log.setdefault(job_id, {})
+                log[command_id] = {
+                    "command": command,
+                    "ack": log.get(command_id, {}).get("ack"),
+                }
+            elif kind == "acks":
+                ack = read_yaml(str(path_obj), JobCommandAck)
+                if ack.command_id != command_id:
+                    logger.warning(
+                        "command_id mismatch for %s: file says %s",
+                        file_path,
+                        ack.command_id,
+                    )
+                    return
+                log = self._command_log.setdefault(job_id, {})
+                entry = log.setdefault(command_id, {"command": None, "ack": None})
+                entry["ack"] = ack
+            else:
+                logger.debug("ignoring %s: not a command or ack", file_path)
+                return
+
+            self._processed_files.add(file_path)
+            logger.debug("Processed command file: %s", file_path)
+        except Exception as e:
+            logger.error(f"Error processing command file {file_path}: {e}")
 
     async def _process_node_file(self, node_id: str, file_path: str):
         """Process a node state YAML file."""
@@ -381,6 +469,15 @@ class SyncthingService:
         store = get_store()
         await store.delete_node(node_id)
         logger.info(f"Deleted node from store: {node_id}")
+
+    def list_commands(self, job_id: str):
+        """Return the in-memory command log for a job as a list of pairs."""
+        log = self._command_log.get(job_id, {})
+        items = []
+        for command_id in sorted(log.keys()):
+            entry = log[command_id]
+            items.append({"command": entry.get("command"), "ack": entry.get("ack")})
+        return items
 
     async def _heartbeat_monitor(self):
         """Monitor node heartbeats and mark offline nodes.

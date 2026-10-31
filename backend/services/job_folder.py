@@ -40,6 +40,14 @@ JOBS_DIR_NAME = "jobs"
 #: the agent on claim and on terminal state. Mirrors ``get_job_state_file``.
 JOB_STATE_FILE_NAME = "state.yaml"
 
+#: Directory holding backend-written command files for a job. Mirrors the
+#: agent-side ``job_commands_dir`` helper.
+COMMANDS_DIR_NAME = "commands"
+
+#: Directory holding agent-written ack files for a job. Mirrors the agent-side
+#: ``job_acks_dir`` helper.
+ACKS_DIR_NAME = "acks"
+
 
 def resolve_root(value: str | Path) -> Path:
     """Expand ``~``, make ``value`` absolute and collapse ``.``/``..``.
@@ -84,6 +92,26 @@ def job_state_file(root: str | Path, job_id: str) -> Path:
     ``None`` check that could only ever be dead.
     """
     return job_dir(root, job_id) / JOB_STATE_FILE_NAME
+
+
+def commands_dir(root: str | Path, job_id: str) -> Path:
+    """``<root>/jobs/<job_id>/commands``."""
+    return job_dir(root, job_id) / COMMANDS_DIR_NAME
+
+
+def command_file(root: str | Path, job_id: str, command_id: str) -> Path:
+    """``<root>/jobs/<job_id>/commands/<command_id>.yaml``."""
+    return commands_dir(root, job_id) / f"{command_id}.yaml"
+
+
+def acks_dir(root: str | Path, job_id: str) -> Path:
+    """``<root>/jobs/<job_id>/acks``."""
+    return job_dir(root, job_id) / ACKS_DIR_NAME
+
+
+def ack_file(root: str | Path, job_id: str, command_id: str) -> Path:
+    """``<root>/jobs/<job_id>/acks/<command_id>.yaml``."""
+    return acks_dir(root, job_id) / f"{command_id}.yaml"
 
 
 def is_inside_jobs_root(root: str | Path, path: Path) -> bool:

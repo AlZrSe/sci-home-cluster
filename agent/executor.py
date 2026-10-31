@@ -40,7 +40,7 @@ import sys
 import threading
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Final, Optional
+from typing import Any, Callable, Final, Optional
 
 from shared.file_ops.path_utils import is_within_syncthing_root, normalize_path
 from shared.schemas.job_spec import JobSpec
@@ -145,7 +145,7 @@ def _process_failed(exit_code: int | None) -> str:
     return JOB_ERRORS["process_failed"].format(exit_code=exit_code)
 
 
-def _stopped(reason: StopReason) -> str:
+def _stopped(reason: str) -> str:
     return JOB_ERRORS["stopped"].format(reason=reason)
 
 
@@ -558,6 +558,7 @@ async def execute_job(  # noqa: C901 - one function, many pre-launch validation 
     paths: AgentPaths,
     syncthing_root: Path,
     stop_event: asyncio.Event,
+    cancel_reason: Callable[[], str | None] | None = None,
     shell: str = "auto",
     shutdown_grace_s: float | None = None,
     watcher: FolderWatcher | None = None,
@@ -664,11 +665,16 @@ async def execute_job(  # noqa: C901 - one function, many pre-launch validation 
     # would leave state.yaml: RUNNING with no process attached, which is
     # verbatim the state issue #103 exists to detect and repair.
     if stop_event.is_set():
+        reason = cancel_reason() if cancel_reason is not None else None
+        if reason == "cancel":
+            error = "cancelled:by_operator"
+        else:
+            error = _stopped("shutdown")
         logger.info("stop requested before job %s was launched", job_id)
         return await _fail_before_launch(
             job_id=job_id,
             paths=paths,
-            error=_stopped("shutdown"),
+            error=error,
             exit_code=None,
             watcher=watcher,
         )
@@ -815,7 +821,7 @@ async def execute_job(  # noqa: C901 - one function, many pre-launch validation 
         asyncio.to_thread(proc.wait), name=f"exit-{job_id}"
     )
     stop_waiter = asyncio.create_task(stop_event.wait(), name=f"stop-{job_id}")
-    stop_reason: Optional[StopReason] = None
+    stop_reason: Optional[str] = None
     tree_verified = True
 
     try:
@@ -837,7 +843,8 @@ async def execute_job(  # noqa: C901 - one function, many pre-launch validation 
         # A job that exited in the same tick the stop arrived for finished on
         # its own terms; reporting it as stopped would be wrong.
         if stop_waiter.done() and not exit_waiter.done():
-            stop_reason = "shutdown"
+            cr = cancel_reason() if cancel_reason is not None else None
+            stop_reason = "cancel" if cr == "cancel" else "shutdown"
             tree_verified = await _stop_tree(
                 tree, job_id, exit_waiter, stop_grace, stop_verify
             )
@@ -878,7 +885,12 @@ async def execute_job(  # noqa: C901 - one function, many pre-launch validation 
     exit_code = exit_waiter.result() if exit_waiter.done() else None
 
     # Determine terminal status and error code
-    if stop_reason is not None:
+    if stop_reason == "cancel":
+        status = JobStatus.CANCELLED
+        error_code = (
+            "cancelled:by_operator" if tree_verified else JOB_ERRORS["tree_survived"]
+        )
+    elif stop_reason is not None:
         status = JobStatus.FAILED
         error_code = (
             _stopped(stop_reason) if tree_verified else JOB_ERRORS["tree_survived"]

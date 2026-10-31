@@ -28,6 +28,8 @@ from shared.schemas.job_list_result import JobListResult
 from shared.schemas.job_spec import JobSpec
 from shared.schemas.job_metrics import JobMetrics
 from shared.schemas.log_entry import LogEntry
+from shared.schemas.job_command import JobCommand
+from shared.schemas.job_command_ack import JobCommandAck
 from shared.schemas.error_response import ErrorResponse
 from backend.services.job_service import JobService
 
@@ -274,7 +276,9 @@ async def cancel_job(job_id: str, payload: dict = Depends(get_current_token_payl
     Cancel a running/pending job.
     """
     job_service = JobService()
-    job = await job_service.cancel_job(job_id)
+    job = await job_service.cancel_job(
+        job_id, issued_by=payload.get("sub", "localhost_user")
+    )
     if job is None:
         # Check if job exists to give better error message
         existing_job = await job_service.get_job(job_id)
@@ -283,3 +287,51 @@ async def cancel_job(job_id: str, payload: dict = Depends(get_current_token_payl
         # Job exists but not in cancellable state
         raise job_not_cancellable(job_id, existing_job.status.value)
     return job
+
+
+@router.get("/{job_id}/commands")
+async def list_job_commands(  # noqa: C901
+    job_id: str, payload: dict = Depends(get_current_token_payload)
+):
+    """List command/ack pairs for a job (issue #106)."""
+    job_service = JobService()
+    job = await job_service.get_job(job_id)
+    if job is None:
+        raise job_not_found(job_id)
+    from backend.core.config import settings
+    from backend.services.job_folder import (
+        ack_file,
+        acks_dir,
+        command_file,
+        commands_dir,
+    )
+    from shared.file_ops.yaml_utils import read_yaml
+
+    root = settings.SYNCTHING_ROOT
+    items = []
+    command_ids = set()
+    cdir = commands_dir(root, job_id)
+    adir = acks_dir(root, job_id)
+    if cdir.exists():
+        for f in cdir.glob("*.yaml"):
+            command_ids.add(f.stem)
+    if adir.exists():
+        for f in adir.glob("*.yaml"):
+            command_ids.add(f.stem)
+    for cid in sorted(command_ids):
+        cmd = None
+        ack = None
+        cf = command_file(root, job_id, cid)
+        if cf.exists():
+            try:
+                cmd = read_yaml(str(cf), JobCommand)
+            except Exception:
+                cmd = None
+        af = ack_file(root, job_id, cid)
+        if af.exists():
+            try:
+                ack = read_yaml(str(af), JobCommandAck)
+            except Exception:
+                ack = None
+        items.append({"command": cmd, "ack": ack})
+    return {"items": items, "total": len(items)}

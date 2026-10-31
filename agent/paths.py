@@ -30,6 +30,18 @@ class AgentPaths:
     state_dir: Path
     node_file: Path
 
+    def job_commands_dir(self, job_id: str) -> Path:
+        return self.jobs_dir / job_id / "commands"
+
+    def job_acks_dir(self, job_id: str) -> Path:
+        return self.jobs_dir / job_id / "acks"
+
+    def job_command_file(self, job_id: str, command_id: str) -> Path:
+        return self.job_commands_dir(job_id) / f"{command_id}.yaml"
+
+    def job_ack_file(self, job_id: str, command_id: str) -> Path:
+        return self.job_acks_dir(job_id) / f"{command_id}.yaml"
+
 
 def resolve_root(value: str | Path) -> Path:
     """Expand ``~`` and make ``value`` absolute.
@@ -44,6 +56,27 @@ def resolve_root(value: str | Path) -> Path:
     the settings model.
     """
     return normalize_path(Path(value).expanduser())
+
+
+JOBS_DIR_NAME = "jobs"
+COMMANDS_DIR_NAME = "commands"
+ACKS_DIR_NAME = "acks"
+
+
+def commands_dir(root: str | Path, job_id: str) -> "Path":
+    return resolve_root(root) / JOBS_DIR_NAME / job_id / COMMANDS_DIR_NAME
+
+
+def command_file(root: str | Path, job_id: str, command_id: str) -> "Path":
+    return commands_dir(root, job_id) / f"{command_id}.yaml"
+
+
+def acks_dir(root: str | Path, job_id: str) -> "Path":
+    return resolve_root(root) / JOBS_DIR_NAME / job_id / ACKS_DIR_NAME
+
+
+def ack_file(root: str | Path, job_id: str, command_id: str) -> "Path":
+    return acks_dir(root, job_id) / f"{command_id}.yaml"
 
 
 def resolve_paths(
