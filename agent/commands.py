@@ -110,6 +110,13 @@ async def handle_command(  # noqa: C901
         has_live_process=has_live_process,
         already_acked=already_acked,
     )
+    logger.info(
+        "observed %s command %s for job %s -> %s",
+        command.command.value,
+        command.command_id,
+        job_id,
+        result.value,
+    )
 
     # Act if warranted.
     if result == JobCommandResult.TERMINATED:
