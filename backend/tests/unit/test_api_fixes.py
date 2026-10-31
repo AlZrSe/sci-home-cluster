@@ -50,14 +50,11 @@ class TestSyncthingEndpointsRequireAuth:
         # which the token is actually enforced.
         # Patch the bypass mode directly to DISABLED to test auth enforcement.
         from backend.core.config import LocalhostBypassMode
+
         with patch.object(
-
             settings,
-
             "LOCALHOST_BYPASS_MODE",
-
             LocalhostBypassMode.DISABLED,
-
         ):
             response = await client_with_syncthing.request(
                 method, path, headers={"Host": "cluster.example.com"}
@@ -74,14 +71,11 @@ class TestSyncthingEndpointsRequireAuth:
     ):
         token = create_access_token({"sub": "tester"})
         from backend.core.config import LocalhostBypassMode
+
         with patch.object(
-
             settings,
-
             "LOCALHOST_BYPASS_MODE",
-
             LocalhostBypassMode.DISABLED,
-
         ):
             response = await client_with_syncthing.get(
                 "/api/v1/syncthing/status",

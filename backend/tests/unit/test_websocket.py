@@ -134,17 +134,9 @@ class TestWebSocketAuthentication:
         from backend.core.config import LocalhostBypassMode
 
         with patch.object(
-
-
             settings,
-
-
             "LOCALHOST_BYPASS_MODE",
-
-
             LocalhostBypassMode.DISABLED,
-
-
         ):
             token = create_access_token({"sub": "test-user"})
             async with AsyncClient(
@@ -161,17 +153,9 @@ class TestWebSocketAuthentication:
         from backend.core.config import LocalhostBypassMode
 
         with patch.object(
-
-
             settings,
-
-
             "LOCALHOST_BYPASS_MODE",
-
-
             LocalhostBypassMode.DISABLED,
-
-
         ):
             token = create_access_token({"sub": "test-user"})
             async with AsyncClient(
@@ -189,17 +173,9 @@ class TestWebSocketAuthentication:
         from backend.core.config import LocalhostBypassMode
 
         with patch.object(
-
-
             settings,
-
-
             "LOCALHOST_BYPASS_MODE",
-
-
             LocalhostBypassMode.DISABLED,
-
-
         ):
             async with AsyncClient(
                 transport=ASGITransport(app=app), base_url="http://test"
@@ -488,17 +464,9 @@ class TestWebSocketWithJWTAuth:
         from backend.core.config import LocalhostBypassMode
 
         with patch.object(
-
-
             settings,
-
-
             "LOCALHOST_BYPASS_MODE",
-
-
             LocalhostBypassMode.DISABLED,
-
-
         ):
             # First create a job using authenticated client
             async with AsyncClient(
@@ -545,17 +513,9 @@ class TestWebSocketWithJWTAuth:
         from backend.core.config import LocalhostBypassMode
 
         with patch.object(
-
-
             settings,
-
-
             "LOCALHOST_BYPASS_MODE",
-
-
             LocalhostBypassMode.DISABLED,
-
-
         ):
             async with AsyncClient(
                 transport=ASGITransport(app=app), base_url="http://testserver"
@@ -624,17 +584,9 @@ class TestWebSocketAuthRejection:
         from backend.core.config import LocalhostBypassMode
 
         with patch.object(
-
-
             settings,
-
-
             "LOCALHOST_BYPASS_MODE",
-
-
             LocalhostBypassMode.HOST_HEADER,
-
-
         ):
             try:
                 with client_non_bypass.websocket_connect(
@@ -650,17 +602,9 @@ class TestWebSocketAuthRejection:
         from backend.core.config import LocalhostBypassMode
 
         with patch.object(
-
-
             settings,
-
-
             "LOCALHOST_BYPASS_MODE",
-
-
             LocalhostBypassMode.HOST_HEADER,
-
-
         ):
             try:
                 with client_non_bypass.websocket_connect(
@@ -680,17 +624,9 @@ class TestWebSocketAuthRejection:
         from backend.core.config import LocalhostBypassMode
 
         with patch.object(
-
-
             settings,
-
-
             "LOCALHOST_BYPASS_MODE",
-
-
             LocalhostBypassMode.HOST_HEADER,
-
-
         ):
             # Create an expired token (expires in the past)
             expired_token = create_access_token(
@@ -712,14 +648,11 @@ class TestWebSocketAuthRejection:
     def test_websocket_localhost_bypass_works(self):
         """Test WS connection works with localhost bypass (no regression on #31)."""
         from backend.core.config import LocalhostBypassMode
+
         with patch.object(
-
             settings,
-
             "LOCALHOST_BYPASS_MODE",
-
             LocalhostBypassMode.HOST_HEADER,
-
         ):
             client = TestClient(app, base_url="http://localhost:8000")
             try:
@@ -738,14 +671,11 @@ class TestWebSocketAuthRejection:
     def test_websocket_valid_token_works(self):
         """Test WS connection works with valid token on non-bypass host."""
         from backend.core.config import LocalhostBypassMode
+
         with patch.object(
-
             settings,
-
             "LOCALHOST_BYPASS_MODE",
-
             LocalhostBypassMode.DISABLED,
-
         ):
             token = create_access_token({"sub": "test-user"})
             client = TestClient(app, base_url="http://evil-localhost.com")
@@ -865,17 +795,9 @@ class TestWebSocketLocalhostBypass:
         from backend.core.config import LocalhostBypassMode
 
         with patch.object(
-
-
             settings,
-
-
             "LOCALHOST_BYPASS_MODE",
-
-
             LocalhostBypassMode.HOST_HEADER,
-
-
         ):
             payload = asyncio.run(get_ws_token_payload(websocket=_ws(host_header)))
         assert payload == {"sub": "localhost_user"}
@@ -893,17 +815,9 @@ class TestWebSocketLocalhostBypass:
         from backend.core.config import LocalhostBypassMode
 
         with patch.object(
-
-
             settings,
-
-
             "LOCALHOST_BYPASS_MODE",
-
-
             LocalhostBypassMode.HOST_HEADER,
-
-
         ):
             with pytest.raises(WebSocketException) as excinfo:
                 asyncio.run(get_ws_token_payload(websocket=_ws(host_header)))
@@ -914,13 +828,9 @@ class TestWebSocketLocalhostBypass:
     def test_ws_bypass_does_not_fire_when_disabled(self, host_header):
         """With LOCALHOST_BYPASS off, a local host is no longer special."""
         with patch.object(
-
             settings,
-
             "LOCALHOST_BYPASS_MODE",
-
             LocalhostBypassMode.DISABLED,
-
         ):
             with pytest.raises(WebSocketException) as excinfo:
                 asyncio.run(get_ws_token_payload(websocket=_ws(host_header)))
@@ -937,17 +847,9 @@ class TestWebSocketLocalhostBypass:
         from backend.core.config import LocalhostBypassMode
 
         with patch.object(
-
-
             settings,
-
-
             "LOCALHOST_BYPASS_MODE",
-
-
             LocalhostBypassMode.HOST_HEADER,
-
-
         ):
             v4 = await get_ws_token_payload(websocket=_ws("127.0.0.1:8000"))
             v6 = await get_ws_token_payload(websocket=_ws("[::1]:8000"))
@@ -967,17 +869,9 @@ class TestWebSocketLocalhostBypass:
         from backend.core.config import LocalhostBypassMode
 
         with patch.object(
-
-
             settings,
-
-
             "LOCALHOST_BYPASS_MODE",
-
-
             LocalhostBypassMode.HOST_HEADER,
-
-
         ):
             with pytest.raises(WebSocketException) as excinfo:
                 await get_ws_token_payload(websocket=_ws("::1"))
@@ -1014,17 +908,9 @@ class TestWebSocketQueryParamRejection:
         from backend.core.config import LocalhostBypassMode
 
         with patch.object(
-
-
             settings,
-
-
             "LOCALHOST_BYPASS_MODE",
-
-
             LocalhostBypassMode.DISABLED,
-
-
         ):
             try:
                 with client_non_bypass.websocket_connect(
@@ -1041,17 +927,9 @@ class TestWebSocketQueryParamRejection:
         from backend.core.config import LocalhostBypassMode
 
         with patch.object(
-
-
             settings,
-
-
             "LOCALHOST_BYPASS_MODE",
-
-
             LocalhostBypassMode.DISABLED,
-
-
         ):
             with client_non_bypass.websocket_connect(
                 "/api/v1/jobs/job-123/logs",
@@ -1068,17 +946,9 @@ class TestWebSocketQueryParamRejection:
         from backend.core.config import LocalhostBypassMode
 
         with patch.object(
-
-
             settings,
-
-
             "LOCALHOST_BYPASS_MODE",
-
-
             LocalhostBypassMode.DISABLED,
-
-
         ):
             with client_non_bypass.websocket_connect(
                 "/api/v1/jobs/job-123/logs",
@@ -1107,17 +977,9 @@ class TestWebSocketQueryParamRejection:
             from backend.core.config import LocalhostBypassMode
 
             with patch.object(
-
-
                 settings,
-
-
                 "LOCALHOST_BYPASS_MODE",
-
-
                 LocalhostBypassMode.HOST_HEADER,
-
-
             ):
                 payload = await get_ws_token_payload(websocket=_ws(host_header))
             assert payload == {"sub": "localhost_user"}
@@ -1127,17 +989,9 @@ class TestWebSocketQueryParamRejection:
         from backend.core.config import LocalhostBypassMode
 
         with patch.object(
-
-
             settings,
-
-
             "LOCALHOST_BYPASS_MODE",
-
-
             LocalhostBypassMode.DISABLED,
-
-
         ):
             try:
                 with client_non_bypass.websocket_connect(
@@ -1157,17 +1011,9 @@ class TestWebSocketQueryParamRejection:
         from backend.core.config import LocalhostBypassMode
 
         with patch.object(
-
-
             settings,
-
-
             "LOCALHOST_BYPASS_MODE",
-
-
             LocalhostBypassMode.DISABLED,
-
-
         ):
             try:
                 with client_non_bypass.websocket_connect(
@@ -1187,17 +1033,9 @@ class TestWebSocketQueryParamRejection:
         from backend.core.config import LocalhostBypassMode
 
         with patch.object(
-
-
             settings,
-
-
             "LOCALHOST_BYPASS_MODE",
-
-
             LocalhostBypassMode.DISABLED,
-
-
         ):
             try:
                 with client_non_bypass.websocket_connect(
@@ -1214,17 +1052,9 @@ class TestWebSocketQueryParamRejection:
         from backend.core.config import LocalhostBypassMode
 
         with patch.object(
-
-
             settings,
-
-
             "LOCALHOST_BYPASS_MODE",
-
-
             LocalhostBypassMode.DISABLED,
-
-
         ):
             with client_non_bypass.websocket_connect(
                 "/api/v1/jobs/job-123/logs",
@@ -1253,17 +1083,9 @@ class TestGetWsTokenPayloadDirect:
         from backend.core.config import LocalhostBypassMode
 
         with patch.object(
-
-
             settings,
-
-
             "LOCALHOST_BYPASS_MODE",
-
-
             LocalhostBypassMode.DISABLED,
-
-
         ):
             ws = _ws("evil.com")
             ws._query_params = {"token": jwt_token}
@@ -1281,17 +1103,9 @@ class TestGetWsTokenPayloadDirect:
         from backend.core.config import LocalhostBypassMode
 
         with patch.object(
-
-
             settings,
-
-
             "LOCALHOST_BYPASS_MODE",
-
-
             LocalhostBypassMode.DISABLED,
-
-
         ):
             ws = _ws("evil.com")
             ws._headers = {"Authorization": f"Bearer {jwt_token}"}
@@ -1304,17 +1118,9 @@ class TestGetWsTokenPayloadDirect:
         from backend.core.config import LocalhostBypassMode
 
         with patch.object(
-
-
             settings,
-
-
             "LOCALHOST_BYPASS_MODE",
-
-
             LocalhostBypassMode.DISABLED,
-
-
         ):
             ws = _ws("evil.com")
             ws._headers = {"sec-websocket-protocol": f"bearer, {jwt_token}"}
@@ -1327,17 +1133,9 @@ class TestGetWsTokenPayloadDirect:
         from backend.core.config import LocalhostBypassMode
 
         with patch.object(
-
-
             settings,
-
-
             "LOCALHOST_BYPASS_MODE",
-
-
             LocalhostBypassMode.DISABLED,
-
-
         ):
             ws = _ws("evil.com")
             ws._headers = {}
@@ -1353,17 +1151,9 @@ class TestGetWsTokenPayloadDirect:
         from backend.core.config import LocalhostBypassMode
 
         with patch.object(
-
-
             settings,
-
-
             "LOCALHOST_BYPASS_MODE",
-
-
             LocalhostBypassMode.DISABLED,
-
-
         ):
             ws = _ws("evil.com")
             ws._headers = {"Authorization": "Bearer invalid-token"}
@@ -1380,17 +1170,9 @@ class TestGetWsTokenPayloadDirect:
         from backend.core.config import LocalhostBypassMode
 
         with patch.object(
-
-
             settings,
-
-
             "LOCALHOST_BYPASS_MODE",
-
-
             LocalhostBypassMode.HOST_HEADER,
-
-
         ):
             ws = _ws("localhost:8000")
             ws._query_params = {"token": jwt_token}

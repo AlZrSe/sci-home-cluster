@@ -201,8 +201,6 @@ async def create_token(
     # without knowing the generated shared token. Mirrors verify_token's bypass.
     # Localhost bypass: accept on host-header basis so it works through
     # Docker port mapping (where the socket peer is not loopback).
-    from backend.core.utils import is_localhost
-
     # Check the parsed URL hostname, the raw Host header, and the socket
     # peer, since request.url.hostname can be None behind certain proxies.
     _host = request.url.hostname or request.headers.get("host", "").split(":")[0]
