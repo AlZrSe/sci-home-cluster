@@ -1,0 +1,21 @@
+[Unit]
+Description=Scientific Home Cluster worker agent (%i)
+After=network-online.target syncthing.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=shc-agent
+Group=shc-agent
+WorkingDirectory=/opt/sci-home-cluster
+EnvironmentFile=/etc/scientific-home-cluster/agent.env
+ExecStart=/opt/sci-home-cluster/.venv/bin/run-agent --node-id %i
+Restart=on-failure
+RestartSec=5
+# Give jobs a chance to checkpoint on SIGTERM.
+TimeoutStopSec=30
+KillSignal=SIGTERM
+
+[Install]
+WantedBy=multi-user.target
+"""

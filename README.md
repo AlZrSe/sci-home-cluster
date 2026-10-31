@@ -11,7 +11,7 @@ A distributed platform for running scientific long-running applications on vario
 | Shared Schemas & File Ops | ✅ **Done** | Issue [#2](https://github.com/AlZrSe/sci-home-cluster/issues/2) |
 | API Server Core | ✅ **Done** | Issue [#3](https://github.com/AlZrSe/sci-home-cluster/issues/3) |
 | Syncthing Sync Service | ✅ **Done** | Issue [#4](https://github.com/AlZrSe/sci-home-cluster/issues/4) |
-| Worker Agent | ✅ **Skeleton Delivered** | Issue [#93](https://github.com/AlZrSe/sci-home-cluster/issues/93) - config, logging, supervised loop, graceful shutdown. Job execution is #95-#98 |
+| Worker Agent | ✅ **Skeleton Delivered** | Issues #93-#106 - config, logging, supervised loop, job execution, command files. See agent/README.md |
 | CLI | ✅ **Stub Implemented** | Phase 2 - commands scaffolded, needs API integration |
 | Docker/Production | ✅ **Done** | Issues [#123](https://github.com/AlZrSe/sci-home-cluster/issues/123) (image + static serving), [#129](https://github.com/AlZrSe/sci-home-cluster/issues/129) (compose) - see [Docker Compose](#docker-compose-single-container-one-port) |
 
@@ -60,7 +60,6 @@ This platform uses a client-server architecture with:
 - WebSocket log streaming
 
 **Planned (Phase 2+):**
-- Worker Agent job execution logic
 - CLI full API integration
 - Windows and Linux support (currently Linux-focused)
 
@@ -220,7 +219,7 @@ defaults:
 | | Default | Override |
 | --- | --- | --- |
 | `SYNCTHING_ROOT` | `./syncthing` — a folder in this checkout, created and bind-mounted | put `SYNCTHING_ROOT` in a repository-root `.env` |
-| `SHARED_TOKEN` | generated on first start, persisted to the `shc-state` volume | put `SHARED_TOKEN` in `.env` |
+| `SHARED_TOKEN` | **not generated** - unset by default; `POST /api/v1/auth/token` returns `SHARED_TOKEN_NOT_CONFIGURED` until you set it (issue #64) | put `SHARED_TOKEN` in `.env` |
 
 To read the generated token, and mint a JWT with it:
 
