@@ -399,6 +399,15 @@ Two things the dashboard can therefore rely on:
   but a submitted `command` runs with the submitting user's privileges on that node. Only
   trusted submitters.
 
+### Operator-intent command latency (issue #106)
+
+Cancel is delivered to a running job through a command file replicated by Syncthing.
+Measured on a single node (the Syncthing replication hop is excluded): median 0.26 s
+from command write to the agent entering the stop path, worst case 0.51 s (watcher
+median 0.008 s plus the 0.5 s drain cadence). Budgets: **B1 <= 1.0 s** to the stop
+path, **B2 <= 10 s** to the process group gone (dominated by the 5.0 s SIGTERM
+escalation in agent/executor.py). Repeat cancel is idempotent at the protocol level.
+
 ---
 
 ## Open Questions for Implementation

@@ -54,7 +54,6 @@ from agent.process import (
     STOP_VERIFY_POLL_S,
     STOP_VERIFY_TIMEOUT_S,
     ProcessTree,
-    StopReason,
     launch_flags,
     resolve_shell,
     shell_argv,
@@ -534,10 +533,17 @@ async def _fail_before_launch(
     one would be a sentinel the backend cannot tell from a real code
     (issue #125 §4 Q10).
     """
+    # A pre-launch cancel is still a cancel: the job never ran, but the
+    # operator's intent is terminal and must not be recorded as a failure
+    # (issue #106 status ladder).
+    if error == "cancelled:by_operator":
+        terminal_status = JobStatus.CANCELLED
+    else:
+        terminal_status = JobStatus.FAILED
     await write_terminal_state(
         paths=paths,
         job_id=job_id,
-        status=JobStatus.FAILED,
+        status=terminal_status,
         exit_code=exit_code,
         error=error,
         watcher=watcher,

@@ -7,6 +7,7 @@ import asyncio
 import concurrent.futures
 import logging
 import time
+import yaml
 from pathlib import Path
 from typing import Dict, Optional, Set, Any
 from datetime import datetime, timezone
@@ -158,9 +159,11 @@ class SyncthingEventHandler(FileSystemEventHandler):
                         "ignoring %s: not a recognised file under a job directory",
                         file_path,
                     )
-            elif relative_path.parts[0] == "nodes" and len(relative_path.parts) >= 2:
+            elif relative_path.parts[0] == "nodes" and len(relative_path.parts) == 2:
                 node_id = relative_path.parts[1].replace(".yaml", "")
                 await self.service._process_node_file(node_id, file_path)
+            elif relative_path.parts[0] == "nodes":
+                logger.debug("ignoring %s: not a top-level node file", file_path)
             else:
                 logger.debug("ignoring %s: not under jobs/ or nodes/", file_path)
 
@@ -181,7 +184,7 @@ class SyncthingEventHandler(FileSystemEventHandler):
                     logger.debug("command/ack file removed: %s", file_path)
                 else:
                     logger.debug("ignoring deletion of %s", file_path)
-            elif relative_path.parts[0] == "nodes" and len(relative_path.parts) >= 2:
+            elif relative_path.parts[0] == "nodes" and len(relative_path.parts) == 2:
                 node_id = relative_path.parts[1].replace(".yaml", "")
                 await self.service._handle_node_deleted(node_id)
 
@@ -425,8 +428,10 @@ class SyncthingService:
 
             self._processed_files.add(file_path)
             logger.debug("Processed command file: %s", file_path)
-        except Exception as e:
+        except yaml.YAMLError as e:
             logger.error(f"Error processing command file {file_path}: {e}")
+        except Exception as e:
+            logger.warning(f"Error processing command file {file_path}: {e}")
 
     async def _process_node_file(self, node_id: str, file_path: str):
         """Process a node state YAML file."""
@@ -545,7 +550,7 @@ class SyncthingService:
 
         return {"scanned": new_count, "total_processed": len(self._processed_files)}
 
-    def _scan_folder_structure(self) -> Set[str]:
+    def _scan_folder_structure(self) -> Set[str]:  # noqa: C901
         """Scan jobs and nodes directories for current YAML files."""
         current_job_files: Set[str] = set()
         current_node_files: Set[str] = set()
@@ -559,6 +564,12 @@ class SyncthingService:
                     state_file = job_dir / "state.yaml"
                     if state_file.exists():
                         current_job_files.add(str(state_file))
+                    for subdir in ("commands", "acks"):
+                        sub = job_dir / subdir
+                        if sub.exists() and sub.is_dir():
+                            for f in sub.glob("*.yaml"):
+                                if f.is_file():
+                                    current_job_files.add(str(f))
 
         if nodes_dir.exists():
             for node_file in nodes_dir.glob("*.yaml"):
