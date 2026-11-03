@@ -272,7 +272,9 @@ class TestHeartbeatMonitor:
         class FakeStore:
             def __init__(self):
                 self.nodes: dict[str, NodeSpec] = {}
+                self.jobs: dict[str, object] = {}
                 self.update_calls: list[tuple[str, dict]] = []
+                self.job_update_calls: list[tuple[str, dict]] = []
 
             async def list_nodes(self) -> list[NodeSpec]:
                 return list(self.nodes.values())
@@ -294,6 +296,19 @@ class TestHeartbeatMonitor:
             async def get_node(self, node_id: str) -> NodeSpec | None:
                 return self.nodes.get(node_id)
 
+            async def get_job(self, job_id: str):
+                return self.jobs.get(job_id)
+
+            async def update_job(self, job_id: str, **kwargs):
+                self.job_update_calls.append((job_id, kwargs))
+                job = self.jobs.get(job_id)
+                if job is None:
+                    return None
+                if isinstance(job, dict):
+                    job.update(kwargs)
+                    self.jobs[job_id] = job
+                return job
+
         store = FakeStore()
         # Patch get_store to return our fake store
         with patch("backend.services.syncthing_service.get_store", return_value=store):
@@ -304,6 +319,7 @@ class TestHeartbeatMonitor:
         node_id: str,
         last_heartbeat: datetime,
         status: str = "ONLINE",
+        current_job_id: str | None = None,
     ) -> NodeSpec:
         """Create a NodeSpec with the given heartbeat and status."""
         gpu = GPUInfo(name="NVIDIA RTX 4090", memory_gb=24)
@@ -316,7 +332,7 @@ class TestHeartbeatMonitor:
             os="Ubuntu 24.04",
             status=status,
             last_heartbeat=last_heartbeat,
-            current_job_id=None,
+            current_job_id=current_job_id,
         )
 
     @pytest.mark.asyncio
@@ -390,3 +406,71 @@ class TestHeartbeatMonitor:
 
         assert fake_store.nodes["node-offline"].status == "OFFLINE"
         assert fake_store.update_calls == [], "No update for already OFFLINE"
+
+    @pytest.mark.asyncio
+    async def test_recovery_fails_orphaned_job_on_offline_node(self, fake_store):
+        """Offline node with RUNNING job -> job FAILED, current_job_id cleared."""
+        now = datetime.now(timezone.utc)
+        stale_hb = now - timedelta(seconds=120)
+        node = self._make_node(
+            "node-dead", stale_hb, status="OFFLINE", current_job_id="job-42"
+        )
+        await fake_store.create_node(node)
+        fake_store.jobs["job-42"] = {"status": "RUNNING"}
+
+        service = SyncthingService(Path("/tmp/fake"))
+        await service._heartbeat_monitor_iteration(now=now)
+
+        assert fake_store.jobs["job-42"]["status"] == "FAILED"
+        assert fake_store.jobs["job-42"]["error"] == "orphaned:node_offline"
+        assert fake_store.nodes["node-dead"].current_job_id is None
+
+    @pytest.mark.asyncio
+    async def test_recovery_idempotent(self, fake_store):
+        """Running recovery twice yields same state, no error."""
+        now = datetime.now(timezone.utc)
+        stale_hb = now - timedelta(seconds=120)
+        node = self._make_node(
+            "node-dead2", stale_hb, status="OFFLINE", current_job_id="job-7"
+        )
+        await fake_store.create_node(node)
+        fake_store.jobs["job-7"] = {"status": "RUNNING"}
+
+        service = SyncthingService(Path("/tmp/fake"))
+        await service._heartbeat_monitor_iteration(now=now)
+        await service._heartbeat_monitor_iteration(now=now)
+
+        assert fake_store.jobs["job-7"]["status"] == "FAILED"
+        assert fake_store.nodes["node-dead2"].current_job_id is None
+
+    @pytest.mark.asyncio
+    async def test_recovery_clears_dangling_job_ref(self, fake_store):
+        """Offline node referencing missing job -> current_job_id cleared."""
+        now = datetime.now(timezone.utc)
+        stale_hb = now - timedelta(seconds=120)
+        node = self._make_node(
+            "node-dangle", stale_hb, status="OFFLINE", current_job_id="job-missing"
+        )
+        await fake_store.create_node(node)
+
+        service = SyncthingService(Path("/tmp/fake"))
+        await service._heartbeat_monitor_iteration(now=now)
+
+        assert fake_store.nodes["node-dangle"].current_job_id is None
+
+    @pytest.mark.asyncio
+    async def test_recovery_does_not_touch_terminal_job(self, fake_store):
+        """Offline node with COMPLETED job -> no job update, ref cleared."""
+        now = datetime.now(timezone.utc)
+        stale_hb = now - timedelta(seconds=120)
+        node = self._make_node(
+            "node-done", stale_hb, status="OFFLINE", current_job_id="job-done"
+        )
+        await fake_store.create_node(node)
+        fake_store.jobs["job-done"] = {"status": "COMPLETED"}
+
+        service = SyncthingService(Path("/tmp/fake"))
+        await service._heartbeat_monitor_iteration(now=now)
+
+        assert fake_store.jobs["job-done"]["status"] == "COMPLETED"
+        assert fake_store.nodes["node-done"].current_job_id is None

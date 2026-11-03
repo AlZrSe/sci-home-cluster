@@ -539,6 +539,78 @@ class SyncthingService:
                         f"(last heartbeat {delta:.0f}s ago, timeout={timeout}s)"
                     )
 
+        # Recovery sweep (issue #103): fail jobs orphaned by offline nodes.
+        # Runs every iteration; idempotent — only RUNNING jobs are touched.
+        await self._recover_orphaned_jobs(now)
+
+    async def _recover_orphaned_jobs(self, now: datetime | None = None) -> None:  # noqa: C901
+        """Fail jobs whose node went offline mid-run (issue #103).
+
+        A node that is OFFLINE and still references a job in
+        ``current_job_id`` almost certainly died while running it. The job
+        is transitioned to FAILED with ``error="orphaned:node_offline"`` and
+        the node's ``current_job_id`` is cleared so it can take new work.
+        Only RUNNING jobs are touched, so the sweep is idempotent.
+        """
+        if now is None:
+            now = datetime.now(timezone.utc)
+        store = get_store()
+        try:
+            nodes = await store.list_nodes()
+        except Exception as e:
+            logger.error(f"Recovery sweep: could not list nodes: {e}")
+            return
+        for node in nodes:
+            if node.status != "OFFLINE":
+                continue
+            job_id = getattr(node, "current_job_id", None)
+            if not job_id:
+                continue
+            try:
+                job = await store.get_job(job_id)
+            except Exception as e:
+                logger.error(f"Recovery sweep: could not read job {job_id}: {e}")
+                continue
+            if job is None:
+                # Dangling reference — clear it.
+                try:
+                    await store.update_node(node.node_id, current_job_id=None)
+                except Exception as e:
+                    logger.error(
+                        f"Recovery sweep: could not clear current_job_id for "
+                        f"{node.node_id}: {e}"
+                    )
+                continue
+            if isinstance(job, dict):
+                job_status = job.get("status", "")
+            else:
+                job_status = getattr(job, "status", "")
+            if str(job_status).upper() != "RUNNING":
+                # Already terminal (or PENDING) — just clear the dangling ref.
+                try:
+                    await store.update_node(node.node_id, current_job_id=None)
+                except Exception as e:
+                    logger.error(
+                        f"Recovery sweep: could not clear current_job_id for "
+                        f"{node.node_id}: {e}"
+                    )
+                continue
+            try:
+                await store.update_job(
+                    job_id,
+                    status=JobStatus.FAILED,
+                    error="orphaned:node_offline",
+                    exit_code=None,
+                    completed_at=now,
+                )
+                await store.update_node(node.node_id, current_job_id=None)
+                logger.info(
+                    f"Recovered orphaned job {job_id} on offline node "
+                    f"{node.node_id}"
+                )
+            except Exception as e:
+                logger.error(f"Recovery sweep: failed to recover job {job_id}: {e}")
+
     async def manual_scan(self) -> Dict[str, int]:
         """Manually trigger a full scan of the Syncthing folder."""
         logger.info("Manual scan triggered")
