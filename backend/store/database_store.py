@@ -24,6 +24,7 @@ from shared.schemas.job_metrics import JobMetrics, JobMetricsSummary
 from shared.schemas.gpu_metric import GPUMetric
 from shared.schemas.cpu_metric import CPUMetric
 from shared.schemas.log_entry import LogEntry
+from shared.metrics.node_key import node_metrics_job_id
 from backend.store.database import (
     JobModel,
     NodeModel,
@@ -764,14 +765,14 @@ class DatabaseStore:
 
             result = await session.execute(
                 select(GPUMetricModel)
-                .where(GPUMetricModel.job_id == f"node:{node_id}")
+                .where(GPUMetricModel.job_id == node_metrics_job_id(node_id))
                 .order_by(GPUMetricModel.timestamp)
             )
             gpu_models = result.scalars().all()
 
             result = await session.execute(
                 select(CPUMetricModel)
-                .where(CPUMetricModel.job_id == f"node:{node_id}")
+                .where(CPUMetricModel.job_id == node_metrics_job_id(node_id))
                 .order_by(CPUMetricModel.timestamp)
             )
             cpu_models = result.scalars().all()
@@ -802,7 +803,7 @@ class DatabaseStore:
                 ]
                 summary = self._calculate_summary(gpu_metrics, cpu_metrics)
                 return JobMetrics(
-                    job_id=f"node:{node_id}",
+                    job_id=node_metrics_job_id(node_id),
                     gpu_metrics=gpu_metrics,
                     cpu_metrics=cpu_metrics,
                     summary=summary,
@@ -817,14 +818,14 @@ class DatabaseStore:
                 await self._store_node_metrics(node_id, metrics)
             return metrics
 
-        return self._empty_metrics(f"node:{node_id}")
+        return self._empty_metrics(node_metrics_job_id(node_id))
 
     async def _store_node_metrics(self, node_id: str, metrics: JobMetrics) -> None:
         """Store node metrics in the database."""
         async with get_session() as session:
             for gpu_metric in metrics.gpu_metrics:
                 gpu_model = GPUMetricModel(
-                    job_id=f"node:{node_id}",
+                    job_id=node_metrics_job_id(node_id),
                     timestamp=gpu_metric.timestamp,
                     gpu_index=gpu_metric.gpu_index,
                     memory_used_mb=gpu_metric.memory_used_mb,
@@ -836,7 +837,7 @@ class DatabaseStore:
                 session.add(gpu_model)
             for cpu_metric in metrics.cpu_metrics:
                 cpu_model = CPUMetricModel(
-                    job_id=f"node:{node_id}",
+                    job_id=node_metrics_job_id(node_id),
                     timestamp=cpu_metric.timestamp,
                     cpu_percent=cpu_metric.cpu_percent,
                     memory_percent=cpu_metric.memory_percent,
@@ -972,7 +973,7 @@ class DatabaseStore:
         summary = self._calculate_summary(gpu_metrics, cpu_metrics)
 
         return JobMetrics(
-            job_id=f"node:{node_id}",
+            job_id=node_metrics_job_id(node_id),
             gpu_metrics=gpu_metrics,
             cpu_metrics=cpu_metrics,
             summary=summary,
