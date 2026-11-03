@@ -266,7 +266,7 @@ class TestHeartbeatMonitor:
     """Tests for the heartbeat monitor (issue #96)."""
 
     @pytest.fixture
-    def fake_store(self):
+    def fake_store(self):  # noqa: C901
         """Create a fake store for testing the monitor in isolation."""
 
         class FakeStore:
