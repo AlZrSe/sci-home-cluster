@@ -63,6 +63,30 @@ Exit codes: `0` clean shutdown, `1` configuration error, `2` internal error,
 Deleting `state.yaml` deletes the job from the backend's view (issue #92). The
 agent never deletes command files (issue #106 D5).
 
+## Standalone executable
+
+Operators without a Python installation can copy the prebuilt binary from the
+Syncthing folder instead of running `pip install -e .`:
+
+- Linux: `syncthing/run-agent`
+- Windows: `syncthing/run-agent.exe`
+
+The binary is built by CI for both platforms and is self-contained. It accepts
+the same flags (`--node-id`, `--syncthing-root`, `--log-level`) and returns
+the same exit codes (0 clean, 1 config error, 2 internal error, 3 watcher
+dead, 4 grace expired) as `run-agent`.
+
+To build locally:
+
+```bash
+python scripts/build_agent.py            # current OS
+python scripts/build_agent.py --publish  # also copy into syncthing/
+```
+
+On Windows the unsigned executable may trigger SmartScreen; choose "Run
+anyway". Some antivirus engines flag PyInstaller onefile binaries; if that
+happens, run the Python entry point instead.
+
 ## Running as a service (systemd)
 
 A unit file is provided at `agent/scientific-home-cluster-agent.service`. Install

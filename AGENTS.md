@@ -17,6 +17,7 @@ Distributed platform for running scientific workloads on a home GPU cluster.
 | Frontend test | `cd frontend && npm test` (vitest unit + integration; e2e is `npm run test:e2e`) |
 | Backend lint | `ruff check . && ruff format --check . && mypy .` (all three from the repository **root**; `--check`, not the bare formatter — see below) |
 | Backend test | `pytest --cov=backend` |
+| Build agent exe | `python scripts/build_agent.py` |
 | **CI** | `.github/workflows/ci.yml` — four jobs, no edges: `backend-gates`, `frontend-gates`, `compose-suite`, `e2e`. Push or PR to `main`; weekly Monday 06:17 UTC; manual dispatch. All four are required status checks on `main`. |
 | Compose test | `make test-compose` (**opt-in, destructive-adjacent** — creates and deletes `shc-e2e-*` volumes, never `shc-data`/`shc-state`; needs Docker; see `docker/README.md` §"Testing the compose file") |
 | API server | `uvicorn backend.main:app --reload` |

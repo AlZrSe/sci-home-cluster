@@ -49,6 +49,10 @@ dev = [
     "types-PyYAML==6.0.12.20260906",
 ]
 
+build = [
+    "pyinstaller>=6.0.0,<7.0.0",
+]
+
 [build-system]
 requires = ["setuptools>=65.0.0"]
 build-backend = "setuptools.build_meta"

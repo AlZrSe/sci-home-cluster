@@ -708,3 +708,52 @@ jobs:
       - name: Tear the stack down
         if: always()
         run: docker compose down -v
+
+  # -------------------------------------------------------------------------
+  build-agent:
+    name: build-agent (${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: linux
+          - os: windows-latest
+            target: windows
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+        with:
+          submodules: false
+
+      - name: Set up Python ${{ env.PYTHON_VERSION }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install build dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev,build]"
+
+      - name: Build agent
+        run: python scripts/build_agent.py --target ${{ matrix.target }}
+
+      - name: Publish agent into Syncthing folder
+        run: python scripts/build_agent.py --publish --target ${{ matrix.target }}
+
+      - name: Smoke test frozen binary
+        shell: bash
+        run: |
+          if [ "${{ matrix.target }}" = "linux" ]; then
+            ./dist/run-agent --help
+          else
+            ./dist/run-agent.exe --help
+          fi
+
+      - name: Upload agent binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: agent-${{ matrix.target }}
+          path: syncthing/run-agent*
