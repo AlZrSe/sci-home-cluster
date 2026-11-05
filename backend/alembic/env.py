@@ -15,7 +15,11 @@ from alembic import context
 # is what has to be importable for `from backend.store.database import Base`.
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 
-from backend.store.database import Base
+from backend.core.logging import configure_logging  # noqa: E402
+
+configure_logging()
+
+from backend.store.database import Base  # noqa: E402
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.

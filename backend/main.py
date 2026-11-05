@@ -31,7 +31,10 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 # backend.core.config is imported, which is the very import this has to precede.
 # It is applied immediately below, and a second basicConfig would be a no-op
 # once root has a handler - which is why the ordering is the fix.
-logging.basicConfig(level=logging.INFO)
+from backend.core.logging import configure_logging  # noqa: E402
+
+# Configure logging BEFORE anything that logs at import time. See issue #68.
+configure_logging("INFO")
 
 from backend.core.config import absolute_sqlite_path, settings  # noqa: E402
 from backend.core.database import (  # noqa: E402
@@ -48,12 +51,10 @@ from backend.core.telemetry import configure_telemetry  # noqa: E402
 from backend.core.metrics import record_http_request  # noqa: E402
 from backend.core.rate_limit import init_rate_limiter, shutdown_rate_limiter  # noqa: E402
 
-# basicConfig above already put a handler on root, so this sets the level only:
-# it is a setLevel, not a second configuration, and it is where the operator's
-# LOG_LEVEL actually takes effect. The generation INFO above is deliberately
-# emitted before it is applied, so a first-time key generation is reported even
-# at LOG_LEVEL=WARNING.
-logging.getLogger().setLevel(getattr(logging, settings.LOG_LEVEL))
+# Apply the operator's LOG_LEVEL now that settings is available. The generation
+# INFO above is deliberately emitted before this is applied, so a first-time key
+# generation is reported even at LOG_LEVEL=WARNING.
+configure_logging(settings.LOG_LEVEL)
 logger = logging.getLogger(__name__)
 
 

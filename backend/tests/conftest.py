@@ -19,6 +19,7 @@ from sqlalchemy import create_engine, delete
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase
 
+from backend.core.logging import configure_logging
 from backend.main import app
 from backend.core.config import settings
 from backend.core.database import close_database, get_session
@@ -29,6 +30,8 @@ from shared.schemas.resources import Resources
 from shared.schemas.retry import RetryPolicy
 from shared.schemas.node_spec import NodeSpec, GPUInfo
 from backend.store import DatabaseStore, get_store
+
+configure_logging()
 
 
 @pytest.fixture(scope="session")

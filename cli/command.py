@@ -1,5 +1,9 @@
 import typer
 
+from backend.core.logging import configure_logging  # noqa: E402
+
+configure_logging()
+
 app = typer.Typer()
 
 
