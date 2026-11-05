@@ -1,0 +1,7 @@
+id: qe-pwscf
+name: QE pwscf
+software: quantum-espresso
+command: pw.x
+cpus: 8
+memory_gb: 32
+builtin: true

@@ -79,6 +79,12 @@ def publish(target: str) -> Path:
         raise ValueError(f"refusing to publish outside repository root: {dest}")
     dest.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(src, dest)
+    # Keep the sample environment file in sync with the published executable so
+    # operators copying the agent binary into a Syncthing folder also get the
+    # current .env.example beside it.
+    env_example_src = REPO_ROOT / ".env.example"
+    if env_example_src.is_file():
+        shutil.copy2(env_example_src, dest.parent / ".env.example")
     return dest
 
 

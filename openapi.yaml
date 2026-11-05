@@ -997,6 +997,286 @@
         }
       }
     },
+    "/api/v1/profiles/": {
+      "get": {
+        "tags": [
+          "profiles"
+        ],
+        "summary": "List All",
+        "operationId": "list_all_api_v1_profiles__get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ProfileSpec"
+                  },
+                  "type": "array",
+                  "title": "Response List All Api V1 Profiles  Get"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "Authorization": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "profiles"
+        ],
+        "summary": "Create",
+        "operationId": "create_api_v1_profiles__post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProfileSpec"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProfileSpec"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "Authorization": []
+          }
+        ]
+      }
+    },
+    "/api/v1/profiles/{profile_id}": {
+      "get": {
+        "tags": [
+          "profiles"
+        ],
+        "summary": "Get One",
+        "operationId": "get_one_api_v1_profiles__profile_id__get",
+        "security": [
+          {
+            "Authorization": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "profile_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Profile Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProfileSpec"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "profiles"
+        ],
+        "summary": "Update",
+        "operationId": "update_api_v1_profiles__profile_id__put",
+        "security": [
+          {
+            "Authorization": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "profile_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Profile Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProfileSpec"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProfileSpec"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "profiles"
+        ],
+        "summary": "Delete",
+        "operationId": "delete_api_v1_profiles__profile_id__delete",
+        "security": [
+          {
+            "Authorization": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "profile_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Profile Id"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/profiles/{profile_id}/reset": {
+      "post": {
+        "tags": [
+          "profiles"
+        ],
+        "summary": "Reset",
+        "operationId": "reset_api_v1_profiles__profile_id__reset_post",
+        "security": [
+          {
+            "Authorization": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "profile_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Profile Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProfileSpec"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/profiles/restore-builtins": {
+      "post": {
+        "tags": [
+          "profiles"
+        ],
+        "summary": "Restore",
+        "operationId": "restore_api_v1_profiles_restore_builtins_post",
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "Authorization": []
+          }
+        ]
+      }
+    },
     "/api/v1/syncthing/status": {
       "get": {
         "tags": [
@@ -1639,6 +1919,115 @@
         "type": "object",
         "title": "Paths",
         "description": "Input and output paths for a job. Both are optional."
+      },
+      "ProfileEnvEntry": {
+        "properties": {
+          "key": {
+            "type": "string",
+            "title": "Key"
+          },
+          "value": {
+            "type": "string",
+            "title": "Value"
+          }
+        },
+        "type": "object",
+        "required": [
+          "key",
+          "value"
+        ],
+        "title": "ProfileEnvEntry"
+      },
+      "ProfileSpec": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "software": {
+            "type": "string",
+            "title": "Software"
+          },
+          "description": {
+            "type": "string",
+            "title": "Description",
+            "default": ""
+          },
+          "command": {
+            "type": "string",
+            "title": "Command",
+            "default": ""
+          },
+          "working_dir": {
+            "type": "string",
+            "title": "Working Dir",
+            "default": ""
+          },
+          "gpus": {
+            "type": "integer",
+            "title": "Gpus",
+            "default": 0
+          },
+          "cpus": {
+            "type": "integer",
+            "title": "Cpus",
+            "default": 1
+          },
+          "memory_gb": {
+            "type": "integer",
+            "title": "Memory Gb",
+            "default": 0
+          },
+          "vram_gb": {
+            "type": "integer",
+            "title": "Vram Gb",
+            "default": 0
+          },
+          "input": {
+            "type": "string",
+            "title": "Input",
+            "default": ""
+          },
+          "output": {
+            "type": "string",
+            "title": "Output",
+            "default": ""
+          },
+          "max_retries": {
+            "type": "integer",
+            "title": "Max Retries",
+            "default": 0
+          },
+          "retry_delay_seconds": {
+            "type": "integer",
+            "title": "Retry Delay Seconds",
+            "default": 0
+          },
+          "env": {
+            "items": {
+              "$ref": "#/components/schemas/ProfileEnvEntry"
+            },
+            "type": "array",
+            "title": "Env"
+          },
+          "builtin": {
+            "type": "boolean",
+            "title": "Builtin",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "software"
+        ],
+        "title": "ProfileSpec"
       },
       "Resources": {
         "properties": {

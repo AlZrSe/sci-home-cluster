@@ -1,0 +1,7 @@
+id: cp2k-md
+name: CP2K MD
+software: cp2k
+command: cp2k
+cpus: 8
+memory_gb: 32
+builtin: true

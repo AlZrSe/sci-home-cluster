@@ -39,7 +39,7 @@ from backend.core.database import (  # noqa: E402
     close_database,
     run_migrations,
 )
-from backend.api.v1 import auth, nodes, syncthing, jobs  # noqa: E402
+from backend.api.v1 import auth, nodes, syncthing, jobs, profiles  # noqa: E402
 from shared.schemas.error_response import ErrorResponse  # noqa: E402
 from backend.store import get_store  # noqa: E402
 from backend.services.syncthing_service import SyncthingService  # noqa: E402
@@ -401,6 +401,9 @@ if settings.effective_cors_origins:
 app.include_router(auth.router, prefix=f"{settings.API_V1_STR}/auth", tags=["auth"])
 app.include_router(jobs.router, prefix=f"{settings.API_V1_STR}/jobs", tags=["jobs"])
 app.include_router(nodes.router, prefix=f"{settings.API_V1_STR}/nodes", tags=["nodes"])
+app.include_router(
+    profiles.router, prefix=f"{settings.API_V1_STR}/profiles", tags=["profiles"]
+)
 app.include_router(
     syncthing.router, prefix=f"{settings.API_V1_STR}/syncthing", tags=["syncthing"]
 )

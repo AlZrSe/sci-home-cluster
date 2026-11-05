@@ -40,8 +40,8 @@ router = APIRouter()
 # open socket that will never emit anything and never close, which reads
 # as a hung job (issue #35, AC-8).
 LOG_STREAM_UNAVAILABLE_REASON = (
-    "Log streaming is disabled: SEED_DEMO_DATA is off, so there are no "
-    "log lines to stream. No agent writes job logs yet."
+    "Log streaming is unavailable: no log segments have been ingested for "
+    "this job yet."
 )
 
 # Declared on the decorators so the generated OpenAPI documents them.
@@ -208,7 +208,7 @@ async def stream_job_logs(
     # Every streamed line is generated. With demo data off there is nothing
     # to send, so say so and close rather than hold the connection open and
     # silent (issue #35, AC-8).
-    if not job_service.log_stream_available():
+    if not job_service.log_stream_available(job_id):
         await websocket.close(
             code=status.WS_1008_POLICY_VIOLATION,
             reason=LOG_STREAM_UNAVAILABLE_REASON,

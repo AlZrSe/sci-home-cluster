@@ -1,0 +1,7 @@
+id: rmc-profile
+name: RMC Profile
+software: rmc
+command: rmc
+cpus: 4
+memory_gb: 16
+builtin: true

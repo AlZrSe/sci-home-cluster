@@ -60,6 +60,11 @@ class DatabaseStore:
         self._seed_lock = asyncio.Lock()
         self._log_stream_tasks: Dict[str, asyncio.Task] = {}
         self._log_stream_subscribers: Dict[str, Set[Callable[[str], None]]] = {}
+        self._jobs_with_real_logs: Set[str] = set()
+
+    def mark_job_has_real_logs(self, job_id: str) -> None:
+        """Record that a job has at least one real log row."""
+        self._jobs_with_real_logs.add(job_id)
 
     async def _seed_data(self, session: AsyncSession) -> None:
         """Seed the database with initial data matching the frontend mock server."""
@@ -1163,17 +1168,18 @@ class DatabaseStore:
         return lines
 
     # WebSocket log streaming simulation
-    def log_stream_available(self) -> bool:
+    def log_stream_available(self, job_id: Optional[str] = None) -> bool:
         """
         Whether the log stream has anything to send at all.
 
-        Every line the stream emits is generated from the same templates
-        as _generate_job_logs, so with SEED_DEMO_DATA off the stream can
-        only ever produce invented output. The WebSocket route uses this
-        to close with an explicit reason rather than hold a client open on
-        a socket that will never say anything (issue #35, AC-8).
+        Returns True when SEED_DEMO_DATA is on, or when a job_id is given
+        and at least one real LogEntry row (origin="real") exists for it.
         """
-        return settings.SEED_DEMO_DATA
+        if settings.SEED_DEMO_DATA:
+            return True
+        if job_id is None:
+            return False
+        return job_id in getattr(self, "_jobs_with_real_logs", set())
 
     def _register_log_stream_subscriber(
         self, job_id: str, on_line: Callable[[str], None]
@@ -1189,7 +1195,7 @@ class DatabaseStore:
             self._log_stream_subscribers[job_id] = set()
         self._log_stream_subscribers[job_id].add(on_line)
 
-    async def start_log_stream(
+    async def start_log_stream(  # noqa: C901
         self, job_id: str, on_line: Callable[[str], None]
     ) -> Optional[asyncio.Task]:
         """
@@ -1202,7 +1208,7 @@ class DatabaseStore:
         """
         await self._ensure_seeded()
 
-        if not self.log_stream_available():
+        if not self.log_stream_available(job_id):
             # Demo data only. Refusing here is what keeps the route from
             # registering a subscriber for a stream that will never tick;
             # the guard inside _stream_worker below is what keeps the
@@ -1213,7 +1219,48 @@ class DatabaseStore:
         # stores them but never hands any to the caller.
         self._register_log_stream_subscriber(job_id, on_line)
 
-        async def _stream_worker():
+        async def _stream_worker():  # noqa: C901
+            # Real (production) path: poll for ingested real rows.
+            if not settings.SEED_DEMO_DATA:
+                last_id = 0
+                try:
+                    while True:
+                        job = await self.get_job(job_id)
+                        if not job or job.status not in (JobStatus.RUNNING,):
+                            # keep draining? break when terminal
+                            if job is None or job.status in (
+                                JobStatus.COMPLETED,
+                                JobStatus.FAILED,
+                                JobStatus.CANCELLED,
+                            ):
+                                break
+                        async with get_session() as session:
+                            result = await session.execute(
+                                select(LogEntryModel)
+                                .where(LogEntryModel.job_id == job_id)
+                                .where(LogEntryModel.id > last_id)
+                                .where(LogEntryModel.origin == "real")
+                                .order_by(LogEntryModel.id)
+                            )
+                            rows = result.scalars().all()
+                            for r in rows:
+                                last_id = max(last_id, r.id)
+                                line = r.line
+                                if job_id in self._log_stream_subscribers:
+                                    subscribers = self._log_stream_subscribers[job_id]
+                                    for callback in subscribers:
+                                        try:
+                                            callback(line)
+                                        except Exception:
+                                            pass
+                        await asyncio.sleep(1.0)
+                except asyncio.CancelledError:
+                    pass
+                finally:
+                    self._log_stream_tasks.pop(job_id, None)
+                    self._log_stream_subscribers.pop(job_id, None)
+                return
+
             step = 5000
             try:
                 while True:
@@ -1221,13 +1268,8 @@ class DatabaseStore:
                     if not job or job.status != JobStatus.RUNNING:
                         break
 
-                    # DEMO DATA ONLY. Checked per tick, not just at
-                    # start_log_stream: this worker invents a line AND
-                    # commits it to log_entries, so leaving it running
-                    # after the flag is flipped would keep writing an
-                    # invented row every 1.4s for as long as the job is
-                    # RUNNING, with no read involved (issue #35, AC-9).
-                    if not self.log_stream_available():
+                    # DEMO DATA ONLY.
+                    if not self.log_stream_available(job_id):
                         break
 
                     step += 50

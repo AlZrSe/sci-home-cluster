@@ -1,0 +1,7 @@
+id: monte-carlo
+name: Monte Carlo
+software: monte-carlo
+command: python mc.py
+cpus: 4
+memory_gb: 16
+builtin: true

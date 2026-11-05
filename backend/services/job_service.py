@@ -396,9 +396,9 @@ class JobService:
         )
         return task
 
-    def log_stream_available(self) -> bool:
+    def log_stream_available(self, job_id: Optional[str] = None) -> bool:
         """Whether the store can produce any streamed log lines."""
-        return self._store.log_stream_available()
+        return self._store.log_stream_available(job_id)
 
     async def stop_log_stream(self, job_id: str) -> None:
         """Stop the log stream for a job."""

@@ -14,6 +14,8 @@ from .job_command_ack import JobCommandAck, JobCommandResult
 from .job_list_result import JobListResult
 from .job_metrics import JobMetrics, JobMetricsSummary
 from .job_query import JobQuery
+from .log_segment import LogSegment
+from .metric_segment import MetricSegment
 from .job_spec import JobSpec
 from .job_state import JobState
 from .job_status import JobStatus
@@ -21,6 +23,7 @@ from .log_entry import LogEntry
 from .node_spec import NodeSpec
 from .paths import Paths
 from .paths import Paths as JobPaths
+from .profile import ProfileEnvEntry, ProfileSpec
 from .resources import Resources
 from .resources import Resources as JobResources
 from .token_validation import (
@@ -45,14 +48,18 @@ __all__ = [
     "JobMetrics",
     "JobMetricsSummary",
     "JobPaths",
+    "LogSegment",
     "JobQuery",
     "JobResources",
     "JobSpec",
     "JobState",
     "JobStatus",
     "LogEntry",
+    "MetricSegment",
     "NodeSpec",
     "Paths",
+    "ProfileEnvEntry",
+    "ProfileSpec",
     "Resources",
     "TokenCreateRequest",
     "TokenCreateResponse",

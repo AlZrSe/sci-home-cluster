@@ -9,6 +9,7 @@ import logging
 import time
 import yaml
 from pathlib import Path
+from sqlalchemy import select
 from typing import Dict, Optional, Set, Any
 from datetime import datetime, timezone
 from watchdog.observers import Observer as ObserverType
@@ -19,7 +20,12 @@ from shared.schemas.node_spec import NodeSpec
 from shared.schemas.job_status import JobStatus
 from shared.schemas.job_command import JobCommand
 from shared.schemas.job_command_ack import JobCommandAck
+from shared.schemas.log_segment import LogSegment
+from shared.schemas.metric_segment import MetricSegment
+from shared.metrics.node_key import node_metrics_job_id
 from backend.store import get_store
+from backend.store.database import LogEntryModel, GPUMetricModel, CPUMetricModel
+from backend.core.database import get_session
 from shared.file_ops import read_yaml
 from backend.core.config import settings
 
@@ -146,6 +152,18 @@ class SyncthingEventHandler(FileSystemEventHandler):
                 if relative_path.parts[2] == "state.yaml":
                     await self.service._process_job_file(job_id, file_path)
                 elif (
+                    relative_path.parts[2] == "logs"
+                    and len(relative_path.parts) == 4
+                    and relative_path.parts[3].endswith(".yaml")
+                ):
+                    await self.service._process_log_segment_file(job_id, file_path)
+                elif (
+                    relative_path.parts[2] == "metrics"
+                    and len(relative_path.parts) == 4
+                    and relative_path.parts[3].endswith(".yaml")
+                ):
+                    await self.service._process_metrics_file(None, job_id, file_path)
+                elif (
                     relative_path.parts[2] in ("commands", "acks")
                     and len(relative_path.parts) == 4
                     and relative_path.parts[3].endswith(".yaml")
@@ -162,6 +180,14 @@ class SyncthingEventHandler(FileSystemEventHandler):
             elif relative_path.parts[0] == "nodes" and len(relative_path.parts) == 2:
                 node_id = relative_path.parts[1].replace(".yaml", "")
                 await self.service._process_node_file(node_id, file_path)
+            elif (
+                relative_path.parts[0] == "nodes"
+                and len(relative_path.parts) == 4
+                and relative_path.parts[2] == "metrics"
+                and relative_path.parts[3].endswith(".yaml")
+            ):
+                node_id = relative_path.parts[1]
+                await self.service._process_metrics_file(node_id, None, file_path)
             elif relative_path.parts[0] == "nodes":
                 logger.debug("ignoring %s: not a top-level node file", file_path)
             else:
@@ -180,8 +206,8 @@ class SyncthingEventHandler(FileSystemEventHandler):
                 job_id = relative_path.parts[1]
                 if relative_path.parts[2] == "state.yaml":
                     await self.service._handle_job_deleted(job_id)
-                elif relative_path.parts[2] in ("commands", "acks"):
-                    logger.debug("command/ack file removed: %s", file_path)
+                elif relative_path.parts[2] in ("commands", "acks", "logs", "metrics"):
+                    logger.debug("file removed: %s", file_path)
                 else:
                     logger.debug("ignoring deletion of %s", file_path)
             elif relative_path.parts[0] == "nodes" and len(relative_path.parts) == 2:
@@ -287,7 +313,7 @@ class SyncthingService:
                     state_file = job_dir / "state.yaml"
                     if state_file.exists():
                         await self._process_job_file(job_dir.name, str(state_file))
-                    # D1: sweep commands/ and acks/ per job dir (no new top-level root)
+                    # sweep commands/ and acks/
                     for kind in ("commands", "acks"):
                         kind_dir = job_dir / kind
                         if kind_dir.exists() and kind_dir.is_dir():
@@ -297,13 +323,38 @@ class SyncthingService:
                                     await self._process_command_file(
                                         job_dir.name, command_id, str(yaml_file)
                                     )
+                    # sweep logs/
+                    logs_dir = job_dir / "logs"
+                    if logs_dir.exists() and logs_dir.is_dir():
+                        for yaml_file in logs_dir.glob("*.yaml"):
+                            if yaml_file.is_file():
+                                await self.service._process_log_segment_file(
+                                    job_dir.name, str(yaml_file)
+                                )
+                    # sweep metrics/
+                    metrics_dir = job_dir / "metrics"
+                    if metrics_dir.exists() and metrics_dir.is_dir():
+                        for yaml_file in metrics_dir.glob("*.yaml"):
+                            if yaml_file.is_file():
+                                await self.service._process_metrics_file(
+                                    None, job_dir.name, str(yaml_file)
+                                )
 
         # Scan nodes
         if nodes_dir.exists():
-            for node_file in nodes_dir.glob("*.yaml"):
-                if node_file.is_file():
-                    node_id = node_file.stem
-                    await self._process_node_file(node_id, str(node_file))
+            for entry in nodes_dir.iterdir():
+                if entry.is_file() and entry.suffix.lower() == ".yaml":
+                    node_id = entry.stem
+                    await self._process_node_file(node_id, str(entry))
+                elif entry.is_dir():
+                    node_id = entry.name
+                    metrics_dir = entry / "metrics"
+                    if metrics_dir.exists() and metrics_dir.is_dir():
+                        for yaml_file in metrics_dir.glob("*.yaml"):
+                            if yaml_file.is_file():
+                                await self.service._process_metrics_file(
+                                    node_id, None, str(yaml_file)
+                                )
 
         logger.info(
             f"Initial scan complete. Processed {len(self._processed_files)} files"
@@ -462,6 +513,205 @@ class SyncthingService:
 
         except Exception as e:
             logger.error(f"Error processing node file {file_path}: {e}")
+
+    async def _process_log_segment_file(self, job_id: str, file_path: str):
+        """Ingest a log segment file into log_entries (origin=real)."""
+        try:
+            segment = read_yaml(str(Path(file_path)), LogSegment)
+            if segment.job_id != job_id:
+                logger.warning(
+                    "log segment job_id mismatch: %s != %s", segment.job_id, job_id
+                )
+                return
+            if segment.sequence < 1:
+                logger.warning("log segment sequence < 1: %s", file_path)
+                return
+            store = get_store()
+            job = await store.get_job(job_id)
+            if job is None:
+                logger.error("logs for unknown job %s", job_id)
+                return
+            # idempotency: skip if already processed
+            if file_path in self._processed_files:
+                return
+            async with get_session() as session:
+                for entry in segment.lines:
+                    # skip duplicates
+                    existing = await session.execute(
+                        select(LogEntryModel).where(
+                            LogEntryModel.job_id == job_id,
+                            LogEntryModel.timestamp == entry.timestamp,
+                            LogEntryModel.line == entry.line,
+                        )
+                    )
+                    if existing.scalars().first() is not None:
+                        continue
+                    session.add(
+                        LogEntryModel(
+                            job_id=job_id,
+                            timestamp=(
+                                entry.timestamp.replace(tzinfo=None)
+                                if hasattr(entry.timestamp, "tzinfo")
+                                and entry.timestamp.tzinfo
+                                else entry.timestamp
+                            ),
+                            line=entry.line,
+                            origin="real",
+                        )
+                    )
+                await session.commit()
+            self._processed_files.add(file_path)
+            try:
+                store.mark_job_has_real_logs(job_id)
+            except Exception:
+                pass
+            logger.debug("Processed log segment: %s", file_path)
+        except Exception as e:
+            logger.error("Error processing log segment %s: %s", file_path, e)
+
+    async def _process_metrics_file(self, node_id, job_id, file_path):  # noqa: C901
+        """Ingest a metric segment file."""
+        try:
+            segment = read_yaml(str(Path(file_path)), MetricSegment)
+            # validate segment_id == filename stem
+            if segment.segment_id != Path(file_path).stem:
+                logger.warning(
+                    "metric segment_id mismatch: %s != %s",
+                    segment.segment_id,
+                    Path(file_path).stem,
+                )
+                return
+            if node_id is not None and segment.node_id != node_id:
+                logger.warning(
+                    "metric segment node_id mismatch: %s != %s",
+                    segment.node_id,
+                    node_id,
+                )
+                return
+            if job_id is not None and segment.job_id != job_id:
+                logger.warning(
+                    "metric segment job_id mismatch: %s != %s",
+                    segment.job_id,
+                    job_id,
+                )
+                return
+            store = get_store()
+            # node existence check
+            if node_id is not None:
+                node = await store.get_node(node_id)
+                if node is None:
+                    logger.error("metrics for unknown node %s", node_id)
+                    return
+            if job_id is not None:
+                job = await store.get_job(job_id)
+                if job is None:
+                    logger.error("metrics for unknown job %s", job_id)
+                    return
+            target_node_id = node_id if node_id is not None else segment.node_id
+            # node may still need existence check for node-level via segment.node_id
+            node = await store.get_node(target_node_id)
+            if node is None:
+                logger.error("metrics for unknown node %s", target_node_id)
+                return
+            # determine db key
+            if job_id is not None:
+                db_key = job_id
+            else:
+                db_key = node_metrics_job_id(target_node_id)
+
+            # clamping helpers
+            def clamp_gpu(m):
+                m.utilization_percent = max(0, min(100, m.utilization_percent))
+                m.temperature_c = max(-50, min(150, m.temperature_c))
+                m.memory_used_mb = max(0, min(m.memory_total_mb, m.memory_used_mb))
+                return m
+
+            def clamp_cpu(m):
+                m.cpu_percent = max(0, min(100, m.cpu_percent))
+                m.memory_percent = max(0, min(100, m.memory_percent))
+                return m
+
+            # memory coherence check (warning only)
+            try:
+                node_spec = await store.get_node(target_node_id)
+                if node_spec is not None:
+                    # try gpus
+                    gpus = getattr(node_spec, "gpus", None)
+                    if gpus:
+                        # compare per sample below
+                        pass
+            except Exception:
+                pass
+            async with get_session() as session:
+                for m in segment.gpu_metrics:
+                    cm = clamp_gpu(m)
+                    # memory coherence warning
+                    try:
+                        if node_spec is not None and getattr(node_spec, "gpus", None):
+                            # best-effort: use gpu_index
+                            gpus = node_spec.gpus
+                            if isinstance(gpus, list) and cm.gpu_index < len(gpus):
+                                gpu = gpus[cm.gpu_index]
+                                reg_gb = (
+                                    gpu.memory_gb if hasattr(gpu, "memory_gb") else None
+                                )
+                                expected = int(reg_gb * 1024)
+                                if (
+                                    reg_gb is not None
+                                    and cm.memory_total_mb != expected
+                                ):
+                                    logger.warning(
+                                        "memory total mismatch: %s vs %s",
+                                        cm.memory_total_mb,
+                                        int(reg_gb * 1024),
+                                    )
+                    except Exception:
+                        pass
+                    session.add(
+                        GPUMetricModel(
+                            job_id=db_key,
+                            timestamp=(
+                                cm.timestamp.replace(tzinfo=None)
+                                if hasattr(cm.timestamp, "tzinfo")
+                                and cm.timestamp.tzinfo
+                                else cm.timestamp
+                            ),
+                            gpu_index=cm.gpu_index,
+                            memory_used_mb=cm.memory_used_mb,
+                            memory_total_mb=cm.memory_total_mb,
+                            utilization_percent=cm.utilization_percent,
+                            temperature_c=cm.temperature_c,
+                            origin="real",
+                        )
+                    )
+                for m in segment.cpu_metrics:
+                    cm = clamp_cpu(m)
+                    session.add(
+                        CPUMetricModel(
+                            job_id=db_key,
+                            timestamp=(
+                                cm.timestamp.replace(tzinfo=None)
+                                if hasattr(cm.timestamp, "tzinfo")
+                                and cm.timestamp.tzinfo
+                                else cm.timestamp
+                            ),
+                            cpu_percent=int(cm.cpu_percent),
+                            memory_percent=int(cm.memory_percent),
+                            temperature_c=int(getattr(cm, "temperature_c", 0) or 0),
+                            memory_used_gb=float(
+                                getattr(cm, "memory_used_gb", 0.0) or 0.0
+                            ),
+                            origin="real",
+                        )
+                    )
+                await session.commit()
+            if file_path not in self._processed_files:
+                self._processed_files.add(file_path)
+            logger.debug("Processed metric segment: %s", file_path)
+        except Exception as e:
+            logger.error("Error processing metric segment %s: %s", file_path, e)
+            # leave unprocessed for retry
+            self._processed_files.discard(file_path)
 
     async def _handle_job_deleted(self, job_id: str):
         """Handle job file deletion."""
@@ -636,7 +886,7 @@ class SyncthingService:
                     state_file = job_dir / "state.yaml"
                     if state_file.exists():
                         current_job_files.add(str(state_file))
-                    for subdir in ("commands", "acks"):
+                    for subdir in ("commands", "acks", "logs", "metrics"):
                         sub = job_dir / subdir
                         if sub.exists() and sub.is_dir():
                             for f in sub.glob("*.yaml"):
@@ -644,9 +894,15 @@ class SyncthingService:
                                     current_job_files.add(str(f))
 
         if nodes_dir.exists():
-            for node_file in nodes_dir.glob("*.yaml"):
-                if node_file.is_file():
-                    current_node_files.add(str(node_file))
+            for entry in nodes_dir.iterdir():
+                if entry.is_file() and entry.suffix.lower() == ".yaml":
+                    current_node_files.add(str(entry))
+                elif entry.is_dir():
+                    metrics_dir = entry / "metrics"
+                    if metrics_dir.exists() and metrics_dir.is_dir():
+                        for f in metrics_dir.glob("*.yaml"):
+                            if f.is_file():
+                                current_node_files.add(str(f))
 
         return current_job_files | current_node_files
 

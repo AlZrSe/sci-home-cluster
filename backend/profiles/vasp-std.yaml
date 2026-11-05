@@ -1,0 +1,16 @@
+id: vasp-std
+name: VASP Standard
+software: vasp
+description: Standard VASP relaxation
+command: vasp_std
+working_dir: .
+gpus: 0
+cpus: 4
+memory_gb: 16
+vram_gb: 0
+input: POSCAR
+output: OUTCAR
+max_retries: 1
+retry_delay_seconds: 10
+env: []
+builtin: true

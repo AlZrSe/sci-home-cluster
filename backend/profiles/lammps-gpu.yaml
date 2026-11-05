@@ -1,0 +1,9 @@
+id: lammps-gpu
+name: LAMMPS GPU
+software: lammps
+command: lmp -in in.lammps
+gpus: 1
+cpus: 8
+memory_gb: 32
+vram_gb: 16
+builtin: true

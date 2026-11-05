@@ -138,6 +138,22 @@ def logs_not_found(job_id: str) -> APIError:
     )
 
 
+def profile_not_found(profile_id: str) -> APIError:
+    return APIError(
+        status.HTTP_404_NOT_FOUND,
+        f"Profile {profile_id} not found",
+        "PROFILE_NOT_FOUND",
+    )
+
+
+def profile_invalid(filename: str, detail: str) -> APIError:
+    return APIError(
+        status.HTTP_500_INTERNAL_SERVER_ERROR,
+        f"Invalid profile file {filename}: {detail}",
+        "PROFILE_INVALID",
+    )
+
+
 def job_not_retryable(job_id: str, current_status: str) -> APIError:
     return APIError(
         status.HTTP_409_CONFLICT,

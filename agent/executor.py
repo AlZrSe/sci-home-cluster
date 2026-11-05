@@ -48,6 +48,7 @@ from shared.schemas.job_status import JobStatus
 from shared.schemas.node_spec import NodeSpec
 
 from agent.log_writer import BoundedLineWriter
+from agent.log_segment_writer import SegmentWriter  # noqa: F401
 from agent.paths import AgentPaths
 from agent.process import (
     STOP_GRACE_S,

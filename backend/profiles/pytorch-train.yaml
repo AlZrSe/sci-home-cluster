@@ -1,0 +1,9 @@
+id: pytorch-train
+name: PyTorch Train
+software: pytorch
+command: python train.py
+gpus: 1
+cpus: 8
+memory_gb: 32
+vram_gb: 16
+builtin: true
