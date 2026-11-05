@@ -222,7 +222,7 @@ defaults:
 | | Default | Override |
 | --- | --- | --- |
 | `SYNCTHING_ROOT` | `./syncthing` — a folder in this checkout, created and bind-mounted | put `SYNCTHING_ROOT` in a repository-root `.env` |
-| `SHARED_TOKEN` | **not generated** - unset by default; `POST /api/v1/auth/token` returns `SHARED_TOKEN_NOT_CONFIGURED` until you set it (issue #64) | put `SHARED_TOKEN` in `.env` |
+| `SHARED_TOKEN` | **generated & persisted** on first use to `$SHC_STATE_DIR/shared_token` if unset (issue #64) | put `SHARED_TOKEN` in `.env` to choose your own |
 
 To read the generated token, and mint a JWT with it:
 
