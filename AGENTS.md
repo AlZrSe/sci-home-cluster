@@ -178,6 +178,7 @@ new frontend code. `frontend/AGENTS.md` also carries a Lovable sync notice: comm
 | Backend unit | >80% coverage | `pytest --cov=backend` |
 | Backend integration | API endpoints, service layer | `pytest backend/tests/integration` |
 | Backend type | Pydantic + hints | `mypy .` (part of `ruff check . && ruff format --check . && mypy .`) |
+| Signing-key hygiene | git on PATH + repo checkout | `backend/tests/unit/test_signing_key_hygiene.py` skips otherwise (issue #113) |
 | Frontend unit + integration | vitest in jsdom | `cd frontend && npm test` |
 | Frontend type | `src/` + the vitest suite | `cd frontend && npm run typecheck` |
 | Frontend lint | — | `cd frontend && npm run lint` |

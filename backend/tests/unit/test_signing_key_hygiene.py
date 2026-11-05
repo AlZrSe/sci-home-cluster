@@ -26,6 +26,7 @@ import io
 import logging
 import os
 import re
+import shutil
 import stat
 import subprocess
 from pathlib import Path
@@ -59,6 +60,29 @@ def _git(*args: str) -> subprocess.CompletedProcess:
         text=True,
         check=False,
     )
+
+
+def _git_available() -> bool:
+    """Whether git is usable against this repository.
+
+    The hygiene tests below shell out to git; without it (or without a .git
+    directory) they cannot answer their question and would otherwise fail with
+    messages that read like a signing-key security breach (issue #113).
+    """
+    if shutil.which("git") is None:
+        return False
+    result = subprocess.run(
+        ["git", "-C", str(REPO_ROOT), "rev-parse", "--is-inside-work-tree"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return result.returncode == 0 and result.stdout.strip() == "true"
+
+
+_GIT_REQUIRED_REASON = (
+    "requires git on PATH and a git repository checkout (issue #113)"
+)
 
 
 def _tracked_paths() -> list[str]:
@@ -172,6 +196,7 @@ def _install_published_key(state_dir: Path, key: str) -> Path:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.skipif(not _git_available(), reason=_GIT_REQUIRED_REASON)
 def test_ignore_rule_covers_both_key_locations():
     """
     U1 / AC-2: one ``.shc/`` rule ignores both key paths.
@@ -215,6 +240,7 @@ def test_ignore_rule_covers_both_key_locations():
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.skipif(not _git_available(), reason=_GIT_REQUIRED_REASON)
 @pytest.mark.parametrize("path", PUBLISHED_KEY_PATHS)
 def test_published_key_file_is_not_tracked(path):
     """
@@ -247,6 +273,7 @@ def test_published_key_file_is_not_tracked(path):
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.skipif(not _git_available(), reason=_GIT_REQUIRED_REASON)
 def test_no_tracked_file_contains_a_published_key():
     """
     U3 / AC-6: neither published key is in the index, under *any* name.
@@ -294,6 +321,7 @@ def test_no_tracked_file_contains_a_published_key():
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.skipif(not _git_available(), reason=_GIT_REQUIRED_REASON)
 def test_ignore_rule_ignores_nothing_tracked():
     """
     U4 / AC-2 (negative half): no path in the index is ignored.
@@ -378,6 +406,7 @@ PUBLISHED_KEY_SOURCES = (
 )
 
 
+@pytest.mark.skipif(not _git_available(), reason=_GIT_REQUIRED_REASON)
 @pytest.mark.parametrize("rev, path, provenance", PUBLISHED_KEY_SOURCES)
 def test_deny_list_digest_matches_the_committed_key(rev, path, provenance):
     """

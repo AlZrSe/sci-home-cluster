@@ -125,6 +125,9 @@ The frontend is a git submodule at `frontend/` (repository: `AlZrSe/rendering-re
 # Backend tests (with coverage) - run from backend directory
 cd backend && pytest --cov=backend --cov-report=term-missing
 
+# Note: signing-key hygiene tests (test_signing_key_hygiene.py) require git on
+# PATH and a repository checkout; they skip otherwise (issue #113).
+
 # Frontend lint
 cd frontend && npm run lint
 
