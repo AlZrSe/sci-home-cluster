@@ -2,7 +2,8 @@
 # Provides convenient commands for backend and frontend development
 
 .PHONY: help install install-dev test test-unit test-integration test-compose test-watch lint format typecheck clean
-.PHONY: backend-dev backend-build backend-migrate frontend-dev frontend-build frontend-lint frontend-format
+.PHONY: backend-dev backend-migrate frontend-dev frontend-build frontend-build-dev frontend-lint frontend-format
+.PHONY: check dev dev-full
 .PHONY: run-agent db-upgrade db-downgrade db-revision run
 .PHONY: env-init env-token
 .PHONY: test-e2e test-e2e-ui test-e2e-headed test-all
@@ -51,12 +52,12 @@ help:
 	@echo "  make check            Run lint, format, and typecheck"
 	@echo "  make test-all         Run all backend tests + frontend E2E tests"
 
-# Backend setup
+# Backend setup (pyproject.toml lives at the repo root)
 install-dev:
-	cd backend && pip install -e .[dev]
+	pip install -e .[dev]
 
 install:
-	cd backend && pip install -e .
+	pip install -e .
 
 # Testing
 test:
@@ -95,19 +96,19 @@ test-watch:
 
 # Code quality
 lint:
-	cd backend && ruff check .
+	ruff check .
 
 format:
-	cd backend && ruff format .
+	ruff format .
 
 typecheck:
-	cd backend && mypy .
+	mypy .
 
 check: lint format typecheck
 
 # Backend development
 backend-dev:
-	cd backend && uvicorn main:app --reload --host 0.0.0.0 --port 8000
+	uvicorn backend.main:app --reload --host 0.0.0.0 --port 8000
 
 backend-migrate:
 	cd backend && alembic upgrade head
@@ -123,7 +124,7 @@ db-revision:
 	cd backend && alembic revision --autogenerate -m "$(MSG)"
 
 run-agent:
-	cd agent && python run_agent.py --node-id node-01
+	cd agent && python run_agent.py --node-id node-01 --syncthing-root $${SYNCTHING_ROOT:-../syncthing}
 
 # Seed .env for `docker compose up`: copies .env.example, generates SHARED_TOKEN
 # if absent, defaults SYNCTHING_ROOT to ./syncthing and creates it. Idempotent -
@@ -169,10 +170,8 @@ test-all: test test-e2e
 
 # Cleanup
 clean:
-	cd backend && rm -rf __pycache__ .pytest_cache .ruff_cache .mypy_cache dist build *.egg-info
-	cd backend && find . -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
-	cd frontend && rm -rf dist .vite node_modules/.vite
-	cd frontend && rm -rf coverage
+	python -c "import shutil, pathlib; [shutil.rmtree(p, ignore_errors=True) for p in (pathlib.Path('backend/__pycache__'), pathlib.Path('backend/.pytest_cache'), pathlib.Path('backend/.ruff_cache'), pathlib.Path('backend/.mypy_cache'), pathlib.Path('backend/dist'), pathlib.Path('backend/build'), pathlib.Path('frontend/dist'), pathlib.Path('frontend/.vite'), pathlib.Path('frontend/coverage'))]"
+	python -c "import shutil, pathlib; [shutil.rmtree(p, ignore_errors=True) for p in pathlib.Path('.').rglob('__pycache__')]"
 
 # Development shortcuts
 dev: backend-dev
