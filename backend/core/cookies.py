@@ -5,6 +5,7 @@ Handles setting, clearing, and validating signed auth cookies.
 """
 
 import hmac
+import ipaddress
 import logging
 from typing import Optional
 
@@ -41,16 +42,33 @@ def _verify_cookie_value(signed_value: str, secret: str) -> Optional[str]:
     return None
 
 
+def _is_local_network_host(hostname: Optional[str]) -> bool:
+    """True for localhost or private/LAN IP hosts."""
+    if not hostname:
+        return False
+    host = hostname.strip().lower()
+    if host.startswith("[") and host.endswith("]"):
+        host = host[1:-1]
+    if is_localhost(host):
+        return True
+    try:
+        addr = ipaddress.ip_address(host)
+        return bool(addr.is_private or addr.is_loopback)
+    except ValueError:
+        return False
+
+
 def get_cookie_options(
-    is_localhost_request: bool,
+    is_local_request: bool,
 ) -> dict:
     """
-    Get cookie options based on whether the request is from localhost.
+    Get cookie options based on whether the request is from a local/LAN host.
 
-    On localhost: Secure=False, SameSite=Lax
-    On production: Secure=True, SameSite=Strict
+    On local/LAN hosts: Secure=False, SameSite=Lax (so the cookie is actually
+    sent by the browser over HTTP).
+    On production hosts: Secure/SameSite as configured.
     """
-    if is_localhost_request:
+    if is_local_request:
         return {
             "secure": False,
             "samesite": "lax",
@@ -68,22 +86,14 @@ def set_auth_cookie(
 ) -> None:
     """
     Set the authentication cookie on the response.
-
-    Args:
-        response: FastAPI Response object
-        token: The JWT token to store in the cookie
-        request: Optional Request object to detect localhost
     """
-    # Detect if this is a localhost request
-    is_localhost_request = False
+    is_local_request = False
     if request is not None:
         hostname = request.url.hostname
-        is_localhost_request = is_localhost(hostname)
+        is_local_request = _is_local_network_host(hostname)
 
-    options = get_cookie_options(is_localhost_request)
+    options = get_cookie_options(is_local_request)
 
-    # Sign the token with the cookie secret
-    # AUTH_COOKIE_SECRET is guaranteed to be set in model_post_init
     cookie_secret = settings.AUTH_COOKIE_SECRET or ""
     signed_token = _sign_cookie_value(token, cookie_secret)
 
@@ -110,17 +120,13 @@ def set_auth_cookie(
 def clear_auth_cookie(response: Response, request: Optional[Request] = None) -> None:
     """
     Clear the authentication cookie by setting max_age=0.
-
-    Args:
-        response: FastAPI Response object
-        request: Optional Request object to detect localhost (for consistent options)
     """
-    is_localhost_request = False
+    is_local_request = False
     if request is not None:
         hostname = request.url.hostname
-        is_localhost_request = is_localhost(hostname)
+        is_local_request = _is_local_network_host(hostname)
 
-    options = get_cookie_options(is_localhost_request)
+    options = get_cookie_options(is_local_request)
 
     response.set_cookie(
         key=settings.AUTH_COOKIE_NAME,
@@ -138,18 +144,11 @@ def clear_auth_cookie(response: Response, request: Optional[Request] = None) -> 
 def get_token_from_cookie(request: Request) -> Optional[str]:
     """
     Extract and validate the authentication token from the cookie.
-
-    Args:
-        request: FastAPI Request object
-
-    Returns:
-        The validated JWT token if present and valid, None otherwise
     """
     signed_token = request.cookies.get(settings.AUTH_COOKIE_NAME)
     if not signed_token:
         return None
 
-    # AUTH_COOKIE_SECRET is guaranteed to be set in model_post_init
     cookie_secret = settings.AUTH_COOKIE_SECRET or ""
     token = _verify_cookie_value(signed_token, cookie_secret)
     if token is None:

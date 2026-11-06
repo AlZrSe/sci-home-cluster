@@ -643,16 +643,16 @@ jobs:
           fi
           echo "OK: the same filter rejects a degraded document, so passing on the live one means something."
 
-      - name: Nothing is listening on :5173
+      - name: Nothing is listening on :8080
         # AC-7. If Playwright had started its own vite dev server this would
         # connect, and the suite would be exercising a dev bundle rather than
         # the one the image ships.
         run: |
-          if (exec 3<>/dev/tcp/127.0.0.1/5173) 2>/dev/null; then
-            echo "::error::something is listening on :5173; the specs were not run against the shipped bundle"
+          if (exec 3<>/dev/tcp/127.0.0.1/8080) 2>/dev/null; then
+            echo "::error::something is listening on :8080; the specs were not run against the shipped bundle"
             exit 1
           fi
-          echo "OK: :5173 has no listener, so the suite ran against the image's own bundle."
+          echo "OK: :8080 has no listener, so the suite ran against the image's own bundle."
 
       - name: Wait for db-seed to complete
         # The db-seed service runs after backend is healthy and seeds test data.

@@ -108,14 +108,26 @@ async def get_current_token_payload(
         return bypass_payload
 
     # If not bypassing, then we require a token
+    # Prefer an explicit Authorization header, but fall back to the httpOnly
+    # auth cookie set by /auth/token so browser clients (which cannot read
+    # the token from JavaScript) can authenticate.
+    cookie_token = None
     if token is None:
+        from backend.core.cookies import get_token_from_cookie
+
+        cookie_token = get_token_from_cookie(request)
+
+    if token is None and cookie_token is None:
         raise auth_token_missing(
             "Authentication required. Please provide a valid bearer token in "
             "the Authorization header."
         )
 
     try:
-        payload = decode_access_token(token.credentials)
+        if token is not None:
+            payload = decode_access_token(token.credentials)
+        else:
+            payload = decode_access_token(cookie_token)
         return payload
     except Exception:
         raise auth_token_expired(

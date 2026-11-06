@@ -309,7 +309,7 @@ type CreateJobResponse = paths['/jobs']['post']['responses']['201']['content']['
 
 - **Build**: `npm run build` → static assets in `dist/`
 - **Preview**: `npm run preview`
-- **Dev server**: `npm run dev` → `http://localhost:5173` (port set by `@lovable.dev/vite-tanstack-config`, not by this repo; it is what `playwright.config.ts` targets and what the backend CORS allow-list accepts)
+- **Dev server**: `npm run dev` → `http://localhost:8080` (port set by `@lovable.dev/vite-tanstack-config`, not by this repo; it is what `playwright.config.ts` targets and what the backend CORS allow-list accepts)
 - **Environment**:
   - `VITE_CLUSTER_BACKEND` — `mock` selects the in-memory implementation; every other value,
     including unset, selects `httpService`. There is no reachability probe and no fallback.

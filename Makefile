@@ -181,7 +181,7 @@ run: dev-full
 dev-full:
 	@echo "Starting backend and frontend..."
 	@echo "Backend will run on http://localhost:8000"
-	@echo "Frontend will run on http://localhost:5173"
+	@echo "Frontend will run on http://localhost:8080"
 	@echo "Press Ctrl+C to stop both"
 	@trap "kill 0" EXIT; \
 	(cd backend && uvicorn main:app --reload --host 0.0.0.0 --port 8000) & \

@@ -157,7 +157,7 @@ uvicorn main:app --reload --host 0.0.0.0 --port 8000
 cd frontend
 npm run dev
 ```
-- Frontend: http://localhost:5173 (or as shown by Vite)
+- Frontend: http://localhost:8080 (or as shown by Vite)
 
 > **Note**: The database file location is CWD-independent and anchored to the repository root.
 > See [Which database am I using?](#which-database-am-i-using) for details on the canonical
@@ -563,7 +563,7 @@ sci-run logs <job-id> --follow
 | `SECRET_KEY` | JWT signing key. See [Where is the signing key?](#where-is-the-signing-key) | generated into `$SHC_STATE_DIR` |
 | `LOCALHOST_BYPASS` | Skip auth on localhost (legacy; prefer `LOCALHOST_BYPASS_MODE`) | `true` |
 | `LOCALHOST_BYPASS_MODE` | Bypass mode: `disabled` (secure), `socket` (peer IP, default dev), `host_header` (legacy, insecure) | `socket` (if `LOCALHOST_BYPASS=true`) / `disabled` (if `LOCALHOST_BYPASS=false`) |
-| `BACKEND_CORS_ORIGINS` | Allowed CORS origins | `["http://localhost:3000", "http://localhost:5173"]` |
+| `BACKEND_CORS_ORIGINS` | Allowed CORS origins | `["http://localhost:3000", "http://localhost:5173", "http://localhost:8080"]` |
 | `OTEL_SERVICE_NAME` | OpenTelemetry service name | project name |
 | `ENVIRONMENT` | Deployment environment | `development` |
 | `ENABLE_API_DOCS` | Enable Swagger UI (`/docs`), ReDoc (`/redoc`), and OpenAPI schema (`/openapi.json`) in production. Disabled by default in production for security; enabled implicitly when `ENVIRONMENT=development` or `ENVIRONMENT=test`. | `false` |
