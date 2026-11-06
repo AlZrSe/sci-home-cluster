@@ -1,2362 +1,1576 @@
-{
-  "openapi": "3.1.0",
-  "info": {
-    "title": "Scientific Home Cluster API",
-    "version": "0.1.0"
-  },
-  "paths": {
-    "/api/v1/auth/verify": {
-      "get": {
-        "tags": [
-          "auth"
-        ],
-        "summary": "Verify Token",
-        "description": "Validate bearer token via GET.\n\nReads token from Cookie header (preferred for browsers) or Authorization header\n(fallback for CLI, agent, and other non-browser clients).",
-        "operationId": "verify_token_api_v1_auth_verify_get",
-        "security": [
-          {
-            "Authorization": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "authorization",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "type": "string",
-              "title": "Authorization"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/TokenValidationResponse"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/auth/validate": {
-      "post": {
-        "tags": [
-          "auth"
-        ],
-        "summary": "Validate Token",
-        "description": "Validate bearer token via POST with JSON body.",
-        "operationId": "validate_token_api_v1_auth_validate_post",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/TokenValidationRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/TokenValidationResponse"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "Authorization": []
-          }
-        ]
-      }
-    },
-    "/api/v1/auth/token": {
-      "post": {
-        "tags": [
-          "auth"
-        ],
-        "summary": "Create Token",
-        "description": "Create a new JWT access token by validating against shared token.\n\nThis endpoint accepts a shared token and returns a JWT token if valid.\nFor browser clients, also sets an httpOnly cookie with the token.",
-        "operationId": "create_token_api_v1_auth_token_post",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/TokenCreateRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/TokenCreateResponse"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/auth/refresh": {
-      "post": {
-        "tags": [
-          "auth"
-        ],
-        "summary": "Refresh Token",
-        "description": "Refresh an existing JWT token.\n\nReturns a new token with extended expiration if the current token is valid.",
-        "operationId": "refresh_token_api_v1_auth_refresh_post",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/TokenRefreshRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/TokenRefreshResponse"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/auth/logout": {
-      "post": {
-        "tags": [
-          "auth"
-        ],
-        "summary": "Logout",
-        "description": "Log out by clearing the authentication cookie.",
-        "operationId": "logout_api_v1_auth_logout_post",
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/auth/ws-ticket": {
-      "post": {
-        "tags": [
-          "auth"
-        ],
-        "summary": "Create Ws Ticket Endpoint",
-        "description": "Create a short-lived WebSocket ticket for authentication.\n\nThis endpoint requires valid cookie-based authentication.\nThe returned ticket is valid for 5 minutes (configurable) and single-use.",
-        "operationId": "create_ws_ticket_endpoint_api_v1_auth_ws_ticket_post",
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/WSTicketResponse"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "Authorization": []
-          }
-        ]
-      }
-    },
-    "/api/v1/jobs/": {
-      "get": {
-        "tags": [
-          "jobs"
-        ],
-        "summary": "List Jobs",
-        "description": "List jobs with filtering and pagination.",
-        "operationId": "list_jobs_api_v1_jobs__get",
-        "security": [
-          {
-            "Authorization": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "status",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Status"
-            }
-          },
-          {
-            "name": "node",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Node"
-            }
-          },
-          {
-            "name": "node_id",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "description": "Alias for `node`. The web client sends `node_id`; unknown query parameters are ignored by FastAPI, so without this alias node filtering silently returned unfiltered results.",
-              "title": "Node Id"
-            },
-            "description": "Alias for `node`. The web client sends `node_id`; unknown query parameters are ignored by FastAPI, so without this alias node filtering silently returned unfiltered results."
-          },
-          {
-            "name": "search",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Search"
-            }
-          },
-          {
-            "name": "limit",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "maximum": 100,
-              "minimum": 1,
-              "default": 10,
-              "title": "Limit"
-            }
-          },
-          {
-            "name": "offset",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "minimum": 0,
-              "default": 0,
-              "title": "Offset"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/JobListResult"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      },
-      "post": {
-        "tags": [
-          "jobs"
-        ],
-        "summary": "Create Job",
-        "description": "Create a new job from JSON spec.",
-        "operationId": "create_job_api_v1_jobs__post",
-        "security": [
-          {
-            "Authorization": []
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/JobSpec"
-              }
-            }
-          }
-        },
-        "responses": {
-          "201": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/JobState"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/jobs/{job_id}": {
-      "get": {
-        "tags": [
-          "jobs"
-        ],
-        "summary": "Get Job",
-        "description": "Get a specific job by ID.",
-        "operationId": "get_job_api_v1_jobs__job_id__get",
-        "security": [
-          {
-            "Authorization": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "job_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Job Id"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/JobState"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      },
-      "delete": {
-        "tags": [
-          "jobs"
-        ],
-        "summary": "Delete Job",
-        "description": "Delete a job by ID.",
-        "operationId": "delete_job_api_v1_jobs__job_id__delete",
-        "security": [
-          {
-            "Authorization": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "job_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Job Id"
-            }
-          }
-        ],
-        "responses": {
-          "204": {
-            "description": "Successful Response"
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/jobs/{job_id}/metrics": {
-      "get": {
-        "tags": [
-          "jobs"
-        ],
-        "summary": "Get Job Metrics",
-        "description": "Get job GPU/CPU metrics.",
-        "operationId": "get_job_metrics_api_v1_jobs__job_id__metrics_get",
-        "security": [
-          {
-            "Authorization": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "job_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Job Id"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/JobMetrics"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Job not found",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/jobs/{job_id}/logs": {
-      "get": {
-        "tags": [
-          "jobs"
-        ],
-        "summary": "Get Job Logs",
-        "description": "Get job logs (HTTP fallback).",
-        "operationId": "get_job_logs_api_v1_jobs__job_id__logs_get",
-        "security": [
-          {
-            "Authorization": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "job_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Job Id"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "array",
-                  "items": {
-                    "$ref": "#/components/schemas/LogEntry"
-                  },
-                  "title": "Response Get Job Logs Api V1 Jobs  Job Id  Logs Get"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Job not found",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/jobs/{job_id}/logs/history": {
-      "get": {
-        "tags": [
-          "jobs"
-        ],
-        "summary": "Get Job Logs History",
-        "description": "Get job logs history (alias for /logs).",
-        "operationId": "get_job_logs_history_api_v1_jobs__job_id__logs_history_get",
-        "security": [
-          {
-            "Authorization": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "job_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Job Id"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "array",
-                  "items": {
-                    "$ref": "#/components/schemas/LogEntry"
-                  },
-                  "title": "Response Get Job Logs History Api V1 Jobs  Job Id  Logs History Get"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Job not found",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/jobs/{job_id}/retry": {
-      "post": {
-        "tags": [
-          "jobs"
-        ],
-        "summary": "Retry Job",
-        "description": "Retry a failed/cancelled job.",
-        "operationId": "retry_job_api_v1_jobs__job_id__retry_post",
-        "security": [
-          {
-            "Authorization": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "job_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Job Id"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/JobState"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/jobs/{job_id}/cancel": {
-      "post": {
-        "tags": [
-          "jobs"
-        ],
-        "summary": "Cancel Job",
-        "description": "Cancel a running/pending job.",
-        "operationId": "cancel_job_api_v1_jobs__job_id__cancel_post",
-        "security": [
-          {
-            "Authorization": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "job_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Job Id"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/JobState"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/jobs/{job_id}/commands": {
-      "get": {
-        "tags": [
-          "jobs"
-        ],
-        "summary": "List Job Commands",
-        "description": "List command/ack pairs for a job (issue #106).",
-        "operationId": "list_job_commands_api_v1_jobs__job_id__commands_get",
-        "security": [
-          {
-            "Authorization": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "job_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Job Id"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/nodes/": {
-      "get": {
-        "tags": [
-          "nodes"
-        ],
-        "summary": "List Nodes",
-        "description": "List all cluster nodes.",
-        "operationId": "list_nodes_api_v1_nodes__get",
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "items": {
-                    "$ref": "#/components/schemas/NodeSpec"
-                  },
-                  "type": "array",
-                  "title": "Response List Nodes Api V1 Nodes  Get"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "Authorization": []
-          }
-        ]
-      },
-      "post": {
-        "tags": [
-          "nodes"
-        ],
-        "summary": "Create Node",
-        "description": "Create a new node (for test seeding).",
-        "operationId": "create_node_api_v1_nodes__post",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/NodeSpec"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "201": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/NodeSpec"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "Authorization": []
-          }
-        ]
-      }
-    },
-    "/api/v1/nodes/{node_id}": {
-      "get": {
-        "tags": [
-          "nodes"
-        ],
-        "summary": "Get Node",
-        "description": "Get node details.",
-        "operationId": "get_node_api_v1_nodes__node_id__get",
-        "security": [
-          {
-            "Authorization": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "node_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Node Id"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/NodeSpec"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/nodes/{node_id}/metrics": {
-      "get": {
-        "tags": [
-          "nodes"
-        ],
-        "summary": "Get Node Metrics",
-        "description": "Get node GPU/CPU metrics.",
-        "operationId": "get_node_metrics_api_v1_nodes__node_id__metrics_get",
-        "security": [
-          {
-            "Authorization": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "node_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Node Id"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/JobMetrics"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Node not found",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/profiles/": {
-      "get": {
-        "tags": [
-          "profiles"
-        ],
-        "summary": "List All",
-        "operationId": "list_all_api_v1_profiles__get",
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "items": {
-                    "$ref": "#/components/schemas/ProfileSpec"
-                  },
-                  "type": "array",
-                  "title": "Response List All Api V1 Profiles  Get"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "Authorization": []
-          }
-        ]
-      },
-      "post": {
-        "tags": [
-          "profiles"
-        ],
-        "summary": "Create",
-        "operationId": "create_api_v1_profiles__post",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ProfileSpec"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "201": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ProfileSpec"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "Authorization": []
-          }
-        ]
-      }
-    },
-    "/api/v1/profiles/{profile_id}": {
-      "get": {
-        "tags": [
-          "profiles"
-        ],
-        "summary": "Get One",
-        "operationId": "get_one_api_v1_profiles__profile_id__get",
-        "security": [
-          {
-            "Authorization": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "profile_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Profile Id"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ProfileSpec"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      },
-      "put": {
-        "tags": [
-          "profiles"
-        ],
-        "summary": "Update",
-        "operationId": "update_api_v1_profiles__profile_id__put",
-        "security": [
-          {
-            "Authorization": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "profile_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Profile Id"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ProfileSpec"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ProfileSpec"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      },
-      "delete": {
-        "tags": [
-          "profiles"
-        ],
-        "summary": "Delete",
-        "operationId": "delete_api_v1_profiles__profile_id__delete",
-        "security": [
-          {
-            "Authorization": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "profile_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Profile Id"
-            }
-          }
-        ],
-        "responses": {
-          "204": {
-            "description": "Successful Response"
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/profiles/{profile_id}/reset": {
-      "post": {
-        "tags": [
-          "profiles"
-        ],
-        "summary": "Reset",
-        "operationId": "reset_api_v1_profiles__profile_id__reset_post",
-        "security": [
-          {
-            "Authorization": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "profile_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Profile Id"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ProfileSpec"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/profiles/restore-builtins": {
-      "post": {
-        "tags": [
-          "profiles"
-        ],
-        "summary": "Restore",
-        "operationId": "restore_api_v1_profiles_restore_builtins_post",
-        "responses": {
-          "204": {
-            "description": "Successful Response"
-          }
-        },
-        "security": [
-          {
-            "Authorization": []
-          }
-        ]
-      }
-    },
-    "/api/v1/syncthing/status": {
-      "get": {
-        "tags": [
-          "syncthing"
-        ],
-        "summary": "Get Syncthing Status",
-        "description": "Get Syncthing sync service status.\nReturns information about the service state and Syncthing folder.",
-        "operationId": "get_syncthing_status_api_v1_syncthing_status_get",
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/SyncthingStatus"
-                }
-              }
-            }
-          },
-          "503": {
-            "description": "Syncthing not configured",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "Authorization": []
-          }
-        ]
-      }
-    },
-    "/api/v1/syncthing/scan": {
-      "post": {
-        "tags": [
-          "syncthing"
-        ],
-        "summary": "Trigger Syncthing Scan",
-        "description": "Trigger a manual scan of the Syncthing folder.\nScans for new or updated job/node state files.",
-        "operationId": "trigger_syncthing_scan_api_v1_syncthing_scan_post",
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "Authorization": []
-          }
-        ]
-      }
-    },
-    "/": {
-      "get": {
-        "summary": "Root",
-        "operationId": "root__get",
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/health": {
-      "get": {
-        "summary": "Health Check",
-        "description": "Enhanced health check with store, config, syncthing, and database status.",
-        "operationId": "health_check_api_v1_health_get",
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          }
-        }
-      }
-    }
-  },
-  "components": {
-    "schemas": {
-      "CPUMetric": {
-        "properties": {
-          "timestamp": {
-            "type": "string",
-            "format": "date-time",
-            "title": "Timestamp"
-          },
-          "cpu_percent": {
-            "type": "integer",
-            "maximum": 100.0,
-            "minimum": 0.0,
-            "title": "Cpu Percent"
-          },
-          "memory_percent": {
-            "type": "integer",
-            "maximum": 100.0,
-            "minimum": 0.0,
-            "title": "Memory Percent"
-          },
-          "temperature_c": {
-            "type": "integer",
-            "maximum": 150.0,
-            "minimum": -50.0,
-            "title": "Temperature C"
-          },
-          "memory_used_gb": {
-            "type": "number",
-            "minimum": 0.0,
-            "title": "Memory Used Gb"
-          },
-          "origin": {
-            "type": "string",
-            "enum": [
-              "synthetic",
-              "real"
-            ],
-            "title": "Origin",
-            "default": "synthetic"
-          }
-        },
-        "type": "object",
-        "required": [
-          "timestamp",
-          "cpu_percent",
-          "memory_percent",
-          "temperature_c",
-          "memory_used_gb"
-        ],
-        "title": "CPUMetric",
-        "description": "CPU utilization and memory metrics."
-      },
-      "ErrorResponse": {
-        "properties": {
-          "status": {
-            "type": "integer",
-            "maximum": 599.0,
-            "minimum": 400.0,
-            "title": "Status"
-          },
-          "title": {
-            "type": "string",
-            "title": "Title"
-          },
-          "detail": {
-            "type": "string",
-            "title": "Detail"
-          },
-          "instance": {
-            "type": "string",
-            "title": "Instance"
-          },
-          "error_code": {
-            "type": "string",
-            "title": "Error Code"
-          }
-        },
-        "type": "object",
-        "required": [
-          "status",
-          "title",
-          "detail",
-          "instance",
-          "error_code"
-        ],
-        "title": "ErrorResponse",
-        "description": "RFC7807-style error body with a stable machine-readable code."
-      },
-      "GPUInfo": {
-        "properties": {
-          "name": {
-            "type": "string",
-            "title": "Name"
-          },
-          "memory_gb": {
-            "type": "integer",
-            "title": "Memory Gb"
-          }
-        },
-        "type": "object",
-        "required": [
-          "name",
-          "memory_gb"
-        ],
-        "title": "GPUInfo",
-        "description": "Information about a single GPU on a node."
-      },
-      "GPUMetric": {
-        "properties": {
-          "timestamp": {
-            "type": "string",
-            "format": "date-time",
-            "title": "Timestamp"
-          },
-          "gpu_index": {
-            "type": "integer",
-            "minimum": 0.0,
-            "title": "Gpu Index"
-          },
-          "memory_used_mb": {
-            "type": "integer",
-            "minimum": 0.0,
-            "title": "Memory Used Mb"
-          },
-          "memory_total_mb": {
-            "type": "integer",
-            "minimum": 0.0,
-            "title": "Memory Total Mb"
-          },
-          "utilization_percent": {
-            "type": "integer",
-            "maximum": 100.0,
-            "minimum": 0.0,
-            "title": "Utilization Percent"
-          },
-          "temperature_c": {
-            "type": "integer",
-            "maximum": 150.0,
-            "minimum": -50.0,
-            "title": "Temperature C"
-          },
-          "origin": {
-            "type": "string",
-            "enum": [
-              "synthetic",
-              "real"
-            ],
-            "title": "Origin",
-            "default": "synthetic"
-          }
-        },
-        "type": "object",
-        "required": [
-          "timestamp",
-          "gpu_index",
-          "memory_used_mb",
-          "memory_total_mb",
-          "utilization_percent",
-          "temperature_c"
-        ],
-        "title": "GPUMetric",
-        "description": "GPU utilization and memory metrics."
-      },
-      "HTTPValidationError": {
-        "properties": {
-          "detail": {
-            "items": {
-              "$ref": "#/components/schemas/ValidationError"
-            },
-            "type": "array",
-            "title": "Detail"
-          }
-        },
-        "type": "object",
-        "title": "HTTPValidationError"
-      },
-      "JobListResult": {
-        "properties": {
-          "items": {
-            "items": {
-              "$ref": "#/components/schemas/JobState"
-            },
-            "type": "array",
-            "title": "Items"
-          },
-          "total": {
-            "type": "integer",
-            "minimum": 0.0,
-            "title": "Total"
-          }
-        },
-        "type": "object",
-        "required": [
-          "items",
-          "total"
-        ],
-        "title": "JobListResult",
-        "description": "A page of jobs plus the total number matching the query."
-      },
-      "JobMetrics": {
-        "properties": {
-          "job_id": {
-            "type": "string",
-            "title": "Job Id"
-          },
-          "gpu_metrics": {
-            "items": {
-              "$ref": "#/components/schemas/GPUMetric"
-            },
-            "type": "array",
-            "title": "Gpu Metrics"
-          },
-          "cpu_metrics": {
-            "items": {
-              "$ref": "#/components/schemas/CPUMetric"
-            },
-            "type": "array",
-            "title": "Cpu Metrics"
-          },
-          "summary": {
-            "$ref": "#/components/schemas/JobMetricsSummary"
-          }
-        },
-        "type": "object",
-        "required": [
-          "job_id",
-          "gpu_metrics",
-          "cpu_metrics",
-          "summary"
-        ],
-        "title": "JobMetrics",
-        "description": "GPU and CPU metrics for a job."
-      },
-      "JobMetricsSummary": {
-        "properties": {
-          "gpu_memory_min_mb": {
-            "type": "integer",
-            "minimum": 0.0,
-            "title": "Gpu Memory Min Mb"
-          },
-          "gpu_memory_max_mb": {
-            "type": "integer",
-            "minimum": 0.0,
-            "title": "Gpu Memory Max Mb"
-          },
-          "gpu_memory_avg_mb": {
-            "type": "integer",
-            "minimum": 0.0,
-            "title": "Gpu Memory Avg Mb"
-          },
-          "gpu_util_min": {
-            "type": "integer",
-            "maximum": 100.0,
-            "minimum": 0.0,
-            "title": "Gpu Util Min"
-          },
-          "gpu_util_max": {
-            "type": "integer",
-            "maximum": 100.0,
-            "minimum": 0.0,
-            "title": "Gpu Util Max"
-          },
-          "gpu_util_avg": {
-            "type": "integer",
-            "maximum": 100.0,
-            "minimum": 0.0,
-            "title": "Gpu Util Avg"
-          },
-          "cpu_avg_percent": {
-            "type": "integer",
-            "maximum": 100.0,
-            "minimum": 0.0,
-            "title": "Cpu Avg Percent"
-          }
-        },
-        "type": "object",
-        "required": [
-          "gpu_memory_min_mb",
-          "gpu_memory_max_mb",
-          "gpu_memory_avg_mb",
-          "gpu_util_min",
-          "gpu_util_max",
-          "gpu_util_avg",
-          "cpu_avg_percent"
-        ],
-        "title": "JobMetricsSummary",
-        "description": "Summary statistics over a job's metric samples."
-      },
-      "JobSpec": {
-        "properties": {
-          "name": {
-            "type": "string",
-            "minLength": 3,
-            "pattern": "^[a-zA-Z0-9_-]+$",
-            "title": "Name"
-          },
-          "command": {
-            "type": "string",
-            "minLength": 3,
-            "title": "Command"
-          },
-          "working_dir": {
-            "type": "string",
-            "title": "Working Dir",
-            "default": "/sync/projects/new-run"
-          },
-          "env": {
-            "additionalProperties": {
-              "type": "string"
-            },
-            "type": "object",
-            "title": "Env"
-          },
-          "resources": {
-            "$ref": "#/components/schemas/Resources"
-          },
-          "paths": {
-            "$ref": "#/components/schemas/Paths"
-          }
-        },
-        "type": "object",
-        "required": [
-          "name",
-          "command",
-          "resources"
-        ],
-        "title": "JobSpec",
-        "description": "Specification for a job to be executed in the cluster."
-      },
-      "JobState": {
-        "properties": {
-          "job_id": {
-            "type": "string",
-            "pattern": "^job-\\d+$",
-            "title": "Job Id"
-          },
-          "spec": {
-            "$ref": "#/components/schemas/JobSpec"
-          },
-          "status": {
-            "$ref": "#/components/schemas/JobStatus"
-          },
-          "node_id": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Node Id"
-          },
-          "created_at": {
-            "type": "string",
-            "format": "date-time",
-            "title": "Created At"
-          },
-          "started_at": {
-            "anyOf": [
-              {
-                "type": "string",
-                "format": "date-time"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Started At"
-          },
-          "completed_at": {
-            "anyOf": [
-              {
-                "type": "string",
-                "format": "date-time"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Completed At"
-          },
-          "exit_code": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Exit Code"
-          },
-          "error": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Error"
-          },
-          "retry_count": {
-            "type": "integer",
-            "minimum": 0.0,
-            "title": "Retry Count"
-          }
-        },
-        "type": "object",
-        "required": [
-          "job_id",
-          "spec",
-          "status",
-          "created_at",
-          "retry_count"
-        ],
-        "title": "JobState",
-        "description": "Runtime state of a job in the cluster."
-      },
-      "JobStatus": {
-        "type": "string",
-        "enum": [
-          "PENDING",
-          "RUNNING",
-          "COMPLETED",
-          "FAILED",
-          "CANCELLED"
-        ],
-        "title": "JobStatus",
-        "description": "Status of a job in the cluster."
-      },
-      "LogEntry": {
-        "properties": {
-          "timestamp": {
-            "type": "string",
-            "format": "date-time",
-            "title": "Timestamp"
-          },
-          "line": {
-            "type": "string",
-            "title": "Line"
-          },
-          "origin": {
-            "type": "string",
-            "enum": [
-              "synthetic",
-              "real"
-            ],
-            "title": "Origin",
-            "default": "synthetic"
-          }
-        },
-        "type": "object",
-        "required": [
-          "timestamp",
-          "line"
-        ],
-        "title": "LogEntry",
-        "description": "A single log line with its origin marker."
-      },
-      "NodeSpec": {
-        "properties": {
-          "node_id": {
-            "type": "string",
-            "title": "Node Id"
-          },
-          "hostname": {
-            "type": "string",
-            "title": "Hostname"
-          },
-          "gpus": {
-            "items": {
-              "$ref": "#/components/schemas/GPUInfo"
-            },
-            "type": "array",
-            "title": "Gpus"
-          },
-          "cpus": {
-            "type": "integer",
-            "minimum": 1.0,
-            "title": "Cpus"
-          },
-          "memory_gb": {
-            "type": "integer",
-            "minimum": 1.0,
-            "title": "Memory Gb"
-          },
-          "os": {
-            "type": "string",
-            "title": "Os"
-          },
-          "status": {
-            "type": "string",
-            "pattern": "^(ONLINE|OFFLINE)$",
-            "title": "Status"
-          },
-          "last_heartbeat": {
-            "type": "string",
-            "format": "date-time",
-            "title": "Last Heartbeat"
-          },
-          "current_job_id": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Current Job Id"
-          }
-        },
-        "type": "object",
-        "required": [
-          "node_id",
-          "hostname",
-          "gpus",
-          "cpus",
-          "memory_gb",
-          "os",
-          "status",
-          "last_heartbeat"
-        ],
-        "title": "NodeSpec",
-        "description": "Specification for a compute node in the cluster."
-      },
-      "Paths": {
-        "properties": {
-          "input": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Input"
-          },
-          "output": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Output"
-          }
-        },
-        "type": "object",
-        "title": "Paths",
-        "description": "Input and output paths for a job. Both are optional."
-      },
-      "ProfileEnvEntry": {
-        "properties": {
-          "key": {
-            "type": "string",
-            "title": "Key"
-          },
-          "value": {
-            "type": "string",
-            "title": "Value"
-          }
-        },
-        "type": "object",
-        "required": [
-          "key",
-          "value"
-        ],
-        "title": "ProfileEnvEntry"
-      },
-      "ProfileSpec": {
-        "properties": {
-          "id": {
-            "type": "string",
-            "minLength": 1,
-            "title": "Id"
-          },
-          "name": {
-            "type": "string",
-            "title": "Name"
-          },
-          "software": {
-            "type": "string",
-            "title": "Software"
-          },
-          "description": {
-            "type": "string",
-            "title": "Description",
-            "default": ""
-          },
-          "command": {
-            "type": "string",
-            "title": "Command",
-            "default": ""
-          },
-          "working_dir": {
-            "type": "string",
-            "title": "Working Dir",
-            "default": ""
-          },
-          "gpus": {
-            "type": "integer",
-            "title": "Gpus",
-            "default": 0
-          },
-          "cpus": {
-            "type": "integer",
-            "title": "Cpus",
-            "default": 1
-          },
-          "memory_gb": {
-            "type": "integer",
-            "title": "Memory Gb",
-            "default": 0
-          },
-          "vram_gb": {
-            "type": "integer",
-            "title": "Vram Gb",
-            "default": 0
-          },
-          "input": {
-            "type": "string",
-            "title": "Input",
-            "default": ""
-          },
-          "output": {
-            "type": "string",
-            "title": "Output",
-            "default": ""
-          },
-          "max_retries": {
-            "type": "integer",
-            "title": "Max Retries",
-            "default": 0
-          },
-          "retry_delay_seconds": {
-            "type": "integer",
-            "title": "Retry Delay Seconds",
-            "default": 0
-          },
-          "env": {
-            "items": {
-              "$ref": "#/components/schemas/ProfileEnvEntry"
-            },
-            "type": "array",
-            "title": "Env"
-          },
-          "builtin": {
-            "type": "boolean",
-            "title": "Builtin",
-            "default": false
-          }
-        },
-        "type": "object",
-        "required": [
-          "id",
-          "name",
-          "software"
-        ],
-        "title": "ProfileSpec"
-      },
-      "Resources": {
-        "properties": {
-          "gpus": {
-            "type": "integer",
-            "maximum": 8.0,
-            "minimum": 0.0,
-            "title": "Gpus"
-          },
-          "cpus": {
-            "type": "integer",
-            "maximum": 128.0,
-            "minimum": 1.0,
-            "title": "Cpus"
-          },
-          "memory_gb": {
-            "type": "integer",
-            "maximum": 1024.0,
-            "minimum": 1.0,
-            "title": "Memory Gb"
-          },
-          "vram_gb": {
-            "type": "integer",
-            "maximum": 80.0,
-            "minimum": 0.0,
-            "title": "Vram Gb",
-            "default": 0
-          }
-        },
-        "type": "object",
-        "required": [
-          "gpus",
-          "cpus",
-          "memory_gb"
-        ],
-        "title": "Resources",
-        "description": "Computing resources required by a job."
-      },
-      "TokenCreateRequest": {
-        "properties": {
-          "shared_token": {
-            "type": "string",
-            "minLength": 8,
-            "title": "Shared Token",
-            "description": "Shared token for authentication"
-          }
-        },
-        "type": "object",
-        "required": [
-          "shared_token"
-        ],
-        "title": "TokenCreateRequest",
-        "description": "Request to exchange the shared token for a JWT."
-      },
-      "TokenCreateResponse": {
-        "properties": {
-          "access_token": {
-            "type": "string",
-            "title": "Access Token"
-          },
-          "token_type": {
-            "type": "string",
-            "title": "Token Type",
-            "default": "bearer"
-          },
-          "expires_in": {
-            "type": "integer",
-            "title": "Expires In"
-          }
-        },
-        "type": "object",
-        "required": [
-          "access_token",
-          "expires_in"
-        ],
-        "title": "TokenCreateResponse",
-        "description": "A newly issued access token."
-      },
-      "TokenRefreshRequest": {
-        "properties": {
-          "token": {
-            "type": "string",
-            "minLength": 8,
-            "title": "Token",
-            "description": "Current valid token"
-          }
-        },
-        "type": "object",
-        "required": [
-          "token"
-        ],
-        "title": "TokenRefreshRequest",
-        "description": "Request to refresh an existing access token."
-      },
-      "TokenRefreshResponse": {
-        "properties": {
-          "access_token": {
-            "type": "string",
-            "title": "Access Token"
-          },
-          "token_type": {
-            "type": "string",
-            "title": "Token Type",
-            "default": "bearer"
-          },
-          "expires_in": {
-            "type": "integer",
-            "title": "Expires In"
-          }
-        },
-        "type": "object",
-        "required": [
-          "access_token",
-          "expires_in"
-        ],
-        "title": "TokenRefreshResponse",
-        "description": "A refreshed access token."
-      },
-      "TokenValidationRequest": {
-        "properties": {
-          "token": {
-            "type": "string",
-            "minLength": 8,
-            "title": "Token"
-          }
-        },
-        "type": "object",
-        "required": [
-          "token"
-        ],
-        "title": "TokenValidationRequest",
-        "description": "Request body carrying a token to validate."
-      },
-      "TokenValidationResponse": {
-        "properties": {
-          "valid": {
-            "type": "boolean",
-            "title": "Valid"
-          }
-        },
-        "type": "object",
-        "required": [
-          "valid"
-        ],
-        "title": "TokenValidationResponse",
-        "description": "Whether a token is currently valid."
-      },
-      "ValidationError": {
-        "properties": {
-          "loc": {
-            "items": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "integer"
-                }
-              ]
-            },
-            "type": "array",
-            "title": "Location"
-          },
-          "msg": {
-            "type": "string",
-            "title": "Message"
-          },
-          "type": {
-            "type": "string",
-            "title": "Error Type"
-          }
-        },
-        "type": "object",
-        "required": [
-          "loc",
-          "msg",
-          "type"
-        ],
-        "title": "ValidationError"
-      },
-      "WSTicketResponse": {
-        "properties": {
-          "ticket": {
-            "type": "string",
-            "title": "Ticket"
-          },
-          "expires_in": {
-            "type": "integer",
-            "title": "Expires In"
-          }
-        },
-        "type": "object",
-        "required": [
-          "ticket",
-          "expires_in"
-        ],
-        "title": "WSTicketResponse",
-        "description": "A short-lived WebSocket authentication ticket."
-      },
-      "SyncthingStatus": {
-        "type": "object",
-        "properties": {
-          "running": {
-            "type": "boolean",
-            "title": "Running"
-          },
-          "root_path": {
-            "type": "string",
-            "title": "Root Path"
-          },
-          "jobs_dir_exists": {
-            "type": "boolean",
-            "title": "Jobs Dir Exists"
-          },
-          "nodes_dir_exists": {
-            "type": "boolean",
-            "title": "Nodes Dir Exists"
-          },
-          "processed_files_count": {
-            "type": "integer",
-            "title": "Processed Files Count"
-          },
-          "jobs_folder": {
-            "type": "object",
-            "properties": {
-              "exists": {
-                "type": "boolean",
-                "title": "Exists"
-              },
-              "path": {
-                "type": "string",
-                "title": "Path"
-              },
-              "state_files": {
-                "type": "integer",
-                "title": "State Files"
-              }
-            },
-            "required": [
-              "exists",
-              "path",
-              "state_files"
-            ],
-            "title": "JobsFolder"
-          },
-          "nodes_folder": {
-            "type": "object",
-            "properties": {
-              "exists": {
-                "type": "boolean",
-                "title": "Exists"
-              },
-              "path": {
-                "type": "string",
-                "title": "Path"
-              },
-              "state_files": {
-                "type": "integer",
-                "title": "State Files"
-              }
-            },
-            "required": [
-              "exists",
-              "path",
-              "state_files"
-            ],
-            "title": "NodesFolder"
-          },
-          "gui": {
-            "type": "object",
-            "properties": {
-              "host": {
-                "type": "string",
-                "title": "Host"
-              },
-              "port": {
-                "type": "integer",
-                "title": "Port"
-              },
-              "url": {
-                "type": "string",
-                "title": "Url"
-              },
-              "reachable": {
-                "type": "boolean",
-                "title": "Reachable"
-              }
-            },
-            "required": [
-              "host",
-              "port",
-              "url",
-              "reachable"
-            ],
-            "title": "Gui"
-          }
-        },
-        "required": [
-          "running",
-          "root_path",
-          "jobs_dir_exists",
-          "nodes_dir_exists",
-          "processed_files_count",
-          "jobs_folder",
-          "nodes_folder",
-          "gui"
-        ],
-        "title": "SyncthingStatus",
-        "description": "Syncthing synchronization service status."
-      }
-    },
-    "securitySchemes": {
-      "Authorization": {
-        "type": "http",
-        "description": "Enter your bearer token in the format **Bearer <token>**",
-        "scheme": "bearer"
-      }
-    }
-  }
-}
+openapi: 3.1.0
+info:
+  title: Scientific Home Cluster API
+  version: 0.1.0
+paths:
+  /api/v1/auth/verify:
+    get:
+      tags:
+      - auth
+      summary: Verify Token
+      description: 'Validate bearer token via GET.
+
+
+        Reads token from Cookie header (preferred for browsers) or Authorization header
+
+        (fallback for CLI, agent, and other non-browser clients).'
+      operationId: verify_token_api_v1_auth_verify_get
+      security:
+      - Authorization: []
+      parameters:
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          type: string
+          title: Authorization
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenValidationResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/v1/auth/validate:
+    post:
+      tags:
+      - auth
+      summary: Validate Token
+      description: Validate bearer token via POST with JSON body.
+      operationId: validate_token_api_v1_auth_validate_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TokenValidationRequest'
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenValidationResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+      security:
+      - Authorization: []
+  /api/v1/auth/token:
+    post:
+      tags:
+      - auth
+      summary: Create Token
+      description: 'Create a new JWT access token by validating against shared token.
+
+
+        This endpoint accepts a shared token and returns a JWT token if valid.
+
+        For browser clients, also sets an httpOnly cookie with the token.'
+      operationId: create_token_api_v1_auth_token_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TokenCreateRequest'
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenCreateResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/v1/auth/refresh:
+    post:
+      tags:
+      - auth
+      summary: Refresh Token
+      description: 'Refresh an existing JWT token.
+
+
+        Returns a new token with extended expiration if the current token is valid.'
+      operationId: refresh_token_api_v1_auth_refresh_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TokenRefreshRequest'
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenRefreshResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/v1/auth/logout:
+    post:
+      tags:
+      - auth
+      summary: Logout
+      description: Log out by clearing the authentication cookie.
+      operationId: logout_api_v1_auth_logout_post
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+  /api/v1/auth/ws-ticket:
+    post:
+      tags:
+      - auth
+      summary: Create Ws Ticket Endpoint
+      description: 'Create a short-lived WebSocket ticket for authentication.
+
+
+        This endpoint requires valid cookie-based authentication.
+
+        The returned ticket is valid for 5 minutes (configurable) and single-use.'
+      operationId: create_ws_ticket_endpoint_api_v1_auth_ws_ticket_post
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WSTicketResponse'
+      security:
+      - Authorization: []
+  /api/v1/jobs/:
+    get:
+      tags:
+      - jobs
+      summary: List Jobs
+      description: List jobs with filtering and pagination.
+      operationId: list_jobs_api_v1_jobs__get
+      security:
+      - Authorization: []
+      parameters:
+      - name: status
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Status
+      - name: node
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Node
+      - name: node_id
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          description: Alias for `node`. The web client sends `node_id`; unknown query
+            parameters are ignored by FastAPI, so without this alias node filtering
+            silently returned unfiltered results.
+          title: Node Id
+        description: Alias for `node`. The web client sends `node_id`; unknown query
+          parameters are ignored by FastAPI, so without this alias node filtering
+          silently returned unfiltered results.
+      - name: search
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Search
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          maximum: 100
+          minimum: 1
+          default: 10
+          title: Limit
+      - name: offset
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 0
+          default: 0
+          title: Offset
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JobListResult'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    post:
+      tags:
+      - jobs
+      summary: Create Job
+      description: Create a new job from JSON spec.
+      operationId: create_job_api_v1_jobs__post
+      security:
+      - Authorization: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/JobSpec'
+      responses:
+        '201':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JobState'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/v1/jobs/{job_id}:
+    get:
+      tags:
+      - jobs
+      summary: Get Job
+      description: Get a specific job by ID.
+      operationId: get_job_api_v1_jobs__job_id__get
+      security:
+      - Authorization: []
+      parameters:
+      - name: job_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Job Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JobState'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    delete:
+      tags:
+      - jobs
+      summary: Delete Job
+      description: Delete a job by ID.
+      operationId: delete_job_api_v1_jobs__job_id__delete
+      security:
+      - Authorization: []
+      parameters:
+      - name: job_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Job Id
+      responses:
+        '204':
+          description: Successful Response
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/v1/jobs/{job_id}/metrics:
+    get:
+      tags:
+      - jobs
+      summary: Get Job Metrics
+      description: Get job GPU/CPU metrics.
+      operationId: get_job_metrics_api_v1_jobs__job_id__metrics_get
+      security:
+      - Authorization: []
+      parameters:
+      - name: job_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Job Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JobMetrics'
+        '404':
+          description: Job not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/v1/jobs/{job_id}/logs:
+    get:
+      tags:
+      - jobs
+      summary: Get Job Logs
+      description: Get job logs (HTTP fallback).
+      operationId: get_job_logs_api_v1_jobs__job_id__logs_get
+      security:
+      - Authorization: []
+      parameters:
+      - name: job_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Job Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/LogEntry'
+                title: Response Get Job Logs Api V1 Jobs  Job Id  Logs Get
+        '404':
+          description: Job not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/v1/jobs/{job_id}/logs/history:
+    get:
+      tags:
+      - jobs
+      summary: Get Job Logs History
+      description: Get job logs history (alias for /logs).
+      operationId: get_job_logs_history_api_v1_jobs__job_id__logs_history_get
+      security:
+      - Authorization: []
+      parameters:
+      - name: job_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Job Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/LogEntry'
+                title: Response Get Job Logs History Api V1 Jobs  Job Id  Logs History
+                  Get
+        '404':
+          description: Job not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/v1/jobs/{job_id}/retry:
+    post:
+      tags:
+      - jobs
+      summary: Retry Job
+      description: Retry a failed/cancelled job.
+      operationId: retry_job_api_v1_jobs__job_id__retry_post
+      security:
+      - Authorization: []
+      parameters:
+      - name: job_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Job Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JobState'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/v1/jobs/{job_id}/cancel:
+    post:
+      tags:
+      - jobs
+      summary: Cancel Job
+      description: Cancel a running/pending job.
+      operationId: cancel_job_api_v1_jobs__job_id__cancel_post
+      security:
+      - Authorization: []
+      parameters:
+      - name: job_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Job Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JobState'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/v1/jobs/{job_id}/commands:
+    get:
+      tags:
+      - jobs
+      summary: List Job Commands
+      description: 'List command/ack pairs for a job (issue #106).'
+      operationId: list_job_commands_api_v1_jobs__job_id__commands_get
+      security:
+      - Authorization: []
+      parameters:
+      - name: job_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Job Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/v1/nodes/:
+    get:
+      tags:
+      - nodes
+      summary: List Nodes
+      description: List all cluster nodes.
+      operationId: list_nodes_api_v1_nodes__get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/NodeSpec'
+                type: array
+                title: Response List Nodes Api V1 Nodes  Get
+      security:
+      - Authorization: []
+    post:
+      tags:
+      - nodes
+      summary: Create Node
+      description: Create a new node (for test seeding).
+      operationId: create_node_api_v1_nodes__post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/NodeSpec'
+        required: true
+      responses:
+        '201':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NodeSpec'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+      security:
+      - Authorization: []
+  /api/v1/nodes/{node_id}:
+    get:
+      tags:
+      - nodes
+      summary: Get Node
+      description: Get node details.
+      operationId: get_node_api_v1_nodes__node_id__get
+      security:
+      - Authorization: []
+      parameters:
+      - name: node_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Node Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NodeSpec'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/v1/nodes/{node_id}/metrics:
+    get:
+      tags:
+      - nodes
+      summary: Get Node Metrics
+      description: Get node GPU/CPU metrics.
+      operationId: get_node_metrics_api_v1_nodes__node_id__metrics_get
+      security:
+      - Authorization: []
+      parameters:
+      - name: node_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Node Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JobMetrics'
+        '404':
+          description: Node not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/v1/profiles/:
+    get:
+      tags:
+      - profiles
+      summary: List All
+      operationId: list_all_api_v1_profiles__get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/ProfileSpec'
+                type: array
+                title: Response List All Api V1 Profiles  Get
+      security:
+      - Authorization: []
+    post:
+      tags:
+      - profiles
+      summary: Create
+      operationId: create_api_v1_profiles__post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProfileSpec'
+        required: true
+      responses:
+        '201':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProfileSpec'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+      security:
+      - Authorization: []
+  /api/v1/profiles/{profile_id}:
+    get:
+      tags:
+      - profiles
+      summary: Get One
+      operationId: get_one_api_v1_profiles__profile_id__get
+      security:
+      - Authorization: []
+      parameters:
+      - name: profile_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Profile Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProfileSpec'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    put:
+      tags:
+      - profiles
+      summary: Update
+      operationId: update_api_v1_profiles__profile_id__put
+      security:
+      - Authorization: []
+      parameters:
+      - name: profile_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Profile Id
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProfileSpec'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProfileSpec'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    delete:
+      tags:
+      - profiles
+      summary: Delete
+      operationId: delete_api_v1_profiles__profile_id__delete
+      security:
+      - Authorization: []
+      parameters:
+      - name: profile_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Profile Id
+      responses:
+        '204':
+          description: Successful Response
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/v1/profiles/{profile_id}/reset:
+    post:
+      tags:
+      - profiles
+      summary: Reset
+      operationId: reset_api_v1_profiles__profile_id__reset_post
+      security:
+      - Authorization: []
+      parameters:
+      - name: profile_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Profile Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProfileSpec'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/v1/profiles/restore-builtins:
+    post:
+      tags:
+      - profiles
+      summary: Restore
+      operationId: restore_api_v1_profiles_restore_builtins_post
+      responses:
+        '204':
+          description: Successful Response
+      security:
+      - Authorization: []
+  /api/v1/syncthing/status:
+    get:
+      tags:
+      - syncthing
+      summary: Get Syncthing Status
+      description: 'Get Syncthing sync service status.
+
+        Returns information about the service state and Syncthing folder.'
+      operationId: get_syncthing_status_api_v1_syncthing_status_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SyncthingStatus'
+        '503':
+          description: Syncthing not configured
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+      security:
+      - Authorization: []
+  /api/v1/syncthing/scan:
+    post:
+      tags:
+      - syncthing
+      summary: Trigger Syncthing Scan
+      description: 'Trigger a manual scan of the Syncthing folder.
+
+        Scans for new or updated job/node state files.'
+      operationId: trigger_syncthing_scan_api_v1_syncthing_scan_post
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+      security:
+      - Authorization: []
+  /:
+    get:
+      summary: Root
+      operationId: root__get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+  /api/v1/health:
+    get:
+      summary: Health Check
+      description: Enhanced health check with store, config, syncthing, and database
+        status.
+      operationId: health_check_api_v1_health_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+components:
+  schemas:
+    CPUMetric:
+      properties:
+        timestamp:
+          type: string
+          format: date-time
+          title: Timestamp
+        cpu_percent:
+          type: integer
+          maximum: 100.0
+          minimum: 0.0
+          title: Cpu Percent
+        memory_percent:
+          type: integer
+          maximum: 100.0
+          minimum: 0.0
+          title: Memory Percent
+        temperature_c:
+          type: integer
+          maximum: 150.0
+          minimum: -50.0
+          title: Temperature C
+        memory_used_gb:
+          type: number
+          minimum: 0.0
+          title: Memory Used Gb
+        origin:
+          type: string
+          enum:
+          - synthetic
+          - real
+          title: Origin
+          default: synthetic
+      type: object
+      required:
+      - timestamp
+      - cpu_percent
+      - memory_percent
+      - temperature_c
+      - memory_used_gb
+      title: CPUMetric
+      description: CPU utilization and memory metrics.
+    ErrorResponse:
+      properties:
+        status:
+          type: integer
+          maximum: 599.0
+          minimum: 400.0
+          title: Status
+        title:
+          type: string
+          title: Title
+        detail:
+          type: string
+          title: Detail
+        instance:
+          type: string
+          title: Instance
+        error_code:
+          type: string
+          title: Error Code
+      type: object
+      required:
+      - status
+      - title
+      - detail
+      - instance
+      - error_code
+      title: ErrorResponse
+      description: RFC7807-style error body with a stable machine-readable code.
+    FolderInfo:
+      properties:
+        exists:
+          type: boolean
+          title: Exists
+        path:
+          type: string
+          title: Path
+        state_files:
+          type: integer
+          minimum: 0.0
+          title: State Files
+      type: object
+      required:
+      - exists
+      - path
+      - state_files
+      title: FolderInfo
+      description: Folder existence and file count information.
+    GPUInfo:
+      properties:
+        name:
+          type: string
+          title: Name
+        memory_gb:
+          type: integer
+          title: Memory Gb
+      type: object
+      required:
+      - name
+      - memory_gb
+      title: GPUInfo
+      description: Information about a single GPU on a node.
+    GPUMetric:
+      properties:
+        timestamp:
+          type: string
+          format: date-time
+          title: Timestamp
+        gpu_index:
+          type: integer
+          minimum: 0.0
+          title: Gpu Index
+        memory_used_mb:
+          type: integer
+          minimum: 0.0
+          title: Memory Used Mb
+        memory_total_mb:
+          type: integer
+          minimum: 0.0
+          title: Memory Total Mb
+        utilization_percent:
+          type: integer
+          maximum: 100.0
+          minimum: 0.0
+          title: Utilization Percent
+        temperature_c:
+          type: integer
+          maximum: 150.0
+          minimum: -50.0
+          title: Temperature C
+        origin:
+          type: string
+          enum:
+          - synthetic
+          - real
+          title: Origin
+          default: synthetic
+      type: object
+      required:
+      - timestamp
+      - gpu_index
+      - memory_used_mb
+      - memory_total_mb
+      - utilization_percent
+      - temperature_c
+      title: GPUMetric
+      description: GPU utilization and memory metrics.
+    GuiInfo:
+      properties:
+        host:
+          type: string
+          title: Host
+        port:
+          type: integer
+          title: Port
+        url:
+          type: string
+          title: Url
+        reachable:
+          type: boolean
+          title: Reachable
+      type: object
+      required:
+      - host
+      - port
+      - url
+      - reachable
+      title: GuiInfo
+      description: Syncthing GUI information.
+    HTTPValidationError:
+      properties:
+        detail:
+          items:
+            $ref: '#/components/schemas/ValidationError'
+          type: array
+          title: Detail
+      type: object
+      title: HTTPValidationError
+    JobListResult:
+      properties:
+        items:
+          items:
+            $ref: '#/components/schemas/JobState'
+          type: array
+          title: Items
+        total:
+          type: integer
+          minimum: 0.0
+          title: Total
+      type: object
+      required:
+      - items
+      - total
+      title: JobListResult
+      description: A page of jobs plus the total number matching the query.
+    JobMetrics:
+      properties:
+        job_id:
+          type: string
+          title: Job Id
+        gpu_metrics:
+          items:
+            $ref: '#/components/schemas/GPUMetric'
+          type: array
+          title: Gpu Metrics
+        cpu_metrics:
+          items:
+            $ref: '#/components/schemas/CPUMetric'
+          type: array
+          title: Cpu Metrics
+        summary:
+          $ref: '#/components/schemas/JobMetricsSummary'
+      type: object
+      required:
+      - job_id
+      - gpu_metrics
+      - cpu_metrics
+      - summary
+      title: JobMetrics
+      description: GPU and CPU metrics for a job.
+    JobMetricsSummary:
+      properties:
+        gpu_memory_min_mb:
+          type: integer
+          minimum: 0.0
+          title: Gpu Memory Min Mb
+        gpu_memory_max_mb:
+          type: integer
+          minimum: 0.0
+          title: Gpu Memory Max Mb
+        gpu_memory_avg_mb:
+          type: integer
+          minimum: 0.0
+          title: Gpu Memory Avg Mb
+        gpu_util_min:
+          type: integer
+          maximum: 100.0
+          minimum: 0.0
+          title: Gpu Util Min
+        gpu_util_max:
+          type: integer
+          maximum: 100.0
+          minimum: 0.0
+          title: Gpu Util Max
+        gpu_util_avg:
+          type: integer
+          maximum: 100.0
+          minimum: 0.0
+          title: Gpu Util Avg
+        cpu_avg_percent:
+          type: integer
+          maximum: 100.0
+          minimum: 0.0
+          title: Cpu Avg Percent
+      type: object
+      required:
+      - gpu_memory_min_mb
+      - gpu_memory_max_mb
+      - gpu_memory_avg_mb
+      - gpu_util_min
+      - gpu_util_max
+      - gpu_util_avg
+      - cpu_avg_percent
+      title: JobMetricsSummary
+      description: Summary statistics over a job's metric samples.
+    JobSpec:
+      properties:
+        name:
+          type: string
+          minLength: 3
+          pattern: ^[a-zA-Z0-9_-]+$
+          title: Name
+        command:
+          type: string
+          minLength: 3
+          title: Command
+        working_dir:
+          type: string
+          title: Working Dir
+          default: /sync/projects/new-run
+        env:
+          additionalProperties:
+            type: string
+          type: object
+          title: Env
+        resources:
+          $ref: '#/components/schemas/Resources'
+        paths:
+          $ref: '#/components/schemas/Paths'
+      type: object
+      required:
+      - name
+      - command
+      - resources
+      title: JobSpec
+      description: Specification for a job to be executed in the cluster.
+    JobState:
+      properties:
+        job_id:
+          type: string
+          pattern: ^job-\d+$
+          title: Job Id
+        spec:
+          $ref: '#/components/schemas/JobSpec'
+        status:
+          $ref: '#/components/schemas/JobStatus'
+        node_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Node Id
+        created_at:
+          type: string
+          format: date-time
+          title: Created At
+        started_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Started At
+        completed_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Completed At
+        exit_code:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Exit Code
+        error:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Error
+        retry_count:
+          type: integer
+          minimum: 0.0
+          title: Retry Count
+      type: object
+      required:
+      - job_id
+      - spec
+      - status
+      - created_at
+      - retry_count
+      title: JobState
+      description: Runtime state of a job in the cluster.
+    JobStatus:
+      type: string
+      enum:
+      - PENDING
+      - RUNNING
+      - COMPLETED
+      - FAILED
+      - CANCELLED
+      title: JobStatus
+      description: Status of a job in the cluster.
+    LogEntry:
+      properties:
+        timestamp:
+          type: string
+          format: date-time
+          title: Timestamp
+        line:
+          type: string
+          title: Line
+        origin:
+          type: string
+          enum:
+          - synthetic
+          - real
+          title: Origin
+          default: synthetic
+      type: object
+      required:
+      - timestamp
+      - line
+      title: LogEntry
+      description: A single log line with its origin marker.
+    NodeSpec:
+      properties:
+        node_id:
+          type: string
+          title: Node Id
+        hostname:
+          type: string
+          title: Hostname
+        gpus:
+          items:
+            $ref: '#/components/schemas/GPUInfo'
+          type: array
+          title: Gpus
+        cpus:
+          type: integer
+          minimum: 1.0
+          title: Cpus
+        memory_gb:
+          type: integer
+          minimum: 1.0
+          title: Memory Gb
+        os:
+          type: string
+          title: Os
+        status:
+          type: string
+          pattern: ^(ONLINE|OFFLINE)$
+          title: Status
+        last_heartbeat:
+          type: string
+          format: date-time
+          title: Last Heartbeat
+        current_job_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Current Job Id
+      type: object
+      required:
+      - node_id
+      - hostname
+      - gpus
+      - cpus
+      - memory_gb
+      - os
+      - status
+      - last_heartbeat
+      title: NodeSpec
+      description: Specification for a compute node in the cluster.
+    Paths:
+      properties:
+        input:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Input
+        output:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Output
+      type: object
+      title: Paths
+      description: Input and output paths for a job. Both are optional.
+    ProfileEnvEntry:
+      properties:
+        key:
+          type: string
+          title: Key
+        value:
+          type: string
+          title: Value
+      type: object
+      required:
+      - key
+      - value
+      title: ProfileEnvEntry
+    ProfileSpec:
+      properties:
+        id:
+          type: string
+          minLength: 1
+          title: Id
+        name:
+          type: string
+          title: Name
+        software:
+          type: string
+          title: Software
+        description:
+          type: string
+          title: Description
+          default: ''
+        command:
+          type: string
+          title: Command
+          default: ''
+        working_dir:
+          type: string
+          title: Working Dir
+          default: ''
+        gpus:
+          type: integer
+          title: Gpus
+          default: 0
+        cpus:
+          type: integer
+          title: Cpus
+          default: 1
+        memory_gb:
+          type: integer
+          title: Memory Gb
+          default: 0
+        vram_gb:
+          type: integer
+          title: Vram Gb
+          default: 0
+        input:
+          type: string
+          title: Input
+          default: ''
+        output:
+          type: string
+          title: Output
+          default: ''
+        max_retries:
+          type: integer
+          title: Max Retries
+          default: 0
+        retry_delay_seconds:
+          type: integer
+          title: Retry Delay Seconds
+          default: 0
+        env:
+          items:
+            $ref: '#/components/schemas/ProfileEnvEntry'
+          type: array
+          title: Env
+        builtin:
+          type: boolean
+          title: Builtin
+          default: false
+      type: object
+      required:
+      - id
+      - name
+      - software
+      title: ProfileSpec
+    Resources:
+      properties:
+        gpus:
+          type: integer
+          maximum: 8.0
+          minimum: 0.0
+          title: Gpus
+        cpus:
+          type: integer
+          maximum: 128.0
+          minimum: 1.0
+          title: Cpus
+        memory_gb:
+          type: integer
+          maximum: 1024.0
+          minimum: 1.0
+          title: Memory Gb
+        vram_gb:
+          type: integer
+          maximum: 80.0
+          minimum: 0.0
+          title: Vram Gb
+          default: 0
+      type: object
+      required:
+      - gpus
+      - cpus
+      - memory_gb
+      title: Resources
+      description: Computing resources required by a job.
+    SyncthingStatus:
+      properties:
+        running:
+          type: boolean
+          title: Running
+        root_path:
+          type: string
+          title: Root Path
+        jobs_dir_exists:
+          type: boolean
+          title: Jobs Dir Exists
+        nodes_dir_exists:
+          type: boolean
+          title: Nodes Dir Exists
+        processed_files_count:
+          type: integer
+          minimum: 0.0
+          title: Processed Files Count
+        jobs_folder:
+          $ref: '#/components/schemas/FolderInfo'
+        nodes_folder:
+          $ref: '#/components/schemas/FolderInfo'
+        gui:
+          $ref: '#/components/schemas/GuiInfo'
+      type: object
+      required:
+      - running
+      - root_path
+      - jobs_dir_exists
+      - nodes_dir_exists
+      - processed_files_count
+      - jobs_folder
+      - nodes_folder
+      - gui
+      title: SyncthingStatus
+      description: Syncthing synchronization service status.
+    TokenCreateRequest:
+      properties:
+        shared_token:
+          type: string
+          minLength: 8
+          title: Shared Token
+          description: Shared token for authentication
+      type: object
+      required:
+      - shared_token
+      title: TokenCreateRequest
+      description: Request to exchange the shared token for a JWT.
+    TokenCreateResponse:
+      properties:
+        access_token:
+          type: string
+          title: Access Token
+        token_type:
+          type: string
+          title: Token Type
+          default: bearer
+        expires_in:
+          type: integer
+          title: Expires In
+      type: object
+      required:
+      - access_token
+      - expires_in
+      title: TokenCreateResponse
+      description: A newly issued access token.
+    TokenRefreshRequest:
+      properties:
+        token:
+          type: string
+          minLength: 8
+          title: Token
+          description: Current valid token
+      type: object
+      required:
+      - token
+      title: TokenRefreshRequest
+      description: Request to refresh an existing access token.
+    TokenRefreshResponse:
+      properties:
+        access_token:
+          type: string
+          title: Access Token
+        token_type:
+          type: string
+          title: Token Type
+          default: bearer
+        expires_in:
+          type: integer
+          title: Expires In
+      type: object
+      required:
+      - access_token
+      - expires_in
+      title: TokenRefreshResponse
+      description: A refreshed access token.
+    TokenValidationRequest:
+      properties:
+        token:
+          type: string
+          minLength: 8
+          title: Token
+      type: object
+      required:
+      - token
+      title: TokenValidationRequest
+      description: Request body carrying a token to validate.
+    TokenValidationResponse:
+      properties:
+        valid:
+          type: boolean
+          title: Valid
+      type: object
+      required:
+      - valid
+      title: TokenValidationResponse
+      description: Whether a token is currently valid.
+    ValidationError:
+      properties:
+        loc:
+          items:
+            anyOf:
+            - type: string
+            - type: integer
+          type: array
+          title: Location
+        msg:
+          type: string
+          title: Message
+        type:
+          type: string
+          title: Error Type
+      type: object
+      required:
+      - loc
+      - msg
+      - type
+      title: ValidationError
+    WSTicketResponse:
+      properties:
+        ticket:
+          type: string
+          title: Ticket
+        expires_in:
+          type: integer
+          title: Expires In
+      type: object
+      required:
+      - ticket
+      - expires_in
+      title: WSTicketResponse
+      description: A short-lived WebSocket authentication ticket.
+  securitySchemes:
+    Authorization:
+      type: http
+      description: Enter your bearer token in the format **Bearer <token>**
+      scheme: bearer

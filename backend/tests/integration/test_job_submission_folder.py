@@ -24,7 +24,6 @@ from __future__ import annotations
 
 import asyncio
 import inspect
-import json
 import logging
 import re
 import shutil
@@ -1174,8 +1173,13 @@ class TestTheApiContractIsUnchanged:
 
         If a future change declares one, this fails and says which, instead of
         leaving ``openapi.yaml`` quietly out of date.
+
+        The only allowed 503 is on /api/v1/syncthing/status
+        for "Syncthing not configured".
         """
-        snapshot = json.loads((REPO_ROOT / "openapi.yaml").read_text(encoding="utf-8"))
+        snapshot = yaml.safe_load(
+            (REPO_ROOT / "openapi.yaml").read_text(encoding="utf-8")
+        )
 
         for source, schema in (
             ("app.openapi()", app.openapi()),
@@ -1189,7 +1193,10 @@ class TestTheApiContractIsUnchanged:
                 for code in op.get("responses", {})
                 if code == "503"
             )
-            assert documented == [], f"{source} documents a 503 for {documented}"
+            # Allow 503 on syncthing status endpoint
+            allowed = ["/api/v1/syncthing/status"]
+            unexpected = [p for p in documented if p not in allowed]
+            assert unexpected == [], f"{source} documents a 503 for {unexpected}"
 
     def test_the_snapshot_and_the_live_schema_are_identical(self) -> None:
         """
@@ -1198,7 +1205,9 @@ class TestTheApiContractIsUnchanged:
         ``openapi.yaml`` is checked in, and #105 does not regenerate it
         (D11). If the two ever diverge, this is the test that says so.
         """
-        snapshot = json.loads((REPO_ROOT / "openapi.yaml").read_text(encoding="utf-8"))
+        snapshot = yaml.safe_load(
+            (REPO_ROOT / "openapi.yaml").read_text(encoding="utf-8")
+        )
 
         assert app.openapi() == snapshot
 
