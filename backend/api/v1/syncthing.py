@@ -9,6 +9,8 @@ from backend.core.config import settings
 from backend.core.deps import get_current_token_payload
 from backend.core.errors import syncthing_unavailable
 from backend.services.syncthing_service import SyncthingService
+from shared.schemas.syncthing_status import SyncthingStatus
+from shared.schemas.error_response import ErrorResponse
 
 router = APIRouter()
 
@@ -18,7 +20,13 @@ def get_syncthing_service(request: Request) -> SyncthingService:
     return request.app.state.syncthing_service  # type: ignore[no-any-return]
 
 
-@router.get("/status")
+@router.get(
+    "/status",
+    response_model=SyncthingStatus,
+    responses={
+        503: {"model": ErrorResponse, "description": "Syncthing not configured"},
+    },
+)
 async def get_syncthing_status(
     request: Request, payload: dict = Depends(get_current_token_payload)
 ):

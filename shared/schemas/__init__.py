@@ -34,6 +34,7 @@ from .token_validation import (
     TokenValidationRequest,
     TokenValidationResponse,
 )
+from .syncthing_status import SyncthingStatus, FolderInfo, GuiInfo
 
 __all__ = [
     "CPUMetric",
@@ -61,6 +62,9 @@ __all__ = [
     "ProfileEnvEntry",
     "ProfileSpec",
     "Resources",
+    "SyncthingStatus",
+    "FolderInfo",
+    "GuiInfo",
     "TokenCreateRequest",
     "TokenCreateResponse",
     "TokenRefreshRequest",
