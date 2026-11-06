@@ -445,8 +445,8 @@ jobs:
               if expected == "XFAIL":
                   check(False, f"{test_name} was never reported (xfail test must run)")
 
-          # AC-12: the DB_POOL strict xfail keeps its polarity.
-          verdict("test_db_pool_pooled_does_not_start", "XFAIL")
+          # AC-12: the DB_POOL strict xfail was fixed; test now passes.
+          verdict("test_db_pool_pooled_starts", "PASS")
 
           print()
           if failures:
