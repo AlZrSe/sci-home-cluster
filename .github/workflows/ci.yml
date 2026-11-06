@@ -432,7 +432,7 @@ jobs:
           # The config tests (L1) must pass; live tests (L2/L3) may error/fail.
           # At least the config tests (17) + xfail (1) should pass.
           check(count("passed") + count("xfailed") >= 15, "15+ passed or xfailed (config tests + xfail)")
-          check(count("xfailed") == 1, "exactly 1 xfailed (the DB_POOL=pooled guard)")
+          check(count("xfailed") == 0, "0 xfailed (DB_POOL=pooled guard fixed)")
           check(count("xpassed") == 0, "0 xpassed")
 
           def verdict(test_name, expected):
