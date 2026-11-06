@@ -389,10 +389,17 @@ def create_test_app(test_settings) -> FastAPI:  # noqa: C901
 
         @app.get("/redoc", include_in_schema=False)
         async def _redoc_html():
+            redoc_js = (
+                "https://cdn.jsdelivr.net/npm/redoc@next/bundles/redoc.standalone.js"
+            )
             html = (
                 "<!DOCTYPE html><html><head><title>ReDoc</title></head><body>"
-                "<redoc spec-url='" + test_settings.API_V1_STR + "/openapi.json'></redoc>"
-                "<script type='module' src='https://cdn.jsdelivr.net/npm/redoc@next/bundles/redoc.standalone.js'> </script>"
+                "<redoc spec-url='"
+                + test_settings.API_V1_STR
+                + "/openapi.json'></redoc>"
+                "<script type='module' "
+                "src='" + redoc_js + "'> "
+                "</script>"
                 "</body></html>"
             )
             return _HR(content=html)
@@ -736,6 +743,7 @@ class TestApiDocsExistingTestsCompatibility:
         assert "/api/v1/jobs/" in data["paths"]
         assert "/api/v1/nodes/" in data["paths"]
 
+
 class TestApiDocsCspCompatibility:
     """Tests verifying CSP policy allows Swagger/ReDoc CDN resources to load."""
 
@@ -791,9 +799,9 @@ class TestCspPolicyIncludesDocsCdns:
         s = Settings(_env_file=None, SECRET_KEY="test")
         for directive in s.CSP_POLICY.split(";"):
             if "script-src" in directive:
-                assert "cdn.jsdelivr.net" in directive, (
-                    "cdn.jsdelivr.net must be in script-src for Swagger/ReDoc"
-                )
+                assert (
+                    "cdn.jsdelivr.net" in directive
+                ), "cdn.jsdelivr.net must be in script-src for Swagger/ReDoc"
                 break
         else:
             pytest.fail("script-src directive not found in CSP_POLICY")

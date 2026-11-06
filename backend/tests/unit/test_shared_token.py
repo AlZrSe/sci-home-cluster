@@ -3,12 +3,9 @@
 from __future__ import annotations
 
 import logging
-import os
-from pathlib import Path
 
 import pytest
 
-from backend.core import config
 from backend.core.config import _resolve_shared_token
 
 pytestmark = pytest.mark.unit
@@ -20,7 +17,9 @@ def state_dir(tmp_path, monkeypatch):
     return tmp_path
 
 
-def test_generated_shared_token_is_persisted_and_survives_restart(state_dir, monkeypatch, caplog):
+def test_generated_shared_token_persisted_and_survives_restart(
+    state_dir, monkeypatch, caplog
+):
     """AC-1/AC-2: a generated token is persisted and read back silently."""
     monkeypatch.delenv("SHARED_TOKEN", raising=False)
 
@@ -41,7 +40,7 @@ def test_generated_shared_token_is_persisted_and_survives_restart(state_dir, mon
     assert caplog.records == [], [r.getMessage() for r in caplog.records]
 
 
-def test_generation_logs_warning_with_path_and_never_value(state_dir, monkeypatch, caplog):
+def test_generation_logs_warning_with_path_never_value(state_dir, monkeypatch, caplog):
     """AC-4: generation logs a WARNING naming the path, never the value."""
     monkeypatch.delenv("SHARED_TOKEN", raising=False)
 

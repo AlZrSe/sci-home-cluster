@@ -240,13 +240,20 @@ if enable_docs:
 
     @app.get("/redoc", include_in_schema=False)
     async def _redoc_html() -> _HTMLResponse:
+        font_url = (
+            "https://fonts.googleapis.com/css?family="
+            "Montserrat:300,400,700|Roboto:300,400,700"
+        )
+        redoc_url = (
+            "https://cdn.jsdelivr.net/npm/redoc@next/bundles/redoc.standalone.js"
+        )
         html = f"""<!DOCTYPE html>
 <html>
 <head>
 <title>{settings.PROJECT_NAME} - ReDoc</title>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<link href="https://fonts.googleapis.com/css?family=Montserrat:300,400,700|Roboto:300,400,700" rel="stylesheet">
+<link href="{font_url}" rel="stylesheet">
 <link rel="shortcut icon" href="https://fastapi.tiangolo.com/img/favicon.png">
 <style>
   body {{
@@ -260,7 +267,7 @@ if enable_docs:
     ReDoc requires Javascript to function. Please enable it to browse the documentation.
 </noscript>
 <redoc spec-url="{settings.API_V1_STR}/openapi.json"></redoc>
-<script type="module" src="https://cdn.jsdelivr.net/npm/redoc@next/bundles/redoc.standalone.js"> </script>
+<script type="module" src="{redoc_url}"> </script>
 </body>
 </html>
 """

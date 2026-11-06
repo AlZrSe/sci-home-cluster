@@ -80,9 +80,7 @@ def _git_available() -> bool:
     return result.returncode == 0 and result.stdout.strip() == "true"
 
 
-_GIT_REQUIRED_REASON = (
-    "requires git on PATH and a git repository checkout (issue #113)"
-)
+_GIT_REQUIRED_REASON = "requires git on PATH and a git repository checkout (issue #113)"
 
 
 def _tracked_paths() -> list[str]:

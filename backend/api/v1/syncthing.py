@@ -35,22 +35,23 @@ async def get_syncthing_status(
 
     # Get service from app state, handle if not started
     service = getattr(request.app.state, "syncthing_service", None)
+    syncthing_root = Path(settings.SYNCTHING_ROOT)
     if service is None:
         # Service not started yet - return basic status without Syncthing-specific info
         return {
             "running": False,
             "root_path": settings.SYNCTHING_ROOT,
-            "jobs_dir_exists": Path(settings.SYNCTHING_ROOT / "jobs").exists(),
-            "nodes_dir_exists": Path(settings.SYNCTHING_ROOT / "nodes").exists(),
+            "jobs_dir_exists": (syncthing_root / "jobs").exists(),
+            "nodes_dir_exists": (syncthing_root / "nodes").exists(),
             "processed_files_count": 0,
             "jobs_folder": {
-                "exists": Path(settings.SYNCTHING_ROOT / "jobs").exists(),
-                "path": str(Path(settings.SYNCTHING_ROOT / "jobs")),
+                "exists": (syncthing_root / "jobs").exists(),
+                "path": str(syncthing_root / "jobs"),
                 "state_files": 0,
             },
             "nodes_folder": {
-                "exists": Path(settings.SYNCTHING_ROOT / "nodes").exists(),
-                "path": str(Path(settings.SYNCTHING_ROOT / "nodes")),
+                "exists": (syncthing_root / "nodes").exists(),
+                "path": str(syncthing_root / "nodes"),
                 "state_files": 0,
             },
             "gui": {
@@ -68,17 +69,17 @@ async def get_syncthing_status(
         return {
             "running": False,
             "root_path": settings.SYNCTHING_ROOT,
-            "jobs_dir_exists": Path(settings.SYNCTHING_ROOT / "jobs").exists(),
-            "nodes_dir_exists": Path(settings.SYNCTHING_ROOT / "nodes").exists(),
+            "jobs_dir_exists": (syncthing_root / "jobs").exists(),
+            "nodes_dir_exists": (syncthing_root / "nodes").exists(),
             "processed_files_count": 0,
             "jobs_folder": {
-                "exists": Path(settings.SYNCTHING_ROOT / "jobs").exists(),
-                "path": str(Path(settings.SYNCTHING_ROOT / "jobs")),
+                "exists": (syncthing_root / "jobs").exists(),
+                "path": str(syncthing_root / "jobs"),
                 "state_files": 0,
             },
             "nodes_folder": {
-                "exists": Path(settings.SYNCTHING_ROOT / "nodes").exists(),
-                "path": str(Path(settings.SYNCTHING_ROOT / "nodes")),
+                "exists": (syncthing_root / "nodes").exists(),
+                "path": str(syncthing_root / "nodes"),
                 "state_files": 0,
             },
             "gui": {
