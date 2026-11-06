@@ -26,6 +26,7 @@ from .paths import Paths as JobPaths
 from .profile import ProfileEnvEntry, ProfileSpec
 from .resources import Resources
 from .resources import Resources as JobResources
+from .http_validation_error import HTTPValidationError
 from .token_validation import (
     TokenCreateRequest,
     TokenCreateResponse,
@@ -41,6 +42,7 @@ __all__ = [
     "ErrorResponse",
     "GPUInfo",
     "GPUMetric",
+    "HTTPValidationError",
     "JobCommand",
     "JobCommandAck",
     "JobCommandResult",

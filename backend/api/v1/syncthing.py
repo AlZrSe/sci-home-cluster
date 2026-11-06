@@ -10,7 +10,7 @@ from backend.core.deps import get_current_token_payload
 from backend.core.errors import syncthing_unavailable
 from backend.services.syncthing_service import SyncthingService
 from shared.schemas.syncthing_status import SyncthingStatus
-from shared.schemas.error_response import ErrorResponse
+from shared.schemas import HTTPValidationError
 
 router = APIRouter()
 
@@ -24,7 +24,7 @@ def get_syncthing_service(request: Request) -> SyncthingService:
     "/status",
     response_model=SyncthingStatus,
     responses={
-        503: {"model": ErrorResponse, "description": "Syncthing not configured"},
+        503: {"model": HTTPValidationError, "description": "Syncthing not configured"},
     },
 )
 async def get_syncthing_status(
