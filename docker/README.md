@@ -122,30 +122,17 @@ Compose does not restart an unhealthy container, and `restart: unless-stopped`
 restarts on exit rather than on ill health. Observe health with `docker compose ps`
 and recover with `docker compose restart backend`.
 
-### `DB_POOL`: do not override it
+### `DB_POOL`: now works with `pooled`
 
 The image bakes `DB_POOL=null` (`docker/Dockerfile:128`) and compose inherits
-that value. **Do not add `DB_POOL: pooled` to the service**, even though `pooled`
-is `Settings.DB_POOL`'s own default (`backend/core/config.py:330`) and looks like
-the correct production setting. It does not start:
+that value for backwards compatibility. As of the fix for issue #130,
+`DB_POOL=pooled` now works: `backend/core/database.py` uses
+`AsyncAdaptedQueuePool` instead of a bare `QueuePool`, which SQLAlchemy 2.0
+accepts on an async engine. The `Settings.DB_POOL` default (`pooled`) no longer
+crashes a bare `uvicorn backend.main:app`.
 
-```
-sqlalchemy.exc.ArgumentError: Pool class QueuePool cannot be used with asyncio engine
-```
-
-`backend/core/database.py:108` maps anything other than `"null"` to `QueuePool`,
-and SQLAlchemy 2.0 rejects a bare `QueuePool` on an async engine. It is raised
-inside the lifespan handler, so the process dies during startup and
-`restart: unless-stopped` turns that into a crash loop — it never reaches
-`/health`.
-
-So `null` is not a test accommodation that leaked into the image, which is what
-the docstring at `backend/core/config.py:327-330` implies. It is the only value
-this code path can currently produce. The real defect is one level up: `pooled`
-was never implemented for an async engine — it needs `AsyncAdaptedQueuePool` —
-which means the `Settings` default crashes any deployment that does not override
-it, including a bare `uvicorn backend.main:app`. Tracked as
-[#130](https://github.com/AlZrSe/sci-home-cluster/issues/130).
+`null` remains a valid value (useful for tests that run many short-lived event
+loops against one SQLite file) but is no longer the only working option.
 
 Check what the container actually runs:
 

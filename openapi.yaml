@@ -1290,7 +1290,19 @@
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/SyncthingStatus"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Syncthing not configured",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
               }
             }
           }
@@ -2226,6 +2238,117 @@
         ],
         "title": "WSTicketResponse",
         "description": "A short-lived WebSocket authentication ticket."
+      },
+      "SyncthingStatus": {
+        "type": "object",
+        "properties": {
+          "running": {
+            "type": "boolean",
+            "title": "Running"
+          },
+          "root_path": {
+            "type": "string",
+            "title": "Root Path"
+          },
+          "jobs_dir_exists": {
+            "type": "boolean",
+            "title": "Jobs Dir Exists"
+          },
+          "nodes_dir_exists": {
+            "type": "boolean",
+            "title": "Nodes Dir Exists"
+          },
+          "processed_files_count": {
+            "type": "integer",
+            "title": "Processed Files Count"
+          },
+          "jobs_folder": {
+            "type": "object",
+            "properties": {
+              "exists": {
+                "type": "boolean",
+                "title": "Exists"
+              },
+              "path": {
+                "type": "string",
+                "title": "Path"
+              },
+              "state_files": {
+                "type": "integer",
+                "title": "State Files"
+              }
+            },
+            "required": [
+              "exists",
+              "path",
+              "state_files"
+            ],
+            "title": "JobsFolder"
+          },
+          "nodes_folder": {
+            "type": "object",
+            "properties": {
+              "exists": {
+                "type": "boolean",
+                "title": "Exists"
+              },
+              "path": {
+                "type": "string",
+                "title": "Path"
+              },
+              "state_files": {
+                "type": "integer",
+                "title": "State Files"
+              }
+            },
+            "required": [
+              "exists",
+              "path",
+              "state_files"
+            ],
+            "title": "NodesFolder"
+          },
+          "gui": {
+            "type": "object",
+            "properties": {
+              "host": {
+                "type": "string",
+                "title": "Host"
+              },
+              "port": {
+                "type": "integer",
+                "title": "Port"
+              },
+              "url": {
+                "type": "string",
+                "title": "Url"
+              },
+              "reachable": {
+                "type": "boolean",
+                "title": "Reachable"
+              }
+            },
+            "required": [
+              "host",
+              "port",
+              "url",
+              "reachable"
+            ],
+            "title": "Gui"
+          }
+        },
+        "required": [
+          "running",
+          "root_path",
+          "jobs_dir_exists",
+          "nodes_dir_exists",
+          "processed_files_count",
+          "jobs_folder",
+          "nodes_folder",
+          "gui"
+        ],
+        "title": "SyncthingStatus",
+        "description": "Syncthing synchronization service status."
       }
     },
     "securitySchemes": {

@@ -199,9 +199,9 @@ services:
       LOCALHOST_BYPASS_MODE: "host_header"
 
       # DB_POOL is deliberately ABSENT - inherited from the image, which bakes
-      # DB_POOL=null (docker/Dockerfile:128). Do not "fix" this by adding
-      # DB_POOL=pooled, which is Settings.DB_POOL's own default value
-      # (backend/core/config.py:330) and looks like the right answer.
+      # DB_POOL=null (docker/Dockerfile:128). As of the fix for issue #130,
+      # DB_POOL=pooled now works (AsyncAdaptedQueuePool), but null is kept
+      # for backwards compatibility and test-suite appropriateness.
       #
       # It is not an answer. It does not start. backend/core/database.py:108
       # reads

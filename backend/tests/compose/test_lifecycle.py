@@ -510,29 +510,7 @@ def test_a_jwt_survives_compose_restart(live_stack: ComposeStack) -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "issue #130: Settings.DB_POOL's default is the literal string `pooled` "
-        "(backend/core/config.py:413), and backend/core/database.py:108 maps "
-        "anything other than 'null' to a bare QueuePool, which SQLAlchemy 2.0 "
-        "rejects on an async engine. The container therefore exits non-zero with "
-        "`Pool class QueuePool cannot be used with asyncio engine`. THIS TEST "
-        "ASSERTS THE FIXED BEHAVIOUR - the container starts - so it fails today "
-        "(XFAIL) and turns RED the moment `pooled` starts working "
-        "(XPASS(strict)), forcing a deliberate update as part of the #130 fix "
-        "rather than allowing a silent behaviour change. strict=True is the "
-        "point: a non-strict xfail would be a test that can never fail, which is "
-        "what this whole issue exists to prevent. The scenario-table wording "
-        "('exits non-zero ... xfail(strict=True)') reads as if the crash itself "
-        "should be asserted under a strict xfail, which pytest reports as a "
-        "FAILURE today (XPASS(strict)) and would leave the suite red; the "
-        "assertion and the marker have to disagree about the polarity for both "
-        "AC-24's 'turns red the moment pooled starts working' and the "
-        "Definition of Done's 'green' to hold at once."
-    ),
-)
-def test_db_pool_pooled_does_not_start(image_id: str) -> None:
+def test_db_pool_pooled_starts(image_id: str) -> None:
     """
     M-5.5 / AC-24 - a one-off `docker run --rm -e DB_POOL=pooled shc:latest`
     EXITS ZERO and does not emit `Pool class QueuePool cannot be used with

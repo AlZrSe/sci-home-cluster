@@ -11,11 +11,11 @@ A distributed platform for running scientific long-running applications on vario
 | Shared Schemas & File Ops | ✅ **Done** | Issue [#2](https://github.com/AlZrSe/sci-home-cluster/issues/2) |
 | API Server Core | ✅ **Done** | Issue [#3](https://github.com/AlZrSe/sci-home-cluster/issues/3) |
 | Syncthing Sync Service | ✅ **Done** | Issue [#4](https://github.com/AlZrSe/sci-home-cluster/issues/4) |
-| Worker Agent | ✅ **Skeleton Delivered** | Issues #93-#106 - config, logging, supervised loop, job execution, command files. See agent/README.md |
+| Worker Agent | ✅ **Implemented** | Issues #93-#106 - config, logging, supervised loop, job execution, command files. See agent/README.md |
 | CLI | ✅ **Stub Implemented** | Phase 2 - commands scaffolded, needs API integration |
 | Docker/Production | ✅ **Done** | Issues [#123](https://github.com/AlZrSe/sci-home-cluster/issues/123) (image + static serving), [#129](https://github.com/AlZrSe/sci-home-cluster/issues/129) (compose) - see [Docker Compose](#docker-compose-single-container-one-port) |
 
-**Current Focus**: Phase 1 - Backend Foundation (FastAPI + SQLite + Syncthing sync) - **COMPLETE**
+**Current Focus**: Phase 2 - Worker Agent & CLI Integration
 
 ## Architecture Overview
 
@@ -280,8 +280,7 @@ need this at all - see [`SHARED_TOKEN`](#environment-variables). Reaching it fro
   loses the cluster; `shc-state` holds the JWT signing key and losing it invalidates every token
   ever issued. Plain `docker compose down` keeps both.
 - **The worker agent is deliberately not a service here.** It runs on each compute node, needs that
-  node's GPU and its own Syncthing folder, and `agent/README.md` does not exist yet
-  ([#104](https://github.com/AlZrSe/sci-home-cluster/issues/104)). See
+  node's GPU and its own Syncthing folder, and is documented in `agent/README.md`. See
   [Worker Agent](#worker-agent-on-each-compute-node).
 - `run-agent` *is* on `PATH` inside the image, so `docker compose exec backend run-agent` will
   actually run. Don't - it would run the one compute node inside the API container, behind the same
@@ -969,7 +968,7 @@ scientific-home-cluster/
 ├── frontend/              # React Dashboard (Vite + Tailwind) ✅ COMPLETE
 ├── shared/                # Shared code (schemas, utilities)
 ├── backend/               # API Server (FastAPI + SQLite) — COMPLETE
-├── agent/                 # Worker Node Agent (stub)
+├── agent/                 # Worker Node Agent (implemented)
 ├── cli/                   # User CLI (Typer) (stub)
 ├── backend/tests/         # Unit & integration tests
 ├── docker/                # Dockerfile + container reference (image built from the root context)

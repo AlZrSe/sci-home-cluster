@@ -47,7 +47,7 @@ def create_test_app(test_settings) -> FastAPI:  # noqa: C901
         "test",
     )
     docs_url = "/docs" if enable_docs else None
-    redoc_url = "/redoc" if enable_docs else None
+    redoc_url = None  # served via custom route (see below)
     openapi_url = f"{test_settings.API_V1_STR}/openapi.json" if enable_docs else None
 
     # Log the docs state at startup (INFO level)
@@ -383,6 +383,19 @@ def create_test_app(test_settings) -> FastAPI:  # noqa: C901
         }
 
     register_frontend(app)
+
+    if enable_docs:
+        from fastapi.responses import HTMLResponse as _HR
+
+        @app.get("/redoc", include_in_schema=False)
+        async def _redoc_html():
+            html = (
+                "<!DOCTYPE html><html><head><title>ReDoc</title></head><body>"
+                "<redoc spec-url='" + test_settings.API_V1_STR + "/openapi.json'></redoc>"
+                "<script type='module' src='https://cdn.jsdelivr.net/npm/redoc@next/bundles/redoc.standalone.js'> </script>"
+                "</body></html>"
+            )
+            return _HR(content=html)
 
     if test_settings.OTEL_ENABLED and not test_settings.OTEL_SDK_DISABLED:
         configure_telemetry(app)
@@ -722,3 +735,65 @@ class TestApiDocsExistingTestsCompatibility:
         assert "/api/v1/health" in data["paths"]
         assert "/api/v1/jobs/" in data["paths"]
         assert "/api/v1/nodes/" in data["paths"]
+
+class TestApiDocsCspCompatibility:
+    """Tests verifying CSP policy allows Swagger/ReDoc CDN resources to load."""
+
+    @pytest.fixture
+    def test_settings_obj(self):
+        return _make_test_settings(ENVIRONMENT="development", ENABLE_API_DOCS=False)
+
+    @pytest.mark.asyncio
+    async def test_docs_csp_allows_cdn_jsdelivr(self, auth_test_client):
+        """CSP script-src must include cdn.jsdelivr.net so Swagger/ReDoc JS loads."""
+        response = await auth_test_client.get("/docs")
+        assert response.status_code == 200
+        csp = response.headers.get("content-security-policy", "")
+        assert "cdn.jsdelivr.net" in csp
+        assert "script-src" in csp
+
+    @pytest.mark.asyncio
+    async def test_redoc_csp_allows_cdn_jsdelivr(self, auth_test_client):
+        """CSP script-src must include cdn.jsdelivr.net so ReDoc JS loads."""
+        response = await auth_test_client.get("/redoc")
+        assert response.status_code == 200
+        csp = response.headers.get("content-security-policy", "")
+        assert "cdn.jsdelivr.net" in csp
+
+    @pytest.mark.asyncio
+    async def test_docs_html_references_cdn(self, auth_test_client):
+        """Swagger UI HTML must reference cdn.jsdelivr.net for scripts/styles."""
+        response = await auth_test_client.get("/docs")
+        assert response.status_code == 200
+        assert "cdn.jsdelivr.net" in response.text
+
+    @pytest.mark.asyncio
+    async def test_redoc_html_references_cdn(self, auth_test_client):
+        """ReDoc HTML must reference cdn.jsdelivr.net or cdn.redoc.ly for scripts."""
+        response = await auth_test_client.get("/redoc")
+        assert response.status_code == 200
+        text = response.text.lower()
+        assert "cdn.jsdelivr.net" in text or "cdn.redoc.ly" in text or "redoc" in text
+
+
+class TestCspPolicyIncludesDocsCdns:
+    """Unit-level test: default CSP_POLICY includes CDN domains for docs."""
+
+    def test_csp_policy_includes_jsdelivr(self):
+        from backend.core.config import Settings
+
+        s = Settings(_env_file=None, SECRET_KEY="test")
+        assert "cdn.jsdelivr.net" in s.CSP_POLICY
+
+    def test_csp_policy_includes_jsdelivr_in_script_src(self):
+        from backend.core.config import Settings
+
+        s = Settings(_env_file=None, SECRET_KEY="test")
+        for directive in s.CSP_POLICY.split(";"):
+            if "script-src" in directive:
+                assert "cdn.jsdelivr.net" in directive, (
+                    "cdn.jsdelivr.net must be in script-src for Swagger/ReDoc"
+                )
+                break
+        else:
+            pytest.fail("script-src directive not found in CSP_POLICY")

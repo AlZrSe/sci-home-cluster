@@ -209,7 +209,10 @@ enable_docs = settings.ENABLE_API_DOCS or settings.ENVIRONMENT in (
     "test",
 )
 docs_url = "/docs" if enable_docs else None
-redoc_url = "/redoc" if enable_docs else None
+# ReDoc is served via a custom route (see below) because the default FastAPI
+# template loads the bundle as a classic script, which breaks on ReDoc versions
+# that use `import.meta` (SyntaxError: Cannot use 'import.meta' outside a module).
+redoc_url = None
 openapi_url = f"{settings.API_V1_STR}/openapi.json" if enable_docs else None
 
 # Log the docs state at startup (INFO level)
@@ -229,6 +232,39 @@ app = FastAPI(
     docs_url=docs_url,
     redoc_url=redoc_url,
 )
+
+# Serve ReDoc with type="module" so newer bundles that use import.meta load
+# correctly (issue: "Cannot use 'import.meta' outside a module").
+if enable_docs:
+    from fastapi.responses import HTMLResponse as _HTMLResponse
+
+    @app.get("/redoc", include_in_schema=False)
+    async def _redoc_html() -> _HTMLResponse:
+        html = f"""<!DOCTYPE html>
+<html>
+<head>
+<title>{settings.PROJECT_NAME} - ReDoc</title>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link href="https://fonts.googleapis.com/css?family=Montserrat:300,400,700|Roboto:300,400,700" rel="stylesheet">
+<link rel="shortcut icon" href="https://fastapi.tiangolo.com/img/favicon.png">
+<style>
+  body {{
+    margin: 0;
+    padding: 0;
+  }}
+</style>
+</head>
+<body>
+<noscript>
+    ReDoc requires Javascript to function. Please enable it to browse the documentation.
+</noscript>
+<redoc spec-url="{settings.API_V1_STR}/openapi.json"></redoc>
+<script type="module" src="https://cdn.jsdelivr.net/npm/redoc@next/bundles/redoc.standalone.js"> </script>
+</body>
+</html>
+"""
+        return _HTMLResponse(content=html)
 
 
 @app.middleware("http")

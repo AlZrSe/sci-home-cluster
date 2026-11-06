@@ -5,7 +5,7 @@ All development work MUST follow the agent-team workflow with PM, SWE, QA, and O
 
 ## Quick Reference
 Distributed platform for running scientific workloads on a home GPU cluster.
-**Phase 1**: Backend Foundation (FastAPI + SQLite + Syncthing sync). Frontend ✅ Complete.
+**Phase 1**: Backend Foundation (FastAPI + SQLite + Syncthing sync). Frontend ✅ Complete. Worker Agent ✅ Implemented.
 
 | Area | Command |
 |------|---------|
@@ -124,7 +124,7 @@ scientific-home-cluster/
 ├── frontend/          # git SUBMODULE — see "Frontend lives in another repo" below
 ├── backend/           # FastAPI + SQLite API server (COMPLETE)
 ├── shared/            # Shared schemas, types, utilities (COMPLETE)
-├── agent/             # Worker node agent (stub)
+├── agent/             # Worker node agent (implemented)
 ├── cli/               # Typer CLI for job submission (stub)
 ├── backend/tests/     # Unit & integration tests
 ├── docker/            # Docker configs (planned)

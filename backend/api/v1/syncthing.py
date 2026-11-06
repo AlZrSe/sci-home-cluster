@@ -26,8 +26,6 @@ async def get_syncthing_status(
     Get Syncthing sync service status.
     Returns information about the service state and Syncthing folder.
     """
-    service = get_syncthing_service(request)
-
     # Check if Syncthing is configured
     if not settings.SYNCTHING_ROOT or not Path(settings.SYNCTHING_ROOT).exists():
         raise syncthing_unavailable(
@@ -35,7 +33,61 @@ async def get_syncthing_status(
             "Set SYNCTHING_ROOT env var and restart the API server."
         )
 
-    status_data = service.get_status()
+    # Get service from app state, handle if not started
+    service = getattr(request.app.state, "syncthing_service", None)
+    if service is None:
+        # Service not started yet - return basic status without Syncthing-specific info
+        return {
+            "running": False,
+            "root_path": settings.SYNCTHING_ROOT,
+            "jobs_dir_exists": Path(settings.SYNCTHING_ROOT / "jobs").exists(),
+            "nodes_dir_exists": Path(settings.SYNCTHING_ROOT / "nodes").exists(),
+            "processed_files_count": 0,
+            "jobs_folder": {
+                "exists": Path(settings.SYNCTHING_ROOT / "jobs").exists(),
+                "path": str(Path(settings.SYNCTHING_ROOT / "jobs")),
+                "state_files": 0,
+            },
+            "nodes_folder": {
+                "exists": Path(settings.SYNCTHING_ROOT / "nodes").exists(),
+                "path": str(Path(settings.SYNCTHING_ROOT / "nodes")),
+                "state_files": 0,
+            },
+            "gui": {
+                "host": settings.SYNCTHING_GUI_HOST,
+                "port": settings.SYNCTHING_GUI_PORT,
+                "url": f"http://{settings.SYNCTHING_GUI_HOST}:{settings.SYNCTHING_GUI_PORT}",
+                "reachable": settings.SYNCTHING_GUI_HOST != "127.0.0.1",
+            },
+        }
+
+    try:
+        status_data = service.get_status()
+    except Exception:
+        # Service exists but get_status failed
+        return {
+            "running": False,
+            "root_path": settings.SYNCTHING_ROOT,
+            "jobs_dir_exists": Path(settings.SYNCTHING_ROOT / "jobs").exists(),
+            "nodes_dir_exists": Path(settings.SYNCTHING_ROOT / "nodes").exists(),
+            "processed_files_count": 0,
+            "jobs_folder": {
+                "exists": Path(settings.SYNCTHING_ROOT / "jobs").exists(),
+                "path": str(Path(settings.SYNCTHING_ROOT / "jobs")),
+                "state_files": 0,
+            },
+            "nodes_folder": {
+                "exists": Path(settings.SYNCTHING_ROOT / "nodes").exists(),
+                "path": str(Path(settings.SYNCTHING_ROOT / "nodes")),
+                "state_files": 0,
+            },
+            "gui": {
+                "host": settings.SYNCTHING_GUI_HOST,
+                "port": settings.SYNCTHING_GUI_PORT,
+                "url": f"http://{settings.SYNCTHING_GUI_HOST}:{settings.SYNCTHING_GUI_PORT}",
+                "reachable": settings.SYNCTHING_GUI_HOST != "127.0.0.1",
+            },
+        }
 
     # Add folder info
     jobs_dir = Path(settings.SYNCTHING_ROOT) / "jobs"
