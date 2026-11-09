@@ -1225,7 +1225,7 @@ class ProcessTree:
                 completed.stderr.strip(),
             )
 
-    def verify(self, timeout_s: float) -> bool:
+    def verify(self, timeout_s: float) -> bool:  # noqa: C901
         """``True`` when the tree is verifiably gone. Blocks; run off the loop.
 
         Only meaningful after a tier has run -- :meth:`stop_gracefully` or
@@ -1266,6 +1266,38 @@ class ProcessTree:
         """
         deadline = time.monotonic() + timeout_s
         while True:
+            # POSIX: a forking shell (e.g. dash) makes ``proc`` an
+            # intermediate process whose exit does not imply the rest of the
+            # process group is gone. Treat the whole group as the thing being
+            # verified, so a surviving descendant is reported as such rather
+            # than as a clean stop. ``os.killpg(pgid, 0)`` succeeds while any
+            # member of the group is alive and raises ``ProcessLookupError``
+            # once the group is empty.
+            if sys.platform != "win32":
+                _poll = getattr(self._proc, "poll", None)
+                if _poll is None or _poll() is None:
+                    # The launcher is still alive (or we cannot tell), so the
+                    # group is treated as alive.
+                    group_alive = True
+                else:
+                    # Reap the launcher so it does not linger as a zombie in
+                    # its own process group and make the group look alive.
+                    try:
+                        self._proc.wait(timeout=0)
+                    except subprocess.TimeoutExpired:
+                        pass
+                    try:
+                        os.killpg(self._proc.pid, 0)
+                        group_alive = True
+                    except ProcessLookupError:
+                        group_alive = False
+                    except OSError:
+                        group_alive = False
+                if group_alive:
+                    if time.monotonic() >= deadline:
+                        return False
+                    time.sleep(STOP_VERIFY_POLL_S)
+                    continue
             outstanding = self._outstanding()
             if outstanding is None:
                 return False

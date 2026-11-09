@@ -527,6 +527,11 @@ async def test_a_grandchild_that_outlives_its_parent_is_not_a_clean_stop(
         kill_anything_left_alive(recorded)
 
 
+@pytest.mark.skipif(
+    sys.platform != "win32",
+    reason="degraded (no job object) mode is a Windows-specific concept; "
+    "POSIX process-group control still reaches the tree",
+)
 async def test_a_degraded_node_says_it_could_not_confirm_the_stop(
     harness: Harness,
     tree_script: Callable[..., Tree],
@@ -653,6 +658,10 @@ def broken_snapshot(monkeypatch: pytest.MonkeyPatch) -> BrokenSnapshotKernel32:
     return kernel32
 
 
+@pytest.mark.skipif(
+    sys.platform != "win32",
+    reason="broken process-snapshot probe is a Windows-specific concept",
+)
 async def test_a_stop_cannot_be_confirmed_is_never_reported_as_a_clean_one(
     harness: Harness,
     tree_script: Callable[..., Tree],

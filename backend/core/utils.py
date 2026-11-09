@@ -139,6 +139,12 @@ def is_loopback_ip(ip: Optional[str]) -> bool:
 
     try:
         addr = ipaddress.ip_address(ip)
+        # IPv4-mapped IPv6 addresses (::ffff:a.b.c.d) are not considered
+        # loopback by Python's is_loopback for the IPv6 form, so unwrap and
+        # check the embedded IPv4 address as well.
+        ipv4_mapped = getattr(addr, "ipv4_mapped", None)
+        if isinstance(addr, ipaddress.IPv6Address) and ipv4_mapped is not None:
+            return bool(ipv4_mapped.is_loopback)
         return addr.is_loopback
     except ValueError:
         logger.debug("Invalid IP address for loopback check: %s", ip)
