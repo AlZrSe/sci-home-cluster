@@ -159,7 +159,7 @@ RUN apt-get update \
         amd64|arm64|arm|386) ARCH="$TARGETARCH" ;; \
         *) echo "unsupported architecture: $TARGETARCH" >&2; exit 1 ;; \
     esac \
- && curl -fsSL \
+ && curl -fsSL --retry 5 --retry-delay 5 --retry-all-errors \
          "https://github.com/syncthing/syncthing/releases/download/v${SYNCTHING_VERSION}/syncthing-linux-${ARCH}-v${SYNCTHING_VERSION}.tar.gz" \
          -o /tmp/syncthing.tar.gz \
  && tar -xzf /tmp/syncthing.tar.gz -C /tmp \
