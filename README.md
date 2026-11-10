@@ -391,6 +391,41 @@ cd frontend && npm run build
 cd backend && gunicorn main:app -w 4 -k uvicorn.workers.UvicornWorker --bind 0.0.0.0:8000
 ```
 
+### Portable binary
+
+Build a single-file executable that embeds the backend and the built frontend:
+
+```bash
+cd frontend && npm run build
+python scripts/build_app.py
+```
+
+The resulting `dist/shc` (Linux) or `dist/shc.exe` (Windows) runs without Python or
+Node. State (SQLite database and JWT signing key) is written beside the binary by
+default, or redirected via `SHC_DATA_DIR`, `SHC_STATE_DIR` and `DATABASE_URL`. The
+binary accepts `--host`, `--port` and `--log-level`.
+
+| Area | Command |
+|------|---------|
+| Build app exe | `python scripts/build_app.py` (after building frontend) |
+
+### Portable binary
+
+Operators without Python or Node can run the prebuilt `shc` / `shc.exe`, which
+bundles the backend and the embedded frontend. State (SQLite database and JWT
+signing key) is written beside the binary by default, or overridden via
+`SHC_DATA_DIR`, `SHC_STATE_DIR` and `DATABASE_URL`.
+
+To build locally (frontend must be built first):
+
+```bash
+cd frontend && npm run build
+python scripts/build_app.py            # current OS
+python scripts/build_app.py --publish  # also copy into dist/published
+```
+
+On Windows the unsigned executable may trigger SmartScreen.
+
 ### Worker Agent (on each compute node)
 
 The agent is **file-only**: it never opens a network connection to the backend and holds no

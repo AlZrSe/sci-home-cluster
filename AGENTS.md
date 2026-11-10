@@ -18,7 +18,8 @@ Distributed platform for running scientific workloads on a home GPU cluster.
 | Backend lint | `ruff check . && ruff format --check . && mypy .` (all three from the repository **root**; `--check`, not the bare formatter — see below) |
 | Backend test | `pytest --cov=backend` |
 | Build agent exe | `python scripts/build_agent.py` |
-| **CI** | `.github/workflows/ci.yml` — four jobs, no edges: `backend-gates`, `frontend-gates`, `compose-suite`, `e2e`. Push or PR to `main`; weekly Monday 06:17 UTC; manual dispatch. All four are required status checks on `main`. |
+| Build app exe | `python scripts/build_app.py` (after building frontend) |
+| **CI** | `.github/workflows/ci.yml` — six jobs, no edges: `backend-gates`, `frontend-gates`, `compose-suite`, `e2e` (required) plus `build-agent`, `build-app` (non-required). Push or PR to `main`; weekly Monday 06:17 UTC; manual dispatch. Four required status checks on `main`. |
 | Compose test | `make test-compose` (**opt-in, destructive-adjacent** — creates and deletes `shc-e2e-*` volumes, never `shc-data`/`shc-state`; needs Docker; see `docker/README.md` §"Testing the compose file") |
 | API server | `uvicorn backend.main:app --reload` |
 | Worker agent | `run-agent --node-id node-01` (needs `SYNCTHING_ROOT` set; see README "Worker Agent") |

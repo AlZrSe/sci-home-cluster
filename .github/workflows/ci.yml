@@ -757,3 +757,60 @@ jobs:
         with:
           name: agent-${{ matrix.target }}
           path: syncthing/run-agent*
+  # -------------------------------------------------------------------------
+  build-app:
+    name: build-app (${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: linux
+          - os: windows-latest
+            target: windows
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - name: Set up Node ${{ env.NODE_VERSION }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Build frontend (SPA mode)
+        working-directory: frontend
+        run: |
+          npm ci
+          npm run build
+          test -f .output/public/_shell.html
+
+      - name: Set up Python ${{ env.PYTHON_VERSION }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install build dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev,build]"
+
+      - name: Build app
+        run: python scripts/build_app.py --target ${{ matrix.target }}
+
+      - name: Smoke test frozen binary
+        shell: bash
+        run: |
+          if [ "${{ matrix.target }}" = "linux" ]; then
+            ./dist/shc --help
+          else
+            ./dist/shc.exe --help
+          fi
+
+      - name: Upload app binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-${{ matrix.target }}
+          path: dist/shc*
