@@ -53,7 +53,10 @@ def build_pyinstaller_argv(target: str) -> list[str]:
     for hidden in HIDDEN_IMPORTS:
         argv += ["--hidden-import", hidden]
     for src, dest in DATA_FILES:
-        argv += ["--add-data", f"{src}{os.pathsep}{dest}"]
+        # Resolve relative to the repository root so PyInstaller does not
+        # interpret the source path against the spec file's directory.
+        src_abs = (REPO_ROOT / src).resolve()
+        argv += ["--add-data", f"{src_abs}{os.pathsep}{dest}"]
     argv.append("scripts/run_app_entry.py")
     return argv
 

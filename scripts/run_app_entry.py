@@ -41,8 +41,10 @@ def main(argv: list[str] | None = None) -> int:
 
     import uvicorn
 
+    from backend.main import app
+
     uvicorn.run(
-        "backend.main:app",
+        app,
         host=args.host,
         port=args.port,
         log_level=args.log_level,
