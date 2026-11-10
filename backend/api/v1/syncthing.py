@@ -228,10 +228,12 @@ async def trigger_syncthing_scan(
 @router.api_route(
     "/gui",
     methods=["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"],
+    include_in_schema=False,
 )
 @router.api_route(
     "/gui/{path:path}",
     methods=["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"],
+    include_in_schema=False,
 )
 async def proxy_syncthing_gui(request: Request, path: str = ""):
     upstream_path = "/" + path.lstrip("/") if path else "/"
@@ -241,6 +243,7 @@ async def proxy_syncthing_gui(request: Request, path: str = ""):
 @proxy_router.api_route(
     "/{path:path}",
     methods=["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"],
+    include_in_schema=False,
 )
 async def proxy_syncthing_rest(request: Request, path: str = ""):
     upstream_path = "/rest/" + path.lstrip("/") if path else "/rest/"
