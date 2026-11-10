@@ -452,6 +452,8 @@ app.include_router(
 app.include_router(
     syncthing.router, prefix=f"{settings.API_V1_STR}/syncthing", tags=["syncthing"]
 )
+# Reverse proxy for the embedded Syncthing GUI (loopback-only daemon).
+app.include_router(syncthing.proxy_router, prefix="/rest", tags=["syncthing-proxy"])
 
 
 # Registered only when the SPA is not being served. Both cannot answer for "/",

@@ -3,14 +3,72 @@ Syncthing API endpoints.
 Provides status and manual scan trigger for Syncthing synchronization.
 """
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Request, Response
 from pathlib import Path
+import httpx
 from backend.core.config import settings
 from backend.core.deps import get_current_token_payload
 from backend.core.errors import syncthing_unavailable
 from backend.services.syncthing_service import SyncthingService
 from shared.schemas.syncthing_status import SyncthingStatus
 from shared.schemas import HTTPValidationError
+
+# Reverse proxy for the embedded Syncthing GUI (Docker compose / co-located).
+# Exposes the loopback-only Syncthing web UI through the backend's single
+# public port so the iframe in SyncthingDashboard can render it.
+proxy_router = APIRouter()
+
+_HOP_BY_HOP = {
+    "connection",
+    "keep-alive",
+    "proxy-authenticate",
+    "proxy-authorization",
+    "te",
+    "trailers",
+    "transfer-encoding",
+    "upgrade",
+    "content-encoding",
+    "content-length",
+}
+
+
+async def _proxy_to_syncthing(request: Request, upstream_path: str) -> Response:
+    """Forward an HTTP request to the co-located Syncthing GUI."""
+    # Reuse the standard auth (incl. localhost bypass + auth cookie).
+    await get_current_token_payload(request)
+
+    base = f"http://{settings.SYNCTHING_GUI_HOST}:{settings.SYNCTHING_GUI_PORT}"
+    url = base + upstream_path
+    if request.url.query:
+        url = f"{url}?{request.url.query}"
+
+    body = await request.body()
+    headers = {}
+    for k, v in request.headers.items():
+        if k.lower() in _HOP_BY_HOP or k.lower() == "host":
+            continue
+        headers[k] = v
+
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        upstream = await client.request(
+            request.method,
+            url,
+            headers=headers,
+            content=body if body else None,
+        )
+
+    resp_headers = {}
+    for k, v in upstream.headers.items():
+        if k.lower() in _HOP_BY_HOP:
+            continue
+        resp_headers[k] = v
+
+    return Response(
+        content=upstream.content,
+        status_code=upstream.status_code,
+        headers=resp_headers,
+        media_type=upstream.headers.get("content-type"),
+    )
 
 router = APIRouter()
 
@@ -160,3 +218,30 @@ async def trigger_syncthing_scan(
         "scanned": result["scanned"],
         "total_processed": result["total_processed"],
     }
+
+
+# ---------------------------------------------------------------------------
+# Reverse proxy for the embedded Syncthing GUI (Docker compose / co-located).
+# ---------------------------------------------------------------------------
+
+
+@router.api_route(
+    "/gui",
+    methods=["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"],
+)
+@router.api_route(
+    "/gui/{path:path}",
+    methods=["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"],
+)
+async def proxy_syncthing_gui(request: Request, path: str = ""):
+    upstream_path = "/" + path.lstrip("/") if path else "/"
+    return await _proxy_to_syncthing(request, upstream_path)
+
+
+@proxy_router.api_route(
+    "/{path:path}",
+    methods=["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"],
+)
+async def proxy_syncthing_rest(request: Request, path: str = ""):
+    upstream_path = "/rest/" + path.lstrip("/") if path else "/rest/"
+    return await _proxy_to_syncthing(request, upstream_path)
