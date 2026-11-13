@@ -172,6 +172,12 @@ async def lifespan(app: FastAPI):
     syncthing_service = SyncthingService(Path(settings.SYNCTHING_ROOT))
     await syncthing_service.start()
     app.state.syncthing_service = syncthing_service
+    try:
+        from backend.mcp.runtime import set_syncthing_service
+
+        set_syncthing_service(syncthing_service)
+    except Exception:
+        pass
     logger.info("Syncthing service started")
 
     yield
@@ -454,6 +460,20 @@ app.include_router(
 )
 # Reverse proxy for the embedded Syncthing GUI (loopback-only daemon).
 app.include_router(syncthing.proxy_router, prefix="/rest", tags=["syncthing-proxy"])
+
+# MCP (Model Context Protocol) SSE/HTTP transport (issue #163).
+if settings.MCP_ENABLED:
+    try:
+        from backend.mcp.transports.sse import router as mcp_router
+
+        app.include_router(
+            mcp_router,
+            prefix=settings.MCP_SSE_PATH,
+            tags=["mcp"],
+            include_in_schema=False,
+        )
+    except Exception as e:
+        logger.warning("MCP transport not mounted: %s", e)
 
 
 # Registered only when the SPA is not being served. Both cannot answer for "/",

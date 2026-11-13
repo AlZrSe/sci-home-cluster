@@ -672,6 +672,17 @@ class Settings(BaseSettings):
     # Can be explicitly overridden with ENABLE_API_DOCS=true/false.
     ENABLE_API_DOCS: bool = False
 
+    # MCP (Model Context Protocol) support (issue #163)
+    MCP_ENABLED: bool = True
+    MCP_READ_ONLY: bool = False
+    MCP_TOOL_ALLOWLIST: Optional[str] = None
+    MCP_TOOL_DENYLIST: Optional[str] = None
+    MCP_AUDIT_LOG_PATH: Optional[str] = None
+    MCP_SSE_PATH: str = "/mcp"
+    SHC_BACKEND_URL: Optional[str] = None
+    SHC_MCP_TOKEN: Optional[str] = None
+    MCP_SCOPE_TOKEN_CLAIM: str = "mcp_scope"
+
     model_config = SettingsConfigDict(
         case_sensitive=True,
         env_file=_REPO_ROOT / ".env",
