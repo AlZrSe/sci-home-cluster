@@ -194,3 +194,4 @@ exclude = ["test*", "docs*", "docker*", "frontend*", "stubs*", "node_modules*", 
 [project.scripts]
 sci-run = "cli.command:main"
 run-agent = "agent.run_agent:main"
+run-mcp = "backend.mcp.transports.stdio:main"
