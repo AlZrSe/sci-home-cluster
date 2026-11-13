@@ -18,7 +18,7 @@ from backend.mcp.runtime import set_syncthing_service, get_syncthing_service
 
 logger = logging.getLogger("mcp.sse")
 
-router = APIRouter()
+router = APIRouter(include_in_schema=False)
 
 # Shared server instance (created on first use)
 _server = None

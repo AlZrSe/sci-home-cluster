@@ -466,7 +466,12 @@ if settings.MCP_ENABLED:
     try:
         from backend.mcp.transports.sse import router as mcp_router
 
-        app.include_router(mcp_router, prefix=settings.MCP_SSE_PATH, tags=["mcp"])
+        app.include_router(
+            mcp_router,
+            prefix=settings.MCP_SSE_PATH,
+            tags=["mcp"],
+            include_in_schema=False,
+        )
     except Exception as e:
         logger.warning("MCP transport not mounted: %s", e)
 
