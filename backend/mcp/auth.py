@@ -47,7 +47,9 @@ async def http_payload_from_request(request) -> Dict[str, Any]:
     return await get_current_token_payload(request)
 
 
-def localhost_bypass_payload_for_host(host: Optional[str], client_host: Optional[str]) -> Optional[Dict[str, Any]]:
+def localhost_bypass_payload_for_host(
+    host: Optional[str], client_host: Optional[str]
+) -> Optional[Dict[str, Any]]:
     mode = settings.localhost_bypass_mode
     if mode.value == "disabled":
         return None

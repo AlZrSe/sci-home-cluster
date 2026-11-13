@@ -70,6 +70,7 @@ async def _proxy_to_syncthing(request: Request, upstream_path: str) -> Response:
         media_type=upstream.headers.get("content-type"),
     )
 
+
 router = APIRouter()
 
 
