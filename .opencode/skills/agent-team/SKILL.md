@@ -16,7 +16,7 @@ I orchestrate a team of specialized agents to develop software with clear role s
 4. The Tester (QA) agent runs the tests, verifies each acceptance criterion with evidence, and reports pass/fail status.
 5. If QA rejects the implementation (fails tests or doesn't meet acceptance criteria), the task returns to the SWE with specific feedback for fixes.
 6. If QA accepts the implementation, the PM performs a final acceptance review from the user's perspective, verifying it solves the original problem.
-7. Only after PM acceptance does the orchestrator commit the code to the main branch and close the task in the tracker.
+7. Only after PM acceptance does the orchestrator merge the feature branch to the main branch via Pull Request (after all CI checks pass) and close the task in the tracker. Feature work is never committed directly to `main`.
 8. I track tasks using either GitHub Issues or a file-based tracker where filenames encode state (e.g., .todo.md, .groomed.md, .in-progress.md, .done.md).
 9. The On-Call Engineer role monitors CI/CD pipelines after code is pushed and fixes any pipeline failures that occur.
 
@@ -50,6 +50,7 @@ For each task in the backlog:
 
 ### Process Adherence
 - Enforce that code is only committed to main branch after PM acceptance
+- **New features must be developed on a dedicated feature branch** (`task/<issue-number>-<short-desc>`), never directly on `main`. The branch is merged to `main` only via Pull Request, and only after all CI checks pass (the four required jobs: `backend-gates`, `frontend-gates`, `compose-suite`, `e2e`). Direct commits to `main` for feature work are prohibited.
 - Use the On-Call Engineer only when CI/CD pipeline failures occur after code push
 - Refer to PROCESS.md in the repository for detailed workflow guidance
 - Update CLAUDE.md with project-specific instructions as needed

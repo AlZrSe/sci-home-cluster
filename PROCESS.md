@@ -44,7 +44,8 @@ We use GitHub Issues as our backtrack with the following labels:
 - Implements features based on PM's specification
 - Writes unit and integration tests
 - Works on `groomed` issues, moves to `in-progress` when starting
-- Opens Pull Request when implementation is complete
+- Creates a dedicated feature branch `task/<issue-number>-<short-desc>` and commits there; never commits feature work directly to `main`
+- Opens Pull Request from the feature branch to `main` when implementation is complete
 - Addresses feedback from QA
 
 ### 3. Tester/QA
@@ -58,6 +59,13 @@ We use GitHub Issues as our backtrack with the following labels:
 - Monitors CI/CD pipelines after code is pushed to main
 - Fixes any pipeline failures that occur
 - Only active after code is merged to main
+
+## Feature Branch & Merge Condition (MANDATORY)
+New features (and bug fixes / chores) must follow a branch-and-merge flow, never a direct commit to `main`:
+- **Branch**: SWE creates a dedicated feature branch `task/<issue-number>-<short-desc>` and implements + commits there. Direct commits/pushes to `main` for feature work are prohibited.
+- **Pull Request**: SWE opens a PR from the feature branch targeting `main`, including tests.
+- **Merge gate**: The branch is merged to `main` **only after** (a) all CI checks pass — the four required jobs `backend-gates`, `frontend-gates`, `compose-suite`, `e2e` — and (b) PM has performed final acceptance. A failing required check blocks the merge.
+- **Post-merge**: After a successful merge, the orchestrator invokes the On-Call Engineer to verify `main` stays green.
 
 ## Where the code lives
 
@@ -120,7 +128,7 @@ A task is considered done when:
 - [ ] No frontend lint/type errors (`cd frontend && npm run lint && npm run typecheck`) — and read `frontend/README.md#type-checking` first: `npm run typecheck` covers `src/` and the vitest suite but **not** `tests/e2e/**`, and `npm run build` does not check types at all
 - [ ] Documentation updated (README, API docs)
 - [ ] PM has performed final acceptance review
-- [ ] Code is merged to main branch via Pull Request
+- [ ] Feature branch `task/<issue-number>-<short-desc>` merged to `main` via Pull Request after all CI checks pass
 
 ## Branch Naming Convention
 
@@ -130,10 +138,12 @@ Example: `task/123-add-user-authentication`
 ## Pull Request Requirements
 
 All PRs must:
+- Originate from a feature branch `task/<issue-number>-<short-desc>` (never from `main`)
 - Target the `main` branch
 - Include tests for new functionality
-- Pass all CI checks
+- Pass all CI checks — the four required jobs `backend-gates`, `frontend-gates`, `compose-suite`, `e2e` (a failing required check blocks merge)
 - Be reviewed and approved by at least one team member
+- Be merged to `main` only after PM final acceptance
 - Squash and merge when possible
 
 ## Issue Templates

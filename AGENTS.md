@@ -86,6 +86,13 @@ This project uses the [agent-team skill](.opencode/skills/agent-team/SKILL.md) w
 
 This ensures the `main` branch always stays green. The On-Call Engineer should be invoked **automatically** by the orchestrator after every `git push origin main`.
 
+### Feature Branch & Merge Condition (MANDATORY)
+New features (and bug fixes / chores) must follow a branch-and-merge flow, never a direct commit to `main`:
+- **Branch**: The SWE creates a dedicated feature branch `task/<issue-number>-<short-desc>` (e.g. `task/3-api-server-core`) and implements + commits there. Direct commits/pushes to `main` for feature work are prohibited.
+- **Pull Request**: The SWE opens a PR from the feature branch targeting `main`, including tests.
+- **Merge gate**: The branch is merged to `main` **only after** (a) all CI checks pass — the four required jobs `backend-gates`, `frontend-gates`, `compose-suite`, `e2e` — and (b) PM has performed final acceptance. A failing required check blocks the merge.
+- **Post-merge**: After a successful merge, the orchestrator invokes the On-Call Engineer to verify `main` stays green (see "Post-Commit On-Call Engineer Rule").
+
 ### Issue Label Flow
 `ready-for-grooming` → `groomed` (PM) → `in-progress` (SWE) → `needs-review` (QA) → `done` (PM accepts)
 
@@ -245,8 +252,8 @@ strips types without checking them.
 ---
 
 ## Git & PR Conventions
-- **Branches**: `task/<issue-number>-<short-desc>` (e.g., `task/3-api-server-core`)
-- **PRs**: Target `main`, include tests, pass CI, 1 approval, squash merge
+- **Branches**: `task/<issue-number>-<short-desc>` (e.g., `task/3-api-server-core`). All feature/bugfix/chore work happens on a dedicated branch, never directly on `main`.
+- **PRs**: Target `main`, include tests, pass CI (all four required jobs: `backend-gates`, `frontend-gates`, `compose-suite`, `e2e`), 1 approval, squash merge. A feature branch is merged to `main` only after CI passes and PM acceptance.
 - **Commits**: Conventional commits (`feat:`, `fix:`, `refactor:`, `test:`, `docs:`)
 
 See: `PROCESS.md#branch-naming-convention`, `PROCESS.md#pull-request-requirements`
