@@ -105,7 +105,10 @@ class MCPServer:
             logger.exception("MCP handler error")
             if is_notification:
                 return None
-            return self._error(req_id, -32603, str(e))
+            code = -32603
+            if "resource not found" in str(e).lower():
+                code = -32002
+            return self._error(req_id, code, str(e))
 
         if is_notification:
             return None

@@ -92,8 +92,24 @@ async def jobs_logs_stream(ctx, args: dict) -> dict:
     if job is None:
         raise ValueError("job_not_found")
     available = service.log_stream_available(job_id)
-    # Return last N lines? Service may have log stream. We'll return available status.
-    return {"job_id": job_id, "available": available, "lines": []}
+    logs = await service.get_job_logs(job_id)
+    if logs is None:
+        logs = []
+    cursor = int(args.get("cursor") or 0)
+    page_size = 100
+    window = logs[cursor : cursor + page_size]
+    lines = [entry.line if hasattr(entry, "line") else str(entry) for entry in window]
+    next_cursor: "int | None" = cursor + len(lines)
+    if next_cursor is not None and next_cursor >= len(logs):
+        next_cursor = None
+    return {
+        "job_id": job_id,
+        "available": available,
+        "lines": lines,
+        "cursor": cursor,
+        "next_cursor": next_cursor,
+        "total": len(logs),
+    }
 
 
 async def jobs_commands_list(ctx, args: dict) -> dict:  # noqa: C901

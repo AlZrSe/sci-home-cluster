@@ -39,8 +39,8 @@ def register(server):
         "run_experiment",
         "Guide creation of a JobSpec and launch via jobs.create.",
         [
-            {"name": "name", "description": "Job name", "required": False},
-            {"name": "command", "description": "Command to run", "required": False},
+            {"name": "name", "description": "Job name", "required": True},
+            {"name": "command", "description": "Command to run", "required": True},
             {
                 "name": "working_dir",
                 "description": "Working directory",
