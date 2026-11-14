@@ -11,6 +11,8 @@
 §3 carries the decisions, §4 carries the code shapes. §5 is the acceptance
 checklist. No code is implemented by this spec.
 
+> **REMOVED**: Render.com deployment support was removed in issue #168. This spec is retained for historical reference only.
+
 ---
 
 ## 0. Baseline, as re-measured by PM

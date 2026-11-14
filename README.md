@@ -200,154 +200,28 @@ make check
 
 ### Docker Compose (single container, one port)
 
-The application is also a **single deployable unit**: one image that serves the SPA and the API on
-one origin and one port, so there is no CORS to configure and nothing to reverse-proxy in
-front of it. `docker-compose.yaml` sits at the repository root because the build context is the
-root.
+The application is a **single deployable unit**: one image serving the SPA and the
+API on one origin and one port. The full operational reference — build args,
+environment variables, volumes, production setup, localhost notes, and
+troubleshooting — lives in [`docker/README.md`](docker/README.md).
+
+Quick start from the repository root:
 
 ```bash
-# 1. The frontend is a git submodule; a plain clone leaves it empty and the
-#    build fails deliberately rather than shipping an image whose UI 404s.
 git clone --recurse-submodules https://github.com/AlZrSe/sci-home-cluster.git
-cd scientific-home-cluster
-
-# 2. Start it. There is nothing to configure.
+cd sci-home-cluster
 docker compose up -d
 docker compose ps          # "(healthy)" comes from the image's own HEALTHCHECK
 ```
 
-**No `.env` is required.** Both things that used to need one now have working
-defaults:
+No `.env` is required; `SHARED_TOKEN` is generated and persisted on first use.
+Open <http://localhost:8000> (SPA + API on one origin). See
+[`docker/README.md`](docker/README.md) for production setup, localhost-specific
+behaviour, volume locations, and more.
 
-| | Default | Override |
-| --- | --- | --- |
-| `SYNCTHING_ROOT` | `./syncthing` — a folder in this checkout, created and bind-mounted | put `SYNCTHING_ROOT` in a repository-root `.env` |
-| `SHARED_TOKEN` | **generated & persisted** on first use to `$SHC_STATE_DIR/shared_token` if unset (issue #64) | put `SHARED_TOKEN` in `.env` to choose your own |
+### CI Pipeline
 
-To read the generated token, and mint a JWT with it:
-
-```bash
-docker compose exec backend cat /app/.shc/shared_token
-```
-
-Then open <http://localhost:8000>. The SPA is served from `/` and every client-side route, the
-API is at `/api/v1`, the docs at `/docs`.
-
-**Prefer the token in `.env`?** `python docker/init_env.py` (or `make env-init`) seeds `.env`
-from `.env.example`, writes a 64-character token, creates `syncthing/` and is idempotent —
-`--show` prints the current one, `--rotate-token` replaces it. It needs Python on the host,
-which is exactly why nothing requires it any more.
-
-```bash
-# 3. Start it
-docker compose up -d
-docker compose ps          # "(healthy)" comes from the image's own HEALTHCHECK
-```
-
-Then open <http://localhost:8000>. The SPA is served from `/` and every client-side route, the
-API is at `/api/v1`, the docs at `/docs`.
-
-#### Getting a token to sign in with
-
-`SHARED_TOKEN` is not what you send to the API - it is exchanged for a short-lived JWT:
-
-```bash
-curl -X POST http://localhost:8000/api/v1/auth/token \
-  -H "Content-Type: application/json" \
-  -d '{"shared_token": "'"$(docker compose exec -T backend cat /app/.shc/shared_token)"'"}'
-```
-
-Opened as `http://localhost:8000`, the dashboard falls back to a localhost bypass and you may not
-need this at all - see [`SHARED_TOKEN`](#environment-variables). Reaching it from another machine
-(`http://192.168.x.x:8000`) is **outside** that bypass, so mint a real token there.
-
-#### Things that bite
-
-- **From another machine, the default API URL points at yourself.** `VITE_API_URL` is a
-  *build-time* constant baked into the JS bundle and defaults to `http://localhost:8000/api/v1`.
-  A browser on a different host will report the backend unreachable until you either rebuild with
-  an externally reachable URL, or set it once on the app's settings page. It must stay absolute -
-  the job-log WebSocket is derived with `base().replace(/^http/, "ws")`, and a relative base throws
-  in a browser.
-- **The published port is `8000:8000` on purpose**, and is not a variable, because it cannot be
-  derived from `VITE_API_URL`. Changing one without the other is the same trap.
-- **`SYNCTHING_ROOT` defaults to a real folder, not to nothing.** Unmounted, the backend would
-  create an empty `/tmp/syncthing` itself, report the cluster available because the directory it
-  just made exists, and no node would ever claim a submitted job. A project-local default you can
-  see in `ls` is much harder to get wrong than the required absolute path it replaced
-  ([#104](https://github.com/AlZrSe/sci-home-cluster/issues/104)).
-- **`docker compose down -v` deletes both volumes.** `shc-data` holds the database and losing it
-  loses the cluster; `shc-state` holds the JWT signing key and losing it invalidates every token
-  ever issued. Plain `docker compose down` keeps both.
-- **The worker agent is deliberately not a service here.** It runs on each compute node, needs that
-  node's GPU and its own Syncthing folder, and is documented in `agent/README.md`. See
-  [Worker Agent](#worker-agent-on-each-compute-node).
-- `run-agent` *is* on `PATH` inside the image, so `docker compose exec backend run-agent` will
-  actually run. Don't - it would run the one compute node inside the API container, behind the same
-  SQLite volume, executing arbitrary job commands.
-
-Full reference, including every environment variable the image understands:
-[`docker/README.md`](docker/README.md).
-
-### Deploy to Render.com
-
-The project includes a **Render Blueprint** (`render.yaml` at the repository root) for
-one-click deploys. Render is a managed PaaS; the container runs the API, frontend, and a
-Syncthing daemon on a single public port.
-
-**Prerequisites:**
-- Render account with the repository connected (GitHub integration)
-- A paid plan (**Starter** or above) — Render's free tier has no persistent disk, which is
-  required for the SQLite database, JWT signing key, and Syncthing state
-
-**Blueprint path (recommended):**
-1. Commit `render.yaml` (already in this repo)
-2. Render Dashboard → **New** → **Blueprint** → select this repository
-3. Render imports the service, disk, and env vars from `render.yaml` and starts the build
-
-**Manual path:**
-1. Render Dashboard → **New** → **Web Service** → **Docker**
-2. Dockerfile path: `docker/Dockerfile`, Docker context: `.` (repository root)
-3. Health check path: `/api/v1/health`
-4. Add a **Disk** mounted at `/app/data` (1 GB minimum)
-5. Set environment variables (see `render.yaml`):
-   - `SERVE_FRONTEND=true`
-   - `SHC_DATA_DIR=/app/data`
-   - `SHC_STATE_DIR=/app/data/syncthing` (JWT key lives here)
-   - `SYNCTHING_ROOT=/tmp/syncthing` (synced folder; **not** the Syncthing home)
-   - `SYNCTHING_HOME=/app/data/syncthing` (Syncthing identity, config, database — **on the disk**)
-   - `DB_POOL=null` (the only value that boots on async SQLAlchemy)
-   - `VITE_CLUSTER_BACKEND=http`
-   - `VITE_API_URL=https://<your-service>.onrender.com/api/v1`
-6. **Do not set `PORT`** — Render injects it automatically
-
-**How it works:**
-- The container binds to `${PORT:-8000}`; on Render `PORT` is injected (default 10000)
-- A single Render Disk at `/app/data` holds everything: SQLite DB, JWT signing key,
-  and Syncthing state (`config.xml`, `cert.pem`, `key.pem`, database)
-- `VITE_API_URL` is a build-time constant; it must be the public HTTPS URL.
-  If the service name changes, update `render.yaml` and redeploy, or retarget it once
-  on the app's Settings page (runtime override without rebuild)
-- The Syncthing daemon runs inside the container but its GUI (8384) and sync port (22000)
-  are **not publicly reachable** on Render (single public port). No peers will register;
-  jobs stay pending. This is expected for a Render deployment — see **Limitations** below.
-
-**Retrieve the generated token:**
-```bash
-# In Render Shell
-cat /app/data/syncthing/shared_token
-```
-
-**Limitations on Render:**
-- No worker agents (Render cannot run GPU workloads)
-- Syncthing runs locally but is not reachable for pairing (single public port)
-- Single disk: DB, JWT key, and Syncthing state share `/app/data`; a disk failure loses all three
-- `VITE_API_URL` is build-time; changing the public URL needs a rebuild (or Settings page override)
-- Submodule dependency: if Render stops initializing submodules, the build fails
-
-### CI/CD Pipeline
-
-The project uses GitHub Actions for CI/CD with two workflows:
+The project uses GitHub Actions for CI with one workflow:
 
 #### CI (`.github/workflows/ci.yml`)
 Runs on every PR and push to `main`. Four independent jobs:
@@ -358,29 +232,7 @@ Runs on every PR and push to `main`. Four independent jobs:
 
 All four are required status checks on `main`.
 
-#### CD (`.github/workflows/cd.yml`)
-Triggers automatically after CI passes on `main`:
-1. **Build & Push** — Builds the Docker image and pushes to GHCR (`ghcr.io/<owner>/<repo>:<sha>`, `:latest`)
-2. **Deploy Staging** — Triggers Render deploy to staging environment (auto-deploy)
-3. **Deploy Production** — **Manual approval required** — triggers Render deploy to production
-
-**Required GitHub Secrets for CD:**
-| Secret | Description |
-|--------|-------------|
-| `RENDER_API_KEY` | Render API key (Account → Settings → API Keys) |
-| `RENDER_SERVICE_ID_STAGING` | Render Service ID for staging (from service URL or API) |
-| `RENDER_SERVICE_ID_PRODUCTION` | Render Service ID for production |
-
-**To get a Render Service ID:**
-```bash
-# Via Render CLI
-render services list
-
-# Or from the service URL: https://dashboard.render.com/web/srv-<SERVICE_ID>
-```
-
-**GitHub Environments:**
-- `production` environment must exist with required reviewers for manual approval
+A separate CD workflow (`.github/workflows/cd.yml`) runs after CI passes on `main` and **only builds and publishes the Docker image to GHCR** (`ghcr.io/<owner>/<repo>:<sha>`, `:latest`). It does not deploy anywhere — operators pull the image from GHCR and run it locally via `docker compose` or `docker run`.
 
 ### Production Build
 ```bash
