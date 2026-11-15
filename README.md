@@ -260,6 +260,7 @@ binary accepts `--host`, `--port` and `--log-level`.
 | Area | Command |
 |------|---------|
 | Build app exe | `python scripts/build_app.py` (after building frontend) |
+| Build agent exe | `python scripts/build_agent.py` (wrappers: `scripts\build-agent.cmd`, `scripts\build-agent.ps1`, `scripts/build-agent.sh`) |
 
 ### Portable binary
 
@@ -297,6 +298,13 @@ run-agent --node-id node-01
 
 Flags: `--node-id` (required, also readable from `$NODE_ID`), `--syncthing-root` (optional, wins over
 `$SYNCTHING_ROOT`, expands `~` and relative paths), and `--log-level`.
+
+**First-run behavior.** On the first run (no `.env` at repository root, or missing required
+variables), the agent prompts to create `.env` from `.env.example` in interactive terminals. In
+non-interactive contexts (CI, systemd, Docker), it skips the prompt and logs a warning. Optional
+settings fall back to documented defaults with a consolidated `WARNING` log listing every defaulted
+value and how to override it. Required settings (`NODE_ID`, `SYNCTHING_ROOT`) always fail fast.
+See `agent/README.md` §"First Run Behavior" for details.
 
 **Configuration file.** The agent reads `<SYNCTHING_ROOT>/nodes/agent.toml`, so one edit configures
 the whole fleet — the file replicates with the folder. Keys are flat: `AGENT_LOG_LEVEL`,
@@ -458,6 +466,8 @@ sci-run logs <job-id> --follow
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | OTLP endpoint for traces/metrics | unset |
 | `OTEL_ENABLED` | Enable OpenTelemetry instrumentation | `true` |
 | `OTEL_SDK_DISABLED` | Disable SDK entirely | `false` |
+
+> **Note on agent variables:** The worker agent has its own environment variables (`NODE_ID`, `AGENT_LOG_LEVEL`, `AGENT_SHELL`, etc.) documented in `agent/README.md`. On first run, the agent prompts to create `.env` from `.env.example` in interactive terminals; in non-interactive contexts it uses documented defaults for optional settings and emits a consolidated `WARNING`. Required agent variables (`NODE_ID`, `SYNCTHING_ROOT`) always fail fast.
 
 #### Which database am I using?
 

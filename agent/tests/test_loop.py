@@ -46,10 +46,11 @@ pytestmark = pytest.mark.unit
 
 
 def settings_for(root: Path, **env: str) -> AgentSettings:
-    return build_settings(
+    settings, _ = build_settings(
         ["--node-id", "node-01"],
         environ={"SYNCTHING_ROOT": str(root), **env},
     )
+    return settings
 
 
 def quick_settings(root: Path) -> AgentSettings:
@@ -850,7 +851,7 @@ async def test_heartbeat_jitter_is_seeded_and_deterministic(
     """AC-5: Jitter seeded by (node_id, tick_count) produces deterministic values."""
     from agent.config import build_settings
 
-    settings = build_settings(
+    settings, _ = build_settings(
         ["--node-id", "node-01", "--syncthing-root", str(tmp_path)],
         environ={
             "SYNCTHING_ROOT": str(tmp_path),
@@ -895,7 +896,7 @@ async def test_heartbeat_jitter_range(
 
     interval = 1.0
     jitter = 0.3
-    settings = build_settings(
+    settings, _ = build_settings(
         ["--node-id", "node-01", "--syncthing-root", str(tmp_path)],
         environ={
             "SYNCTHING_ROOT": str(tmp_path),
@@ -937,7 +938,7 @@ async def test_agent_writes_heartbeat_immediately_on_startup(
     from agent.watcher import FolderWatcher
     from agent.loop import Agent
 
-    settings = build_settings(
+    settings, _ = build_settings(
         ["--node-id", "node-01", "--syncthing-root", str(tmp_path)],
         environ={
             "SYNCTHING_ROOT": str(tmp_path),
@@ -985,7 +986,7 @@ async def test_agent_writes_heartbeat_immediately_on_resume(
     from agent.loop import Agent
     import time
 
-    settings = build_settings(
+    settings, _ = build_settings(
         ["--node-id", "node-01", "--syncthing-root", str(tmp_path)],
         environ={
             "SYNCTHING_ROOT": str(tmp_path),

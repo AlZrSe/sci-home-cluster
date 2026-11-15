@@ -575,7 +575,7 @@ def agent_for(
         settings_env["AGENT_HEARTBEAT_INTERVAL_S"] = str(heartbeat_interval_s)
     if heartbeat_jitter_s is not None:
         settings_env["AGENT_HEARTBEAT_JITTER_S"] = str(heartbeat_jitter_s)
-    settings = build_settings(
+    settings, _ = build_settings(
         ["--node-id", node_id, "--syncthing-root", str(root)], environ=settings_env
     )
     paths = resolve_paths(

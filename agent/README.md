@@ -76,12 +76,21 @@ the same flags (`--node-id`, `--syncthing-root`, `--log-level`) and returns
 the same exit codes (0 clean, 1 config error, 2 internal error, 3 watcher
 dead, 4 grace expired) as `run-agent`.
 
-To build locally:
+To build locally (the binary is copied into `syncthing/` automatically):
 
 ```bash
-python scripts/build_agent.py            # current OS
-python scripts/build_agent.py --publish  # also copy into syncthing/
+python scripts/build_agent.py            # current OS; publishes into syncthing/
+python scripts/build_agent.py --no-publish  # build only, leave syncthing/ untouched
 ```
+
+Convenience wrappers (install the build extra, then build):
+- Windows CMD: `scripts\build-agent.cmd`
+- Windows PowerShell: `.\scripts\build-agent.ps1`
+- Linux/macOS: `./scripts/build-agent.sh`
+
+CI publishes both platform binaries as a single `agent-binaries` artifact
+(`syncthing/run-agent` + `syncthing/run-agent.exe`) that an operator can drop
+straight into a live Syncthing folder.
 
 On Windows the unsigned executable may trigger SmartScreen; choose "Run
 anyway". Some antivirus engines flag PyInstaller onefile binaries; if that
@@ -129,8 +138,67 @@ by design and only needs `SYNCTHING_ROOT`, `NODE_ID`, and optionally `AGENT_*`.
 | `NODE_ID` | yes | unique per node |
 | `AGENT_LOG_LEVEL` | no | default INFO |
 | `AGENT_SHELL` | no | default `auto` |
-| `AGENT_SHUTDOWN_GRACE_S` | no | default 10s |
+| `AGENT_SHUTDOWN_GRACE_S` | no | default 30s |
+| `AGENT_FOLDER_WATCH_INTERVAL_S` | no | default 30s |
+| `AGENT_FOLDER_RETRY_MAX_S` | no | default 60s |
+| `AGENT_WATCHER_LIVENESS_INTERVAL_S` | no | default 60s |
+| `AGENT_HEARTBEAT_INTERVAL_S` | no | default 22s |
+| `AGENT_HEARTBEAT_JITTER_S` | no | default 2s |
+| `AGENT_STATE_DIR` | no | default `<SYNCTHING_ROOT>/.agent/<NODE_ID>` |
 | `SHARED_TOKEN` | no | agent holds no credential; only backend uses it |
+
+## First Run Behavior
+
+On the first run (when no `.env` file exists at the repository root, or when required variables `NODE_ID` and `SYNCTHING_ROOT` are not set), the agent provides a guided setup experience:
+
+### Interactive Terminal (TTY)
+
+If you run `run-agent` in an interactive terminal without the required configuration:
+
+```bash
+$ run-agent --node-id node-01
+No .env file found at /path/to/repo/.env and required configuration is missing.
+Create one now from .env.example? [y/N]:
+```
+
+- **Press `y`**: The agent copies `.env.example` to `.env` at the repository root, shows the path, and re-checks configuration. You can then edit the `.env` file to set your values.
+- **Press `n`/`N`/Enter or wait 5 seconds**: The agent proceeds using **safe defaults for optional settings only** and emits a loud `WARNING` log listing every defaulted value and how to override it. Required settings (`NODE_ID`, `SYNCTHING_ROOT`) still fail fast with actionable error messages.
+
+### Non-Interactive / Service / Container
+
+In non-interactive contexts (CI, systemd, Docker without `-it`, piped input), the agent **skips the prompt entirely** and logs a single `WARNING`:
+
+```
+WARNING: Running in non-interactive mode; skipping .env creation prompt. Set NODE_ID and SYNCTHING_ROOT via environment or CLI flags.
+```
+
+It then proceeds to validation. Required variables still fail fast; optional variables use their documented defaults.
+
+### Defaulted Optional Settings Warning
+
+When optional settings fall back to defaults, a **single consolidated `WARNING`** is emitted after logging is configured, naming every defaulted value:
+
+```
+WARNING: Using default configuration for the following settings (override via CLI, env, or nodes/agent.toml):
+  LOG_LEVEL=INFO (default; override with --log-level or AGENT_LOG_LEVEL)
+  SHELL=auto (default; override with AGENT_SHELL)
+  SHUTDOWN_GRACE_S=30.0 (default; override with AGENT_SHUTDOWN_GRACE_S)
+  FOLDER_WATCH_INTERVAL_S=30.0 (default; override with AGENT_FOLDER_WATCH_INTERVAL_S)
+  FOLDER_RETRY_MAX_S=60.0 (default; override with AGENT_FOLDER_RETRY_MAX_S)
+  WATCHER_LIVENESS_INTERVAL_S=60.0 (default; override with AGENT_WATCHER_LIVENESS_INTERVAL_S)
+  HEARTBEAT_INTERVAL_S=22.0 (default; override with AGENT_HEARTBEAT_INTERVAL_S)
+  HEARTBEAT_JITTER_S=2.0 (default; override with AGENT_HEARTBEAT_JITTER_S)
+  AGENT_STATE_DIR=<SYNCTHING_ROOT>/.agent/<NODE_ID> (default; override with AGENT_STATE_DIR)
+Precedence: --flag > $ENV_VAR > nodes/agent.toml > default
+```
+
+**Explicit values from CLI flags, environment variables, or `nodes/agent.toml` never trigger the warning** for that setting.
+
+### Safety Guarantees
+
+- **`NODE_ID` and `SYNCTHING_ROOT` are NEVER defaulted** — they have no safe defaults and will always fail fast with actionable error messages if missing.
+- **Explicit configuration always wins** — CLI flags > environment variables > `nodes/agent.toml` > defaults.
+- **Non-interactive contexts never block** — the prompt is only shown when `stdin` is a TTY.
 
 ## Troubleshooting
 
