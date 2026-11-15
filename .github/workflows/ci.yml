@@ -758,29 +758,6 @@ jobs:
           name: agent-${{ matrix.target }}
           path: syncthing/run-agent*
   # -------------------------------------------------------------------------
-  publish-agent:
-    name: publish-agent
-    runs-on: ubuntu-latest
-    needs: build-agent
-    if: ${{ needs.build-agent.result == 'success' }}
-    steps:
-      - name: Download all agent artifacts
-        uses: actions/download-artifact@v4
-        with:
-          pattern: agent-*
-          path: .
-          merge-multiple: true
-      - name: Combine into single Syncthing tree
-        run: |
-          ls -la syncthing/
-          test -f syncthing/run-agent
-          test -f syncthing/run-agent.exe
-      - name: Upload combined agent binaries
-        uses: actions/upload-artifact@v4
-        with:
-          name: agent-binaries
-          path: syncthing/run-agent*
-  # -------------------------------------------------------------------------
   build-app:
     name: build-app (${{ matrix.target }})
     runs-on: ${{ matrix.os }}
