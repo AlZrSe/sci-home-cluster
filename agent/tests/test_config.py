@@ -36,7 +36,8 @@ def build(environ: dict[str, str], *argv: str) -> AgentSettings:
     ``build_settings`` defaults ``argv`` to ``sys.argv``, which is right for
     ``run-agent`` and wrong for a test; every call here names its own.
     """
-    return build_settings(list(argv), environ=environ)
+    settings, _ = build_settings(list(argv), environ=environ)
+    return settings
 
 
 def write_config(root: Path, body: str) -> Path:

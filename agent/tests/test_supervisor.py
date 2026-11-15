@@ -155,7 +155,7 @@ async def test_liveness_task_is_the_only_critical_one(tmp_path: Path) -> None:
     consumer needs it; a test whose job is pinning production wiring reads it
     anyway.
     """
-    settings = build_settings(
+    settings, _ = build_settings(
         ["--node-id", "node-01", "--syncthing-root", str(tmp_path)],
         environ={},
     )

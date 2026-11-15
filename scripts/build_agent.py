@@ -81,10 +81,16 @@ def publish(target: str) -> Path:
     shutil.copy2(src, dest)
     # Keep the sample environment file in sync with the published executable so
     # operators copying the agent binary into a Syncthing folder also get the
-    # current .env.example beside it.
-    env_example_src = REPO_ROOT / ".env.example"
-    if env_example_src.is_file():
-        shutil.copy2(env_example_src, dest.parent / ".env.example")
+    # current agent-only environment template beside it. Only agent-specific
+    # variables belong here; backend/app variables live in the root .env.example.
+    # Publish under both names: .env.example (the conventional name) and
+    # .env.sample (the name Syncthing's default .stignore actually replicates).
+    env_template_src = REPO_ROOT / "agent" / ".env.example"
+    if not env_template_src.is_file():
+        env_template_src = REPO_ROOT / "agent" / ".env.sample"
+    if env_template_src.is_file():
+        shutil.copy2(env_template_src, dest.parent / ".env.example")
+        shutil.copy2(env_template_src, dest.parent / ".env.sample")
     return dest
 
 
@@ -93,7 +99,18 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--target", choices=["linux", "windows"], default=_default_target()
     )
-    parser.add_argument("--publish", action="store_true")
+    parser.add_argument(
+        "--publish",
+        action="store_true",
+        default=True,
+        help="Copy the built binary into the Syncthing folder root (default: on).",
+    )
+    parser.add_argument(
+        "--no-publish",
+        dest="publish",
+        action="store_false",
+        help="Build only; do not copy into the Syncthing folder.",
+    )
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args(argv)
 

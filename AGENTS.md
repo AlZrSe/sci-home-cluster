@@ -17,7 +17,7 @@ Distributed platform for running scientific workloads on a home GPU cluster.
 | Frontend test | `cd frontend && npm test` (vitest unit + integration; e2e is `npm run test:e2e`) |
 | Backend lint | `ruff check . && ruff format --check . && mypy .` (all three from the repository **root**; `--check`, not the bare formatter — see below) |
 | Backend test | `pytest --cov=backend` |
-| Build agent exe | `python scripts/build_agent.py` |
+| Build agent exe | `python scripts/build_agent.py` (wrappers: `scripts\build-agent.cmd`, `scripts\build-agent.ps1`, `scripts/build-agent.sh`) |
 | Build app exe | `python scripts/build_app.py` (after building frontend) |
 | **CI** | `.github/workflows/ci.yml` — six jobs, no edges: `backend-gates`, `frontend-gates`, `compose-suite`, `e2e` (required) plus `build-agent`, `build-app` (non-required). Push or PR to `main`; weekly Monday 06:17 UTC; manual dispatch. Four required status checks on `main`. |
 | Compose test | `make test-compose` (**opt-in, destructive-adjacent** — creates and deletes `shc-e2e-*` volumes, never `shc-data`/`shc-state`; needs Docker; see `docker/README.md` §"Testing the compose file") |
@@ -107,6 +107,14 @@ All tasks and bugs should be managed exclusively through GitHub Issues, not loca
 - Automatic linking of commits, branches, and PRs to issues
 
 Never create or modify local task files (e.g., .todo.md, .groomed.md) as they will be ignored by the workflow.
+
+**Labeling on creation (mandatory):** Every newly created GitHub issue must be assigned the
+corresponding labels at creation time, not after the fact. At minimum, set a type label
+(`enhancement`, `bug`, `documentation`, `chore`, etc.) and the initial workflow-state label
+`ready-for-grooming` (or the appropriate state if the issue is filed mid-flow). Use
+`gh issue create --label "..."` (or add labels immediately after creation) so the issue
+enters the label flow with the correct type and state. Issues created without labels are
+not considered groomed/tracked and must be corrected before work proceeds.
 
 ### Code Commit Convention
 After every agent team cycle (PM grooming, SWE implementation, QA verification), the orchestrator should commit any code changes to the repository with a descriptive commit message following conventional commits format. This ensures that progress is tracked and the main branch remains stable.
