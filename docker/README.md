@@ -275,6 +275,80 @@ Everything else the image bakes (`SERVE_FRONTEND`, `FRONTEND_DIR`,
 `SHC_DATA_DIR`, `PYTHONPATH`) is inherited by `docker compose` rather than
 re-stated there, so this image remains the single source of truth for them.
 
+## Production setup with Docker Compose (real database)
+
+The default `docker compose up -d` is a **development-friendly** single-container
+setup: it generates a shared token, seeds no demo data, and keeps the SQLite
+database in the named volume `shc-data`. For a **production** deployment that uses
+a **real database** (persistent, not demo/seeded), run it like this:
+
+```bash
+# 1. Clone recursively (frontend is a submodule)
+git clone --recurse-submodules https://github.com/AlZrSe/sci-home-cluster.git
+cd sci-home-cluster
+
+# 2. Create a production .env at the repository root
+cat > .env <<'EOF'
+ENVIRONMENT=production
+SEED_DEMO_DATA=false
+SHARED_TOKEN=<a-long-random-secret>
+LOCALHOST_BYPASS=false
+LOCALHOST_BYPASS_MODE=disabled
+VITE_API_URL=https://cluster.example.com/api/v1
+EOF
+
+# 3. Point Syncthing at your real shared folder (edit SYNCTHING_ROOT in .env)
+#    SYNCTHING_ROOT=/mnt/syncthing-shared
+
+# 4. Build and start with the externally reachable API URL baked in
+VITE_API_URL=https://cluster.example.com/api/v1 docker compose up -d --build
+
+# 5. Verify
+docker compose ps                      # expect "(healthy)"
+```
+
+Key points for a production / real-database deployment:
+
+- **Real database, not demo data.** `SEED_DEMO_DATA=false` (the default) keeps the
+  database empty until real agents register and real jobs are submitted.
+- **Persistent database.** The SQLite database lives in the named volume `shc-data`
+  (`/app/data/scientific_home_cluster.db`). It survives `docker compose down` and
+  container replaces. **Never** run `docker compose down -v` in production.
+- **Real shared token.** Set `SHARED_TOKEN` explicitly in `.env`.
+- **No localhost bypass.** Set `LOCALHOST_BYPASS=false` (or
+  `LOCALHOST_BYPASS_MODE=disabled`).
+- **API docs off.** With `ENVIRONMENT=production`, `/docs`, `/redoc` and
+  `/openapi.json` are disabled unless `ENABLE_API_DOCS=true`.
+- **Externally reachable URL.** `VITE_API_URL` is a build-time constant; rebuild
+  whenever it changes. It must be absolute.
+- **Back up the database.** Back up `shc-data` (and `shc-state` for the signing
+  key) regularly.
+
+## If the server is localhost
+
+When the whole stack runs on a single machine and is reached as
+`http://localhost:8000`, the defaults already do the right thing and no rebuild is
+needed:
+
+```bash
+docker compose up -d
+```
+
+- `VITE_API_URL` defaults to `http://localhost:8000/api/v1`.
+- The localhost auth bypass applies.
+- The real SQLite database still lives in the `shc-data` volume.
+- Keep `SEED_DEMO_DATA=false` for a real database.
+
+## Where is the `shc-data` volume content?
+
+`shc-data` is a **Docker named volume**, mounted at `/app/data` inside the
+container, holding `/app/data/scientific_home_cluster.db` plus WAL sidecars.
+
+- Inspect: `docker volume inspect shc-data`
+- Linux host path: `/var/lib/docker/volumes/shc-data/_data`
+- Docker Desktop: inside the VM; use `docker cp` or a helper container.
+- Back up with `tar` as shown in the compose tests.
+
 ## How the frontend is served
 
 This needed a decision that is not obvious from the file list, so it is worth
@@ -485,90 +559,3 @@ proportion, and C-1's job is done by M-2.1's known-file self-check.
   The first real `docker build` is what confirms the SPA build emits `_shell.html`
   on this submodule revision. On a machine **with** Docker, the opt-in suite
   above does that and much more — see [Testing the compose file](#testing-the-compose-file).
-
-## Deploying on Render.com
-
-### Prerequisites
-
-- A Render account with the repository connected (GitHub integration).
-- The `frontend/` submodule initialised in the checkout Render builds from —
-  verify with a successful local `docker build -f docker/Dockerfile .`. Render's
-  GitHub integration is expected to check out submodules into the build context;
-  if it does not, the frontend stage fails loudly (no `_shell.html`) rather than
-  shipping a 404ing image.
-
-### Blueprint path (recommended)
-
-1. Commit `render.yaml` at the repository root.
-2. Render Dashboard → **New** → **Blueprint** → select this repository.
-3. Render imports the service, disk and env vars from `render.yaml` and starts
-   the first build.
-
-### Manual path
-
-1. Render Dashboard → **New** → **Web Service** → **Docker**.
-2. Dockerfile path: `docker/Dockerfile`, Docker context: `.` (repository root).
-3. Health check path: `/api/v1/health`.
-4. Add a **Disk** mounted at `/app/data` (1 GB minimum).
-5. Set environment variables as in `render.yaml` §envVars:
-   `SERVE_FRONTEND=true`, `SHC_DATA_DIR=/app/data`, `SHC_STATE_DIR=/app/data/.shc`,
-   `SYNCTHING_ROOT=/tmp/syncthing`, `DB_POOL=null`, `VITE_CLUSTER_BACKEND=http`,
-   `VITE_API_URL=https://<your-service>.onrender.com/api/v1`.
-6. Do **not** set `PORT` — Render injects it.
-
-### Port
-
-The container binds to `${PORT:-8000}`. On Render, `PORT` is injected (default
-10000 for web services); locally and under compose it falls back to 8000, so
-the existing `docker run` / `docker compose` paths are unchanged.
-
-### Disk
-
-A single Render Disk is mounted at `/app/data`. Both the SQLite database and
-the JWT signing key live inside it (`SHC_STATE_DIR=/app/data/.shc`), because
-Render permits one disk per web service. The disk survives deploys and restarts,
-so cluster state and issued tokens persist. Retrieve the generated token via
-Render Shell:
-
-    cat /app/data/.shc/shared_token
-
-### `VITE_API_URL`
-
-`VITE_API_URL` is a build-time constant. It must be the service's public HTTPS
-URL (`https://<service>.onrender.com/api/v1`). If the service name (and therefore
-URL) differs, update the value in `render.yaml` (or the dashboard) and redeploy.
-The frontend settings page can also retarget `apiBaseUrl` at runtime without a
-rebuild, which is the recovery path for a mismatched URL.
-
-### Syncthing daemon
-
-The image runs `syncthing` as a background process started by the entrypoint;
-uvicorn is PID 1. Behaviour:
-
-- State persists under `SYNCTHING_HOME` (default `/app/data/syncthing`) on the
-  disk/volume: identity (`cert.pem`/`key.pem`), `config.xml` and the Syncthing
-  database all live there, so the device identity survives a container replace.
-- The default folder is `SYNCTHING_ROOT` (`/tmp/syncthing`); `autoAcceptFolders`
-  is **disabled by default** (secure). Set `SYNCTHING_AUTO_ACCEPT_FOLDERS=true` to enable (logs a WARNING). Auto-accepting *devices* is **not** enabled — pair devices manually or via an introducer.
-- Auto-upgrade is disabled (`STNOUPGRADE=1`); bump `SYNCTHING_VERSION` and
-  rebuild to upgrade.
-- Ports: GUI `127.0.0.1:8384` (loopback, not published); sync
-  `22000/tcp` + `22000/udp`; local discovery `21027/udp`. To sync between Docker
-  hosts, publish those in your own compose override; the checked-in file
-  publishes only `8000`.
-
-### Limitations
-
-- **No worker agents**: Render cannot run GPU workloads. Jobs submitted stay
-  pending forever; a Render deployment is API + frontend + store only.
-- **Syncthing runs locally but is not reachable for pairing**: the container now
-  runs a Syncthing daemon (state under `SYNCTHING_HOME` on the disk), but on
-  Render its GUI (8384) and sync port (22000) are not publicly reachable (single
-  public port). No peers register; jobs stay pending. This is the expected
-  state for a Render deployment.
-- **Single disk**: DB, JWT key and Syncthing identity share one mount; a disk failure loses all three.
-- **`VITE_API_URL` is build-time**: changing the public URL needs a rebuild (or
-  a runtime override in settings).
-- **Free tier**: no persistent disk; use the starter plan or above.
-- **Submodule dependency**: if Render stops initialising submodules, the build
-  fails; the fallback is an external image pipeline (out of scope).
