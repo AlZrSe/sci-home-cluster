@@ -380,7 +380,7 @@ async def test_watcher_start_failure_is_not_fatal(
         return observer
 
     watcher = FolderWatcher(tmp_paths, observer_factory=exploding)  # type: ignore[arg-type]
-    settings = build_settings(
+    settings, _ = build_settings(
         ["--node-id", "node-01", "--syncthing-root", str(tmp_paths.root)],
         environ={},
     )
@@ -403,7 +403,7 @@ def test_unwritable_folder_is_reported_not_written_to(
     syncthing_root: Path, monkeypatch: Any
 ) -> None:
     """``os.access`` answers "is it writable"; the agent writes nothing to find out."""
-    settings = build_settings(
+    settings, _ = build_settings(
         ["--node-id", "node-01", "--syncthing-root", str(syncthing_root)],
         environ={},
     )

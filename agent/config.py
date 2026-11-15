@@ -246,6 +246,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="run-agent",
         description="Scientific Home Cluster Worker Agent",
+        epilog=(
+            "On first run (no .env at repo root), the agent prompts to create one "
+            "from .env.example in interactive terminals; in non-interactive contexts "
+            "it uses defaults for optional settings and warns. NODE_ID and "
+            "SYNCTHING_ROOT are required and never defaulted."
+        ),
     )
     parser.add_argument(
         "--node-id",
@@ -381,12 +387,30 @@ def _toml_layer(path: Path) -> dict[str, Any]:
     return layer
 
 
+# Fields that have model defaults (optional) vs required fields with no defaults.
+# Used to determine which fields should trigger a "using default" warning.
+_OPTIONAL_FIELDS_WITH_DEFAULTS: Final[frozenset[str]] = frozenset(
+    {
+        "LOG_LEVEL",
+        "SHELL",
+        "SHUTDOWN_GRACE_S",
+        "FOLDER_WATCH_INTERVAL_S",
+        "FOLDER_RETRY_MAX_S",
+        "WATCHER_LIVENESS_INTERVAL_S",
+        "HEARTBEAT_INTERVAL_S",
+        "HEARTBEAT_JITTER_S",
+        "AGENT_STATE_DIR",
+    }
+)
+
+
 def build_settings(
     argv: Sequence[str] | None = None,
     *,
     environ: Mapping[str, str] | None = None,
     toml_path: Path | None = None,
-) -> AgentSettings:
+    first_run_ok: bool = False,
+) -> tuple[AgentSettings, set[str]]:
     """Merge CLI, environment, config file and defaults into one settings object.
 
     Precedence, highest first: **CLI flag, environment variable, TOML file,
@@ -401,12 +425,42 @@ def build_settings(
     config path is derived from the resolved root, never searched for. That is
     what makes the lifecycle tests runnable with a 0.1 s shutdown grace instead
     of 30 s.
+
+    Returns:
+        A tuple of (AgentSettings, defaulted_field_names) where
+        defaulted_field_names contains the field names that ended up using their
+        model default because no layer provided a value. Only optional fields
+        (those with model defaults) are included; required fields (NODE_ID,
+        SYNCTHING_ROOT) never appear here because they raise ConfigError if missing.
+
+    Args:
+        first_run_ok: If True, allows the function to return defaults for optional
+            fields without raising for missing required fields. This is used by
+            the first-run flow when the operator declines to create .env in a
+            non-interactive context. Note: NODE_ID and SYNCTHING_ROOT still
+            raise ConfigError if missing even when first_run_ok=True.
     """
     args = build_parser().parse_args(list(argv) if argv is not None else None)
     env = os.environ if environ is None else environ
     from_cli = _cli_layer(args)
 
     raw_root = from_cli.get("SYNCTHING_ROOT") or env.get("SYNCTHING_ROOT")
+    if not raw_root:
+        if first_run_ok:
+            # For first-run in non-interactive mode, we still need SYNCTHING_ROOT
+            # to locate the config file, but we let the normal validation happen
+            # which will give a clear error message.
+            pass
+        else:
+            raise ConfigError(
+                "SYNCTHING_ROOT is required and has no default. Set the "
+                "SYNCTHING_ROOT environment variable on this machine, or pass "
+                "--syncthing-root. There is deliberately no fallback directory: an "
+                "agent that silently syncs somewhere wrong is worse than one that "
+                "refuses to start."
+            )
+
+    # Resolve first, derive second. The reverse order is issue #93 D1.
     if not raw_root:
         raise ConfigError(
             "SYNCTHING_ROOT is required and has no default. Set the "
@@ -415,12 +469,13 @@ def build_settings(
             "agent that silently syncs somewhere wrong is worse than one that "
             "refuses to start."
         )
-
-    # Resolve first, derive second. The reverse order is issue #93 D1.
     root = _resolve_root(str(raw_root))
     path = config_file_path(root) if toml_path is None else Path(toml_path)
 
-    merged = {**_toml_layer(path), **_env_layer(env), **from_cli}
+    merged = {}
+    merged.update(_toml_layer(path))
+    merged.update(_env_layer(env))
+    merged.update(from_cli)
 
     # The resolved root is authoritative: `raw_root` already applied CLI over
     # env, and the file cannot supply the key at all (NHD-3). Writing it back
@@ -436,6 +491,11 @@ def build_settings(
             "guessed node id impersonates a node."
         )
 
+    # Track which optional fields were explicitly provided (from any layer)
+    # Do this BEFORE adding computed defaults like AGENT_STATE_DIR
+    explicitly_provided = set(merged.keys()) & _OPTIONAL_FIELDS_WITH_DEFAULTS
+
+    # Compute AGENT_STATE_DIR default if not provided
     merged.setdefault("AGENT_STATE_DIR", root / STATE_DIR_NAME / str(merged["NODE_ID"]))
     # The same treatment the root gets, and for the same reason: an operator who
     # can write `SYNCTHING_ROOT=~/syncthing` reasonably expects
@@ -458,10 +518,17 @@ def build_settings(
             f"HEARTBEAT_INTERVAL_S ({settings.HEARTBEAT_INTERVAL_S})"
         )
 
+    # Determine which optional fields fell back to their model defaults
+    defaulted_fields: set[str] = set()
+    for field_name in _OPTIONAL_FIELDS_WITH_DEFAULTS:
+        if field_name not in explicitly_provided:
+            defaulted_fields.add(field_name)
+
     # Deliberate, one-way: `shared/file_ops/path_utils.py` and everything built
     # on it read `os.environ["SYNCTHING_ROOT"]` directly and have no injection
     # point, which issue #98 needs. The value is published *from* the resolved
     # root and is never read back in as a precedence input (issue #93 VM-4).
-    os.environ["SYNCTHING_ROOT"] = str(settings.SYNCTHING_ROOT)
+    if root is not None:
+        os.environ["SYNCTHING_ROOT"] = str(settings.SYNCTHING_ROOT)
 
-    return settings
+    return settings, defaulted_fields

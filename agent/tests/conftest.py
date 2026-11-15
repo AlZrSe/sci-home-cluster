@@ -142,10 +142,11 @@ def syncthing_root(tmp_path: Path) -> Path:
 
 @pytest.fixture
 def agent_settings(syncthing_root: Path):
-    return build_settings(
+    settings, _ = build_settings(
         ["--node-id", "node-test", "--syncthing-root", str(syncthing_root)],
         environ={},
     )
+    return settings
 
 
 @pytest.fixture

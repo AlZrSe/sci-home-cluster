@@ -55,7 +55,7 @@ TREE_TIMEOUT_S = 30.0
 
 
 def settings_for(root: Path, node_id: str = "node-01", **env: str) -> Any:
-    return build_settings(
+    settings, _ = build_settings(
         ["--node-id", node_id],
         environ={
             "SYNCTHING_ROOT": str(root),
@@ -66,6 +66,7 @@ def settings_for(root: Path, node_id: str = "node-01", **env: str) -> Any:
             **env,
         },
     )
+    return settings
 
 
 async def drive_a_shutdown(
