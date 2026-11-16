@@ -632,6 +632,19 @@ class Settings(BaseSettings):
             )
         return v
 
+    # Syncthing periodic rescan interval (issue #178)
+    SYNCTHING_RESCAN_INTERVAL_SECONDS: int = 60
+
+    @field_validator("SYNCTHING_RESCAN_INTERVAL_SECONDS")
+    @classmethod
+    def _check_rescan_interval(cls, v: int) -> int:
+        """Ensure rescan interval is within reasonable bounds (10s to 1h)."""
+        if v < 10:
+            raise ValueError("SYNCTHING_RESCAN_INTERVAL_SECONDS must be >= 10")
+        if v > 3600:
+            raise ValueError("SYNCTHING_RESCAN_INTERVAL_SECONDS must be <= 3600")
+        return v
+
     # Auth rate limiting configuration (issue #157)
     AUTH_RATE_LIMIT_BASE: int = 5
     AUTH_RATE_LIMIT_WINDOW_SECONDS: int = 900

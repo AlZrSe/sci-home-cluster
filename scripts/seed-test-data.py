@@ -196,22 +196,55 @@ async def seed_jobs(client: httpx.AsyncClient, headers: dict) -> list:
 async def seed_nodes(client: httpx.AsyncClient, headers: dict) -> list:
     """Seed nodes via API."""
     node_ids = []
+    failed = False
     for node in NODES:
+        print(f"Creating node: {node['node_id']}...")
         resp = await client.post("/nodes/", json=node, headers=headers)
+        print(f"  POST /nodes/ -> {resp.status_code}")
         if resp.status_code == 201:
             node_data = resp.json()
             node_ids.append(node_data["node_id"])
-            print(f"Created node: {node['node_id']} ({node_data['node_id']})")
+            print(f"  Created node: {node['node_id']} ({node_data['node_id']})")
         elif resp.status_code == 409:
             # Node might already exist
-            print(f"Node {node['node_id']} already exists (409), skipping")
+            print(f"  Node {node['node_id']} already exists (409), skipping")
+            node_ids.append(node['node_id'])
         else:
             print(
-                f"Failed to create node {node['node_id']}: "
+                f"  ERROR: Failed to create node {node['node_id']}: "
                 f"{resp.status_code} {resp.text}"
             )
-            return []
+            failed = True
+    if failed:
+        print("ERROR: Some nodes failed to create")
+        sys.exit(1)
     return node_ids
+
+
+async def wait_for_nodes(client: httpx.AsyncClient, headers: dict, expected_nodes: list, timeout: int = 60) -> bool:
+    """Wait for expected nodes to appear in the database."""
+    print(f"Waiting for {len(expected_nodes)} nodes to appear in database...")
+    for attempt in range(timeout):
+        try:
+            resp = await client.get("/nodes/", headers=headers)
+            if resp.status_code == 200:
+                nodes = resp.json()
+                node_ids = {n["node_id"] for n in nodes}
+                missing = set(expected_nodes) - node_ids
+                if not missing:
+                    print(f"All {len(expected_nodes)} nodes found in database")
+                    return True
+                print(
+                f"  Waiting... found {len(node_ids)}/{len(expected_nodes)} "
+                f"nodes (missing: {missing})"
+            )
+            else:
+                print(f"  GET /nodes/ -> {resp.status_code}")
+        except Exception as e:
+            print(f"  Error checking nodes: {e}")
+        await asyncio.sleep(1)
+    print(f"ERROR: Timeout waiting for nodes. Missing: {missing}")
+    return False
 
 
 async def main():
@@ -252,7 +285,12 @@ async def main():
             headers = {"Authorization": "Bearer localhost-no-auth"}
 
         # Seed nodes first (jobs may reference nodes)
+        expected_node_ids = [n["node_id"] for n in NODES]
         await seed_nodes(client, headers)
+
+        # Wait for nodes to appear in database (watcher processes files asynchronously)
+        if not await wait_for_nodes(client, headers, expected_node_ids):
+            sys.exit(1)
 
         # Seed jobs
         await seed_jobs(client, headers)

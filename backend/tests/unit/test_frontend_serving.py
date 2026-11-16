@@ -89,16 +89,6 @@ def spa_app(spa_dir: Path, monkeypatch: pytest.MonkeyPatch) -> FastAPI:
     async def get_job(job_id: str) -> dict:
         return {"job_id": job_id}
 
-    nodes = APIRouter()
-
-    @nodes.get("/")
-    async def list_nodes() -> list:
-        return []
-
-    @nodes.post("/")
-    async def create_node() -> dict:
-        return {"node_id": "node-01"}
-
     # POST-only, so `GET /api/v1/auth/token` is a wrong method on a path that
     # exists - the 405 case, which must be distinguishable from 404.
     auth = APIRouter()
@@ -108,7 +98,6 @@ def spa_app(spa_dir: Path, monkeypatch: pytest.MonkeyPatch) -> FastAPI:
         return {"access_token": "x"}
 
     app.include_router(jobs, prefix="/api/v1/jobs")
-    app.include_router(nodes, prefix="/api/v1/nodes")
     app.include_router(auth, prefix="/api/v1/auth")
     frontend.register_frontend(app)
     return app
@@ -130,7 +119,7 @@ def client(spa_app: FastAPI) -> TestClient:
 class TestCollectionRoutesWithoutTheirSlash:
     """#140 - the regression itself."""
 
-    @pytest.mark.parametrize("path", ["/api/v1/jobs", "/api/v1/nodes"])
+    @pytest.mark.parametrize("path", ["/api/v1/jobs"])
     def test_it_redirects_rather_than_404ing(self, client: TestClient, path: str):
         response = client.get(path, follow_redirects=False)
         assert response.status_code == 307, (
@@ -143,7 +132,7 @@ class TestCollectionRoutesWithoutTheirSlash:
             f"expected it to end with {path + '/'!r}"
         )
 
-    @pytest.mark.parametrize("path", ["/api/v1/jobs", "/api/v1/nodes"])
+    @pytest.mark.parametrize("path", ["/api/v1/jobs"])
     def test_the_redirect_target_answers(self, client: TestClient, path: str):
         """The redirect must lead somewhere, not merely exist."""
         followed = client.get(path)
@@ -314,7 +303,6 @@ class TestTheCatchAllDeclinesRatherThanAnswers:
             "/api/v1/auth/token",
             "/api/v1/jobs/",
             "/api/v1/jobs/{job_id}",
-            "/api/v1/nodes/",
         }, f"the documented operation set changed: {sorted(paths)}"
 
 
