@@ -534,6 +534,41 @@ paths:
                 title: Response List Nodes Api V1 Nodes  Get
       security:
       - Authorization: []
+    post:
+      tags:
+      - nodes
+      summary: Create Node
+      description: 'Create a new node by writing its spec to the Syncthing nodes/
+        folder.
+
+
+        This is the file-based registration mechanism (issue #92). The agent and
+
+        seeding scripts use this endpoint to register nodes. The Syncthing watcher
+
+        picks up the YAML file and updates the database.'
+      operationId: create_node_api_v1_nodes__post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/NodeSpec'
+        required: true
+      responses:
+        '201':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NodeSpec'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+      security:
+      - Authorization: []
   /api/v1/nodes/{node_id}:
     get:
       tags:
