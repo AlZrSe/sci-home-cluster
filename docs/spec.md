@@ -414,7 +414,7 @@ escalation in agent/executor.py). Repeat cancel is idempotent at the protocol le
 
 1. **WebSocket message format**: Resolved — frontend uses plain text lines (not JSON `{type, payload}`)
 2. **Job creation response**: Resolved — frontend expects and receives `JobState` on 201
-3. **Node registration**: Frontend shows "Nodes appear after they register with POST /nodes/register" — consider adding to OpenAPI?
+3. **Node registration**: **Resolved** — Node registration is file-based via Syncthing folder (issue #92, #178). Agents write `nodes/node-<id>.yaml` files; backend watches for changes and periodic rescans. No HTTP `POST /nodes/register` endpoint exists. Frontend spec updated to reflect file-only transport.
 4. **Metrics for nodes**: Resolved — frontend calls `getJobMetrics(\`node:${nodeId}\`)` via real endpoint `GET /nodes/{id}/metrics`
 5. **Rate limiting / pagination**: Current offset/limit — consider switching to cursor-based for large datasets?
 

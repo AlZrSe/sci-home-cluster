@@ -7,7 +7,7 @@ import asyncio
 import random
 import zlib
 from typing import Callable, Dict, List, Optional, Set, Tuple
-from datetime import datetime
+from datetime import datetime, timezone
 
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -325,6 +325,12 @@ class DatabaseStore:
 
     def _model_to_node_spec(self, node_model: NodeModel) -> NodeSpec:
         """Convert a NodeModel to a NodeSpec."""
+        # Ensure last_heartbeat is timezone-aware UTC (SQLite returns naive UTC
+        # for DateTime(timezone=True) columns)
+        last_heartbeat = node_model.last_heartbeat
+        if last_heartbeat is not None and last_heartbeat.tzinfo is None:
+            last_heartbeat = last_heartbeat.replace(tzinfo=timezone.utc)
+
         return NodeSpec(
             node_id=node_model.node_id,
             hostname=node_model.hostname,
@@ -333,7 +339,7 @@ class DatabaseStore:
             memory_gb=node_model.memory_gb,
             os=node_model.os,
             status=node_model.status,
-            last_heartbeat=node_model.last_heartbeat,
+            last_heartbeat=last_heartbeat,
             current_job_id=node_model.current_job_id,
         )
 

@@ -538,7 +538,15 @@ paths:
       tags:
       - nodes
       summary: Create Node
-      description: Create a new node (for test seeding).
+      description: 'Create a new node by writing its spec to the Syncthing nodes/
+        folder.
+
+
+        This is the file-based registration mechanism (issue #92). The agent and
+
+        seeding scripts use this endpoint to register nodes. The Syncthing watcher
+
+        picks up the YAML file and updates the database.'
       operationId: create_node_api_v1_nodes__post
       requestBody:
         content:
