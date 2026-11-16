@@ -234,7 +234,10 @@ async def wait_for_nodes(client: httpx.AsyncClient, headers: dict, expected_node
                 if not missing:
                     print(f"All {len(expected_nodes)} nodes found in database")
                     return True
-                print(f"  Waiting... found {len(node_ids)}/{len(expected_nodes)} nodes (missing: {missing})")
+                print(
+                f"  Waiting... found {len(node_ids)}/{len(expected_nodes)} "
+                f"nodes (missing: {missing})"
+            )
             else:
                 print(f"  GET /nodes/ -> {resp.status_code}")
         except Exception as e:
