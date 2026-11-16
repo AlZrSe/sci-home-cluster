@@ -10,6 +10,7 @@ import time
 import yaml
 from pathlib import Path
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from typing import Dict, Optional, Set, Any
 from datetime import datetime, timezone
 from watchdog.observers import Observer as ObserverType
@@ -228,6 +229,8 @@ class SyncthingService:
         self._running = False
         self._scan_task: Optional[asyncio.Task] = None
         self._heartbeat_check_task: Optional[asyncio.Task] = None
+        self._rescan_task: Optional[asyncio.Task] = None
+        self._rescan_interval_seconds: int = 60  # Configurable via settings
         self._processed_files: Set[str] = set()
         self._command_log: Dict[str, Dict[str, Dict[str, Any]]] = {}
 
@@ -260,6 +263,10 @@ class SyncthingService:
         self._running = True
         self._heartbeat_check_task = asyncio.create_task(self._heartbeat_monitor())
 
+        # Start periodic rescan task (issue #178)
+        self._rescan_interval_seconds = settings.SYNCTHING_RESCAN_INTERVAL_SECONDS
+        self._rescan_task = asyncio.create_task(self._periodic_rescan())
+
         try:
             from backend.core.metrics import set_syncthing_available
 
@@ -275,7 +282,6 @@ class SyncthingService:
             return
 
         logger.info("Stopping Syncthing service")
-        self._running = False
 
         # Cancel debounced file processing still in flight. These futures are
         # not owned by the observer thread, so they must be cancelled
@@ -289,13 +295,24 @@ class SyncthingService:
             self.observer.join(timeout=5.0)
             self.observer = None
 
-        # Cancel tasks
+        # Cancel tasks BEFORE setting _running = False so they get cancelled
+        # rather than exiting naturally
         if self._heartbeat_check_task:
             self._heartbeat_check_task.cancel()
             try:
                 await self._heartbeat_check_task
             except asyncio.CancelledError:
                 pass
+
+        # Cancel periodic rescan task (issue #178)
+        if self._rescan_task:
+            self._rescan_task.cancel()
+            try:
+                await self._rescan_task
+            except asyncio.CancelledError:
+                pass
+
+        self._running = False
 
         logger.info("Syncthing service stopped")
 
@@ -485,7 +502,12 @@ class SyncthingService:
             logger.warning(f"Error processing command file {file_path}: {e}")
 
     async def _process_node_file(self, node_id: str, file_path: str):
-        """Process a node state YAML file."""
+        """Process a node state YAML file.
+
+        This method is idempotent: processing the same file multiple times
+        produces the same store state. A race condition between get_node and
+        create_node is handled by catching ValueError and retrying as update.
+        """
         try:
             # Read and parse YAML. read_yaml raises on failure.
             node_spec = read_yaml(str(Path(file_path)), NodeSpec)
@@ -506,7 +528,25 @@ class SyncthingService:
                     current_job_id=node_spec.current_job_id,
                 )
             else:
-                await store.create_node(node_spec)
+                try:
+                    await store.create_node(node_spec)
+                except (ValueError, IntegrityError) as e:
+                    if "already exists" in str(e) or isinstance(e, IntegrityError):
+                        # Race condition: node was created between get_node
+                        # and create_node. Retry as update with the same fields.
+                        await store.update_node(
+                            node_id,
+                            hostname=node_spec.hostname,
+                            gpus=node_spec.gpus,
+                            cpus=node_spec.cpus,
+                            memory_gb=node_spec.memory_gb,
+                            os=node_spec.os,
+                            status=node_spec.status,
+                            last_heartbeat=node_spec.last_heartbeat,
+                            current_job_id=node_spec.current_job_id,
+                        )
+                    else:
+                        raise
 
             self._processed_files.add(file_path)
             logger.debug(f"Processed node file: {node_id}")
@@ -751,6 +791,28 @@ class SyncthingService:
                 break
             except Exception as e:
                 logger.error(f"Error in heartbeat monitor: {e}")
+
+    async def _periodic_rescan(self):
+        """Periodically rescan nodes/ and jobs/ directories for missed changes.
+
+        This task runs at the interval configured by
+        SYNCTHING_RESCAN_INTERVAL_SECONDS (default 60 seconds) and calls
+        manual_scan() to detect any files that were missed by the file system
+        watcher (e.g., due to watcher restart, Syncthing delay, or file system
+        event loss).
+        """
+        try:
+            while self._running:
+                await asyncio.sleep(self._rescan_interval_seconds)
+                if not self._running:
+                    break
+                logger.debug("Starting periodic rescan of Syncthing folder")
+                await self.manual_scan()
+        except asyncio.CancelledError:
+            # Re-raise so the task is marked as cancelled, not completed
+            raise
+        except Exception as e:
+            logger.error(f"Error in periodic rescan: {e}")
 
     async def _heartbeat_monitor_iteration(self, now: datetime | None = None):
         """Run one iteration of the heartbeat monitor.
