@@ -1,21 +1,50 @@
 # Run the Scientific Home Cluster Docker Compose stack in a chosen mode.
 #
 # Usage:
-#   .\scripts\docker-run.ps1 -Mode dev [-Rebuild]
-#   .\scripts\docker-run.ps1 -Mode prod [-Rebuild]
-#   .\scripts\docker-run.ps1 -Mode localhost [-Rebuild]
+#   .\scripts\docker-run.ps1 -Mode dev [-Rebuild] [-SyncthingRoot "path"]
+#   .\scripts\docker-run.ps1 -Mode prod [-Rebuild] [-SyncthingRoot "path"]
+#   .\scripts\docker-run.ps1 -Mode localhost [-Rebuild] [-SyncthingRoot "path"]
 #
 # Note: scripts never start the db-seed service and rely on SEED_DEMO_DATA=false
 # (the application default), so no demo data is seeded.
-# --Rebuild  - force rebuild of the docker image before starting (default for prod).
+# --Rebuild       - force rebuild of the docker image before starting (default for prod).
+# --SyncthingRoot - override the Syncthing root directory (default: ./syncthing).
 param(
     [ValidateSet("dev", "prod", "localhost")]
     [string]$Mode = "dev",
-    [switch]$Rebuild
+    [switch]$Rebuild,
+    [string]$SyncthingRoot
 )
 
 $RootDir = Resolve-Path (Join-Path $PSScriptRoot "..")
 Set-Location $RootDir
+
+# Determine Syncthing root: parameter > env var > default (./syncthing)
+$syncthingRoot = $SyncthingRoot
+if (-not $syncthingRoot) {
+    $syncthingRoot = $env:SYNCTHING_ROOT
+}
+if (-not $syncthingRoot) {
+    $syncthingRoot = ".\syncthing"
+}
+
+# Resolve to absolute path (for Docker bind mount)
+# If relative path, make it relative to repo root
+if (-not [System.IO.Path]::IsPathRooted($syncthingRoot)) {
+    $syncthingRoot = Join-Path $RootDir $syncthingRoot
+}
+
+# Convert to absolute path (resolve . and ..)
+$syncthingRoot = [System.IO.Path]::GetFullPath($syncthingRoot)
+
+# Ensure Syncthing directory structure exists (jobs/ and nodes/ subdirs)
+$jobsDir = Join-Path $syncthingRoot "jobs"
+$nodesDir = Join-Path $syncthingRoot "nodes"
+if (-not (Test-Path $jobsDir)) { New-Item -ItemType Directory -Path $jobsDir -Force | Out-Null }
+if (-not (Test-Path $nodesDir)) { New-Item -ItemType Directory -Path $nodesDir -Force | Out-Null }
+
+# Export for docker-compose (overrides default ./syncthing)
+$env:SYNCTHING_ROOT = $syncthingRoot
 
 # Ensure no demo data is seeded: override SEED_DEMO_DATA to false for the backend.
 $override = New-TemporaryFile
