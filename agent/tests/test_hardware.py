@@ -92,16 +92,16 @@ class ExplodingGPU:
 
 
 class FakeGpuTil(ModuleType):
-    """A stand-in for the ``gputil`` module, importable by name.
+    """A stand-in for the ``GPUtil`` module, importable by name.
 
     Subclasses ``ModuleType`` rather than being a ``SimpleNamespace`` so that
-    ``sys.modules["gputil"] = ...`` makes ``import gputil`` hand back exactly
+    ``sys.modules["GPUtil"] = ...`` makes ``import GPUtil`` hand back exactly
     this object, which is the only way to exercise the *guarded* import without
     installing anything.
     """
 
     def __init__(self, devices: Sequence[Any] = (), error: Exception | None = None):
-        super().__init__("gputil")
+        super().__init__("GPUtil")
         self._devices = list(devices)
         self._error = error
 
@@ -227,7 +227,7 @@ def test_collect_reports_one_gpu_info_per_device(
 ) -> None:
     monkeypatch.setitem(
         sys.modules,
-        "gputil",
+        "GPUtil",
         FakeGpuTil(
             [FakeGPU("NVIDIA RTX 4090", 24576), FakeGPU("NVIDIA RTX 3090", 24564)]
         ),
@@ -287,7 +287,7 @@ def test_collect_reports_no_gpus_when_gputil_is_not_installed(
     # ``None`` in sys.modules is how CPython reports "this import must fail",
     # which is the state of the development venv: pyproject declares gputil and
     # the venv does not have it.
-    monkeypatch.setitem(sys.modules, "gputil", None)
+    monkeypatch.setitem(sys.modules, "GPUtil", None)
     fake_machine(monkeypatch)
 
     spec = collect_node_spec("node-01", now=NOW)
@@ -302,7 +302,7 @@ def test_collect_survives_gputil_raising(
     """The certain case on a CPU-only box: ``getGPUs`` raises, not returns []."""
     monkeypatch.setitem(
         sys.modules,
-        "gputil",
+        "GPUtil",
         FakeGpuTil(error=ValueError("Found no NVIDIA device on this system")),
     )
     fake_machine(monkeypatch)
@@ -319,7 +319,7 @@ def test_collect_keeps_the_gpus_that_read_cleanly(
 ) -> None:
     monkeypatch.setitem(
         sys.modules,
-        "gputil",
+        "GPUtil",
         FakeGpuTil([ExplodingGPU(), FakeGPU("NVIDIA RTX 4090", 24576)]),
     )
     fake_machine(monkeypatch)
@@ -333,7 +333,7 @@ def test_collect_drops_a_gpu_with_no_name(monkeypatch: pytest.MonkeyPatch) -> No
     """``GPUInfo.name`` has no constraint, so an empty one would be stored."""
     monkeypatch.setitem(
         sys.modules,
-        "gputil",
+        "GPUtil",
         FakeGpuTil([FakeGPU("  ", 24576), FakeGPU("NVIDIA RTX 4090", 24576)]),
     )
     fake_machine(monkeypatch)
@@ -348,7 +348,7 @@ def test_collect_clamps_a_negative_gpu_memory_reading(
 ) -> None:
     """``GPUInfo.memory_gb`` has no ``ge=0``, unlike the node's own fields."""
     monkeypatch.setitem(
-        sys.modules, "gputil", FakeGpuTil([FakeGPU("NVIDIA RTX 4090", -1)])
+        sys.modules, "GPUtil", FakeGpuTil([FakeGPU("NVIDIA RTX 4090", -1)])
     )
     fake_machine(monkeypatch)
 
@@ -416,7 +416,7 @@ def test_the_gpus_key_is_present_on_this_machine() -> None:
 def test_the_written_file_always_carries_the_gpus_key(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setitem(sys.modules, "gputil", None)
+    monkeypatch.setitem(sys.modules, "GPUtil", None)
     paths = fresh_paths(tmp_path)
 
     write_node_spec(paths, collect_node_spec("node-01", now=NOW))
@@ -452,7 +452,7 @@ def test_a_gpu_node_round_trips_through_read_yaml(
 ) -> None:
     monkeypatch.setitem(
         sys.modules,
-        "gputil",
+        "GPUtil",
         FakeGpuTil(
             [FakeGPU("NVIDIA RTX 4090", 24576), FakeGPU("NVIDIA RTX 3090", 24564)]
         ),

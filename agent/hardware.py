@@ -19,7 +19,7 @@ node_id         settings.NODE_ID                never probed
 hostname        platform.node()                 the machine's own name
 cpus            psutil.cpu_count()              logical, floored at 1
 memory_gb       psutil.virtual_memory().total   // 1024**3, floored at 1
-gpus            gputil.getGPUs(), guarded       [] when unavailable
+gpus            GPUtil.getGPUs(), guarded       [] when unavailable
 os              platform.system().lower()       linux/darwin/windows
 status          literal "ONLINE"                monitor owns OFFLINE
 last_heartbeat  datetime.now(timezone.utc)      aware UTC, store is tz-aware
@@ -44,9 +44,9 @@ Degradation contract -- a node with no GPU is normal, not an error:
 
 Situation                               Result
 -------------------------------------- ------------------
-gputil importable, getGPUs() returns    one GPUInfo per device
-gputil importable, raises or returns []  gpus: []
-gputil not installed (today's venv)      gpus: []
+GPUtil importable, getGPUs() returns    one GPUInfo per device
+GPUtil importable, raises or returns []  gpus: []
+GPUtil not installed (today's venv)      gpus: []
 one device's attributes raise           that one is skipped
 
 ``gpus: []`` is written as an empty list, never omitted: ``gpus`` is a required
@@ -78,7 +78,7 @@ logger = logging.getLogger(__name__)
 #: 1 GiB, the unit ``memory_gb`` is counted in.
 BYTES_PER_GIB: Final[int] = 1024**3
 
-#: ``gputil`` reports device memory in MiB, and ``GPUInfo.memory_gb`` is GiB.
+#: ``GPUtil`` reports device memory in MiB, and ``GPUInfo.memory_gb`` is GiB.
 BYTES_PER_MIB: Final[int] = 1024
 
 #: The floors are load-bearing, not defensive noise. ``cpus`` and ``memory_gb``
@@ -205,20 +205,20 @@ def _total_memory_bytes() -> int:
 
 
 def _gputil() -> Any:
-    """Import ``gputil`` at call time, or report its absence as ``None``.
+    """Import ``GPUtil`` at call time, or report its absence as ``None``.
 
     Imported lazily rather than at module scope for two reasons: the agent has to
     import cleanly on a machine where the declared-but-not-installed dependency
     is absent (issue #93 AC-16 imports every shipped module in a bare
-    subprocess), and an import at module scope would make "is ``gputil``
+    subprocess), and an import at module scope would make "is ``GPUtil``
     available?" a decision made once at import rather than once per probe.
     """
     try:
-        import gputil
+        import GPUtil
     except ImportError:
-        logger.debug("gputil is not installed; registering with no GPUs")
+        logger.debug("GPUtil is not installed; registering with no GPUs")
         return None
-    return gputil
+    return GPUtil
 
 
 def _gpu_infos() -> list[GPUInfo]:
@@ -237,7 +237,7 @@ def _gpu_infos() -> list[GPUInfo]:
         devices = gputil.getGPUs()
     except Exception:
         logger.warning(
-            "gputil.getGPUs() failed; registering with no GPUs", exc_info=True
+            "GPUtil.getGPUs() failed; registering with no GPUs", exc_info=True
         )
         return []
 
