@@ -1,6 +1,5 @@
 @echo off
 REM Build the standalone worker-agent executable (run-agent / run-agent.exe)
-REM and publish it into the Syncthing folder so it replicates to every node.
 REM
 REM Usage:
 REM   scripts\build-agent.cmd            (current OS)
@@ -9,7 +8,9 @@ REM   scripts\build-agent.cmd windows
 REM
 REM Requires Python 3.11+ on PATH and the build extra (pyinstaller).
 
+@echo off
 setlocal
+
 set "ROOT=%~dp0.."
 cd /d "%ROOT%"
 
@@ -34,5 +35,6 @@ if errorlevel 1 (
     exit /b 1
 )
 
-echo [build-agent] Done. Binary published to syncthing\ (if not --no-publish).
+echo [build-agent] Build complete. Run scripts\publish-agent.cmd to publish to Syncthing folder.
+
 endlocal

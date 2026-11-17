@@ -64,10 +64,6 @@ class TestProductionDatabaseStartsEmpty:
             assert jobs.json()["total"] == 0
             assert jobs.json()["items"] == []
 
-            nodes = await auth_client.get("/api/v1/nodes/")
-            assert nodes.status_code == 200
-            assert nodes.json() == []
-
         # Assert on the tables, not only on the API (AC-9 / R4).
         assert await row_counts() == (0, 0)
 

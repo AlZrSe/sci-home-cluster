@@ -250,7 +250,7 @@ def test_a_collection_route_without_its_slash_still_answers(
     `backend/tests/unit/test_frontend_serving.py` is the layer that pins the
     307 and its `Location`; this is the layer that proves the IMAGE does it.
     """
-    for path, body_key in (("/api/v1/jobs", "items"), ("/api/v1/nodes", None)):
+    for path, body_key in (("/api/v1/jobs", "items"),):
         response = cluster.get(path)
         assert response.status_code == 200, (
             f"GET {path} answered {response.status_code}: {response.text[:200]}. "

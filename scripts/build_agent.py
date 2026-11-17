@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import argparse
 import os
-import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -22,7 +21,6 @@ from agent.build_config import (  # noqa: E402
     HIDDEN_IMPORTS,
     PATHS,
     PYINSTALLER_FLAGS,
-    SYNCTHING_OUTPUT_PATHS,
 )
 
 
@@ -67,49 +65,10 @@ def _run_pyinstaller(argv: list[str], env: dict[str, str]) -> int:
     return completed.returncode
 
 
-def publish(target: str) -> Path:
-    """Copy the built binary into the Syncthing folder root."""
-    src = Path(DIST_DIR) / _binary_name(target)
-    if not src.is_file():
-        raise FileNotFoundError(f"built binary not found: {src}")
-    dest_rel = SYNCTHING_OUTPUT_PATHS[target]
-    dest = (REPO_ROOT / dest_rel).resolve()
-    root = REPO_ROOT.resolve()
-    if root not in dest.parents and dest != root:
-        raise ValueError(f"refusing to publish outside repository root: {dest}")
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(src, dest)
-    # Keep the sample environment file in sync with the published executable so
-    # operators copying the agent binary into a Syncthing folder also get the
-    # current agent-only environment template beside it. Only agent-specific
-    # variables belong here; backend/app variables live in the root .env.example.
-    # Publish under both names: .env.example (the conventional name) and
-    # .env.sample (the name Syncthing's default .stignore actually replicates).
-    env_template_src = REPO_ROOT / "agent" / ".env.example"
-    if not env_template_src.is_file():
-        env_template_src = REPO_ROOT / "agent" / ".env.sample"
-    if env_template_src.is_file():
-        shutil.copy2(env_template_src, dest.parent / ".env.example")
-        shutil.copy2(env_template_src, dest.parent / ".env.sample")
-    return dest
-
-
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--target", choices=["linux", "windows"], default=_default_target()
-    )
-    parser.add_argument(
-        "--publish",
-        action="store_true",
-        default=True,
-        help="Copy the built binary into the Syncthing folder root (default: on).",
-    )
-    parser.add_argument(
-        "--no-publish",
-        dest="publish",
-        action="store_false",
-        help="Build only; do not copy into the Syncthing folder.",
     )
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args(argv)
@@ -129,10 +88,6 @@ def main(argv: list[str] | None = None) -> int:
 
     built = Path(DIST_DIR) / _binary_name(args.target)
     print(f"built: {built} ({built.stat().st_size} bytes)")
-
-    if args.publish:
-        dest = publish(args.target)
-        print(f"published: {dest}")
 
     return 0
 

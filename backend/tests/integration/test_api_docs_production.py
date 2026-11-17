@@ -17,7 +17,7 @@ from backend.core.config import Settings, settings as real_settings
 from backend.core.database import close_database, init_database, run_migrations
 from backend.core.metrics import record_http_request
 from backend.core.rate_limit import init_rate_limiter, shutdown_rate_limiter
-from backend.api.v1 import auth, jobs, nodes, syncthing
+from backend.api.v1 import auth, jobs, syncthing
 from backend.core.frontend import register_frontend, serving_frontend
 from backend.core.telemetry import configure_telemetry
 from backend.core.config import absolute_sqlite_path
@@ -307,9 +307,6 @@ def create_test_app(test_settings) -> FastAPI:  # noqa: C901
     )
     app.include_router(
         jobs.router, prefix=f"{test_settings.API_V1_STR}/jobs", tags=["jobs"]
-    )
-    app.include_router(
-        nodes.router, prefix=f"{test_settings.API_V1_STR}/nodes", tags=["nodes"]
     )
     app.include_router(
         syncthing.router,
@@ -741,7 +738,7 @@ class TestApiDocsExistingTestsCompatibility:
         # Verify some expected endpoints exist
         assert "/api/v1/health" in data["paths"]
         assert "/api/v1/jobs/" in data["paths"]
-        assert "/api/v1/nodes/" in data["paths"]
+        assert "/api/v1/nodes/" not in data["paths"]
 
 
 class TestApiDocsCspCompatibility:

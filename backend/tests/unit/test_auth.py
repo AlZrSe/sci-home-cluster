@@ -300,7 +300,7 @@ class TestLocalhostBypassHostHeader:
     """
 
     # A protected endpoint with no side effects and no fixtures to arrange.
-    ENDPOINT = "/api/v1/nodes/"
+    ENDPOINT = "/api/v1/jobs/"
 
     @pytest.fixture(autouse=True)
     def set_host_header_mode(self, monkeypatch):

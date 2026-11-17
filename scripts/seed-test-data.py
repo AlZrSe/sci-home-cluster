@@ -208,7 +208,7 @@ async def seed_nodes(client: httpx.AsyncClient, headers: dict) -> list:
         elif resp.status_code == 409:
             # Node might already exist
             print(f"  Node {node['node_id']} already exists (409), skipping")
-            node_ids.append(node['node_id'])
+            node_ids.append(node["node_id"])
         else:
             print(
                 f"  ERROR: Failed to create node {node['node_id']}: "
@@ -221,7 +221,12 @@ async def seed_nodes(client: httpx.AsyncClient, headers: dict) -> list:
     return node_ids
 
 
-async def wait_for_nodes(client: httpx.AsyncClient, headers: dict, expected_nodes: list, timeout: int = 60) -> bool:
+async def wait_for_nodes(
+    client: httpx.AsyncClient,
+    headers: dict,
+    expected_nodes: list,
+    timeout: int = 60,
+) -> bool:
     """Wait for expected nodes to appear in the database."""
     print(f"Waiting for {len(expected_nodes)} nodes to appear in database...")
     for attempt in range(timeout):
@@ -235,9 +240,9 @@ async def wait_for_nodes(client: httpx.AsyncClient, headers: dict, expected_node
                     print(f"All {len(expected_nodes)} nodes found in database")
                     return True
                 print(
-                f"  Waiting... found {len(node_ids)}/{len(expected_nodes)} "
-                f"nodes (missing: {missing})"
-            )
+                    f"  Waiting... found {len(node_ids)}/{len(expected_nodes)} "
+                    f"nodes (missing: {missing})"
+                )
             else:
                 print(f"  GET /nodes/ -> {resp.status_code}")
         except Exception as e:

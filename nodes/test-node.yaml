@@ -1,0 +1,9 @@
+node_id: test-node
+hostname: WIN-B7EN498BB9U
+gpus: []
+cpus: 12
+memory_gb: 61
+os: windows
+status: ONLINE
+last_heartbeat: '2026-11-16T03:50:25.389758Z'
+current_job_id: null

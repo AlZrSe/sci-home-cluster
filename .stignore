@@ -1,0 +1,20 @@
+# Ignore build scripts
+scripts/build-agent.cmd
+scripts/build-agent.sh
+scripts/build-agent.ps1
+scripts/build_agent.py
+scripts/build_app.py
+scripts/delete-seed-data.py
+scripts/delete-seed-data.ps1
+scripts/delete-seed-data.sh
+scripts/run_app_entry.py
+scripts/run_agent_entry.py
+scripts/seed-test-data.py
+
+# Ignore run scripts (non-example versions - .example versions sync)
+scripts/run-agent.cmd
+scripts/run-agent.sh
+scripts/run-agent.ps1
+
+# Ignore script docs
+scripts/README.md

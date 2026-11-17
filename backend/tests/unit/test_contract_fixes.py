@@ -65,17 +65,6 @@ class TestCpuMetricFields:
             assert isinstance(sample["memory_used_gb"], float)
             assert sample["memory_used_gb"] >= 0
 
-    @pytest.mark.asyncio
-    async def test_node_metrics_include_the_new_fields(self, async_client):
-        response = await async_client.get("/api/v1/nodes/node-alpha/metrics")
-        assert response.status_code == 200
-
-        cpu_metrics = response.json()["cpu_metrics"]
-        assert cpu_metrics
-        for sample in cpu_metrics:
-            assert "temperature_c" in sample
-            assert "memory_used_gb" in sample
-
     def test_the_columns_exist_in_the_schema(self):
         """The migration must have added the columns to the model."""
         assert "temperature_c" in CPUMetricModel.__table__.columns

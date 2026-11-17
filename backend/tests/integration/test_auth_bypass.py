@@ -37,7 +37,7 @@ class TestAuthBypassSocketMode:
             {
                 "type": "http",
                 "method": "GET",
-                "path": "/api/v1/nodes/",
+                "path": "/api/v1/jobs/",
                 "headers": [],
                 "client": ("127.0.0.1", 50000),
                 "server": ("127.0.0.1", 8000),
@@ -53,7 +53,7 @@ class TestAuthBypassSocketMode:
             {
                 "type": "http",
                 "method": "GET",
-                "path": "/api/v1/nodes/",
+                "path": "/api/v1/jobs/",
                 "headers": [],
                 "client": ("::1", 50000),
                 "server": ("127.0.0.1", 8000),
@@ -69,7 +69,7 @@ class TestAuthBypassSocketMode:
             {
                 "type": "http",
                 "method": "GET",
-                "path": "/api/v1/nodes/",
+                "path": "/api/v1/jobs/",
                 "headers": [],
                 "client": ("::ffff:127.0.0.1", 50000),
                 "server": ("127.0.0.1", 8000),
@@ -85,7 +85,7 @@ class TestAuthBypassSocketMode:
             {
                 "type": "http",
                 "method": "GET",
-                "path": "/api/v1/nodes/",
+                "path": "/api/v1/jobs/",
                 "headers": [(b"host", b"localhost:8000")],
                 "client": ("192.168.1.100", 50000),
                 "server": ("127.0.0.1", 8000),
@@ -102,7 +102,7 @@ class TestAuthBypassSocketMode:
             {
                 "type": "http",
                 "method": "GET",
-                "path": "/api/v1/nodes/",
+                "path": "/api/v1/jobs/",
                 "headers": [(b"host", b"localhost:8000")],
                 "client": ("10.0.0.50", 50000),
                 "server": ("127.0.0.1", 8000),
@@ -130,7 +130,7 @@ class TestAuthBypassHostHeaderMode:
             {
                 "type": "http",
                 "method": "GET",
-                "path": "/api/v1/nodes/",
+                "path": "/api/v1/jobs/",
                 "headers": [(b"host", b"localhost:8000")],
                 "client": ("192.168.1.100", 50000),
                 "server": ("127.0.0.1", 8000),
@@ -146,7 +146,7 @@ class TestAuthBypassHostHeaderMode:
             {
                 "type": "http",
                 "method": "GET",
-                "path": "/api/v1/nodes/",
+                "path": "/api/v1/jobs/",
                 "headers": [(b"host", b"127.0.0.1:8000")],
                 "client": ("10.0.0.50", 50000),
                 "server": ("127.0.0.1", 8000),
@@ -162,7 +162,7 @@ class TestAuthBypassHostHeaderMode:
             {
                 "type": "http",
                 "method": "GET",
-                "path": "/api/v1/nodes/",
+                "path": "/api/v1/jobs/",
                 "headers": [(b"host", b"example.com:8000")],
                 "client": ("192.168.1.100", 50000),
                 "server": ("127.0.0.1", 8000),
@@ -203,7 +203,7 @@ class TestAuthBypassDisabledMode:
             {
                 "type": "http",
                 "method": "GET",
-                "path": "/api/v1/nodes/",
+                "path": "/api/v1/jobs/",
                 "headers": [],
                 "client": ("127.0.0.1", 50000),
                 "server": ("127.0.0.1", 8000),
@@ -219,7 +219,7 @@ class TestAuthBypassDisabledMode:
             {
                 "type": "http",
                 "method": "GET",
-                "path": "/api/v1/nodes/",
+                "path": "/api/v1/jobs/",
                 "headers": [(b"host", b"localhost:8000")],
                 "client": ("127.0.0.1", 50000),
                 "server": ("127.0.0.1", 8000),
@@ -324,7 +324,7 @@ class TestBypassAuditLogging:
             {
                 "type": "http",
                 "method": "GET",
-                "path": "/api/v1/nodes/",
+                "path": "/api/v1/jobs/",
                 "headers": [(b"user-agent", b"test-agent")],
                 "client": ("127.0.0.1", 50000),
                 "server": ("127.0.0.1", 8000),
@@ -336,7 +336,7 @@ class TestBypassAuditLogging:
 
         assert payload == {"sub": "localhost_user"}
         assert "Auth bypass activated for 127.0.0.1 via socket" in caplog.text
-        assert "/api/v1/nodes/" in caplog.text
+        assert "/api/v1/jobs/" in caplog.text
         assert "test-agent" in caplog.text
 
     def test_bypass_logs_audit_event_ws(self, caplog):
@@ -377,7 +377,7 @@ class TestBypassAuditLogging:
                 {
                     "type": "http",
                     "method": "GET",
-                    "path": "/api/v1/nodes/",
+                    "path": "/api/v1/jobs/",
                     "headers": [(b"host", b"localhost:8000")],
                     "client": ("192.168.1.100", 50000),
                     "server": ("127.0.0.1", 8000),
@@ -477,7 +477,7 @@ class TestFullStackAuthBypass:
                     {
                         "type": "http",
                         "method": "GET",
-                        "path": "/api/v1/nodes/",
+                        "path": "/api/v1/jobs/",
                         "headers": [
                             (b"authorization", f"Bearer {token}".encode()),
                             (b"host", b"example.com:8000"),

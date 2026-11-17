@@ -15,16 +15,10 @@ submitted, and no node ever claims one. `M-3.2`'s `syncthing.status ==
 cited as evidence the mount works. M-4.2 is the evidence.
 """
 
-import os
-import sys
 import time
-from datetime import datetime
-
-import pytest
 
 from shared.file_ops.yaml_utils import read_yaml
 from shared.schemas.job_state import JobState
-from shared.schemas.node_spec import NodeSpec
 
 from backend.tests.compose.conftest import (
     COMPOSE_PYTESTMARK,
@@ -229,72 +223,3 @@ def test_database_is_on_the_volume_and_the_pool_is_null(
 # ---------------------------------------------------------------------------
 # SHOULD S-1  A file dropped on the host is seen by the container's watcher
 # ---------------------------------------------------------------------------
-
-
-@pytest.mark.skipif(
-    not sys.platform.startswith("linux"),
-    reason=(
-        "host -> container inotify events do not propagate reliably through "
-        "Docker Desktop's gRPC-FUSE / osxfs file share on macOS and Windows, so "
-        "the `watchdog` Observer scheduled inside the container may never fire. "
-        "Gated on a NATIVE Linux bind mount rather than on a timeout: a test that "
-        "is flaky on the platform half the team uses will be muted, and then it "
-        "protects nothing. The container -> host direction (M-4.2) is reliable "
-        "everywhere and is what the suite relies on."
-    ),
-)
-def test_a_node_dropped_on_the_host_is_seen_by_the_container(
-    compose_stack: ComposeStack, cluster: ClusterClient
-) -> None:
-    """
-    SHOULD S-1 - write a valid `NodeSpec` at `<bind-source>/nodes/<node_id>.yaml`
-    on the host and poll `GET /api/v1/nodes` until it appears.
-
-    Protects `backend/services/syncthing_service.py:202-205` (the `Observer`
-    scheduled on `nodes_dir`), `:243-265` (`_initial_scan`) and `:336-340`, and
-    `shared/schemas/node_spec.py:15-28`.
-
-    **Written atomically - temp file then `os.replace`** - because
-    `backend/services/job_folder.py:110-113` records that a partially-written
-    document is dropped by BOTH watchers with no visible failure. A plain
-    `write_text` here would produce a flaky test for a reason that has nothing to
-    do with the bind mount.
-
-    This is the one direction in the suite that is not reliable on every
-    platform; see the `skipif` above.
-    """
-    node_id = "compose-e2e-node"
-    nodes_dir = compose_stack.bind_source() / "nodes"
-    nodes_dir.mkdir(parents=True, exist_ok=True)
-
-    spec = NodeSpec(
-        node_id=node_id,
-        hostname="compose-e2e.invalid",
-        gpus=[],
-        cpus=1,
-        memory_gb=1,
-        os="Linux",
-        status="ONLINE",
-        last_heartbeat=datetime.now(),
-    )
-    destination = nodes_dir / f"{node_id}.yaml"
-    temporary = nodes_dir / f".{node_id}.yaml.tmp"
-    temporary.write_text(spec.model_dump_json(), encoding="utf-8")
-    os.replace(temporary, destination)
-
-    deadline = time.monotonic() + 60
-    seen = False
-    while time.monotonic() < deadline and not seen:
-        listed = cluster.get("/api/v1/nodes").json()
-        seen = any(node["node_id"] == node_id for node in listed)
-        if not seen:
-            time.sleep(1.0)
-
-    assert seen, (
-        f"{destination} was written on the host and did not appear in "
-        "GET /api/v1/nodes within 60 s. Either the inotify event did not cross "
-        "the bind mount, or the watcher is not reading the directory the mount "
-        "points at (backend/services/syncthing_service.py:202-205)."
-    )
-    # Tidy up after the one file this test wrote, by exact name.
-    destination.unlink(missing_ok=True)

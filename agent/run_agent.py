@@ -38,11 +38,135 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 ENV_FILE = REPO_ROOT / ".env"
 ENV_EXAMPLE = REPO_ROOT / ".env.example"
 
+# Agent's own directory (where run_agent.py or the frozen binary lives)
+# This is the primary location for .env when deployed via Syncthing
+AGENT_DIR = Path(__file__).resolve().parent
+
 # Required variables that have no safe default
 REQUIRED_VARS = frozenset({"NODE_ID", "SYNCTHING_ROOT"})
 
 
+def _extract_syncthing_root_from_argv(argv: Sequence[str] | None) -> str | None:
+    """Extract --syncthing-root value from argv before full parsing.
+
+    Returns the value if found, None otherwise.
+    """
+    if argv is None:
+        return None
+    # Simple manual parse for --syncthing-root=value or --syncthing-root value
+    for i, arg in enumerate(argv):
+        if arg == "--syncthing-root":
+            if i + 1 < len(argv):
+                return argv[i + 1]
+        elif arg.startswith("--syncthing-root="):
+            return arg.split("=", 1)[1]
+    return None
+
+
+def _extract_node_id_from_argv(argv: Sequence[str] | None) -> str | None:
+    """Extract --node-id value from argv before full parsing.
+
+    Returns the value if found, None otherwise.
+    """
+    if argv is None:
+        return None
+    for i, arg in enumerate(argv):
+        if arg == "--node-id":
+            if i + 1 < len(argv):
+                return argv[i + 1]
+        elif arg.startswith("--node-id="):
+            return arg.split("=", 1)[1]
+    return None
+
+
+def _copy_env_to_extraction_dir() -> bool:
+    """Copy .env from deployment location to extraction directory for frozen builds.
+
+    For frozen builds (PyInstaller), the binary runs from an extraction temp
+    directory (sys._MEIPASS), but the .env file sits next to the binary in the
+    Syncthing folder. This function copies .env from the deployment location
+    (next to sys.executable) to the extraction directory so the agent can find it.
+
+    Only copies .env (not .env.example). Returns True if copy succeeded or not
+    needed, False on failure.
+    """
+    if not getattr(sys, "frozen", False):
+        return True
+
+    # Deployment location: where the binary lives (Syncthing folder)
+    deployment_dir = Path(sys.executable).resolve().parent
+    deployment_env = deployment_dir / ".env"
+
+    # Extraction directory: where the bundle unpacks (sys._MEIPASS or __file__ parent)
+    if hasattr(sys, "_MEIPASS") and sys._MEIPASS:
+        extraction_dir = Path(sys._MEIPASS)
+    else:
+        # Fallback: parent of this file's location
+        extraction_dir = Path(__file__).resolve().parent
+
+    extraction_env = extraction_dir / ".env"
+
+    # If .env already exists in extraction dir, nothing to do
+    if extraction_env.exists():
+        return True
+
+    # Copy from deployment location if source exists
+    try:
+        if deployment_env.exists():
+            shutil.copy2(deployment_env, extraction_env)
+            sys.stderr.write(f"Copied .env from {deployment_env} to {extraction_env}\n")
+            sys.stderr.flush()
+        return True
+    except Exception as exc:
+        sys.stderr.write(f"Failed to copy .env to extraction dir: {exc}\n")
+        sys.stderr.flush()
+        return False
+
+
+def _get_env_exists() -> bool:
+    """Check if .env file exists (extraction dir > agent dir > repo root)."""
+    agent_env_file = AGENT_DIR / ".env"
+    repo_env_file = ENV_FILE
+
+    if getattr(sys, "frozen", False):
+        if hasattr(sys, "_MEIPASS") and sys._MEIPASS:
+            extraction_env = Path(sys._MEIPASS) / ".env"
+            if extraction_env.exists():
+                return True
+    return agent_env_file.exists() or repo_env_file.exists()
+
+
+def _get_missing_required_vars(
+    argv: Sequence[str] | None, env: Mapping[str, str]
+) -> set[str]:
+    """Determine which required vars are missing from CLI args and environment."""
+    missing_required = set()
+    for var in REQUIRED_VARS:
+        cli_value = (
+            _extract_syncthing_root_from_argv(argv) if var == "SYNCTHING_ROOT" else None
+        )
+        node_id_cli = None
+        if var == "NODE_ID" and argv is not None:
+            for i, arg in enumerate(argv):
+                if arg == "--node-id" and i + 1 < len(argv):
+                    node_id_cli = argv[i + 1]
+                    break
+                elif arg.startswith("--node-id="):
+                    node_id_cli = arg.split("=", 1)[1]
+                    break
+
+        if var == "SYNCTHING_ROOT" and cli_value:
+            continue
+        if var == "NODE_ID" and node_id_cli:
+            continue
+        if var in env:
+            continue
+        missing_required.add(var)
+    return missing_required
+
+
 def _detect_first_run(
+    argv: Sequence[str] | None = None,
     environ: Mapping[str, str] | None = None,
 ) -> tuple[bool, set[str]]:
     """Detect if this is a first run (missing .env or missing required vars).
@@ -53,16 +177,8 @@ def _detect_first_run(
         - missing_required_vars: set of required var names that are not available
     """
     env = os.environ if environ is None else environ
-
-    # Check if .env file exists at repo root
-    env_exists = ENV_FILE.exists()
-
-    # Check which required vars are available from any source (CLI > env > .env)
-    # We check env here because CLI args are parsed later in build_settings
-    missing_required = set()
-    for var in REQUIRED_VARS:
-        if var not in env:
-            missing_required.add(var)
+    env_exists = _get_env_exists()
+    missing_required = _get_missing_required_vars(argv, env)
 
     # First run if .env is missing OR required vars are missing
     is_first_run = not env_exists or bool(missing_required)
@@ -70,20 +186,14 @@ def _detect_first_run(
 
 
 def _prompt_create_env(timeout_seconds: float = 5.0) -> bool:
-    """Prompt the operator to create .env from .env.example.
+    """Prompt the operator to create .env.
 
     Returns True if the operator confirmed (y/Y), False otherwise
     (n/N/Enter/timeout/Ctrl+C).
     """
-    if not ENV_EXAMPLE.exists():
-        sys.stderr.write(
-            f"error: {ENV_EXAMPLE} not found; run from a complete checkout.\n"
-        )
-        return False
-
     prompt = (
-        f"No .env file found at {ENV_FILE} and required configuration is missing.\n"
-        f"Create one now from .env.example? [y/N]: "
+        "No .env file found and required configuration is missing.\n"
+        "Create one now? [y/N]: "
     )
     sys.stderr.write(prompt)
     sys.stderr.flush()
@@ -127,7 +237,7 @@ def _run_first_run_flow(
 
     Returns True if we should proceed to build_settings, False if we should exit.
     """
-    is_first_run, missing_required = _detect_first_run(environ)
+    is_first_run, missing_required = _detect_first_run(argv, environ)
 
     if not is_first_run:
         return True
@@ -137,10 +247,11 @@ def _run_first_run_flow(
         # Interactive - prompt to create .env
         confirmed = _prompt_create_env()
         if confirmed:
-            # Copy .env.example to .env
+            # Create empty .env at agent directory (deployment location)
             try:
-                shutil.copy2(ENV_EXAMPLE, ENV_FILE)
-                sys.stderr.write(f"Created {ENV_FILE} from {ENV_EXAMPLE}\n")
+                target_env_file = AGENT_DIR / ".env"
+                target_env_file.touch()
+                sys.stderr.write(f"Created empty {target_env_file}\n")
                 sys.stderr.flush()
                 # Re-check after creation - will be handled by build_settings
                 return True
@@ -166,12 +277,16 @@ def main(argv: Sequence[str] | None = None) -> int:
     """Return the process exit code. See ``agent.config`` for the table."""
     args = list(sys.argv[1:] if argv is None else argv)
 
+    # For frozen builds, copy .env from deployment location to extraction dir
+    if not _copy_env_to_extraction_dir():
+        return EXIT_CONFIG_ERROR
+
     # Run first-run detection and prompt before building settings
     if not _run_first_run_flow(args):
         return EXIT_CONFIG_ERROR
 
     # Determine if we're in first-run mode (for allowing defaults on optional vars)
-    is_first_run, _ = _detect_first_run()
+    is_first_run, _ = _detect_first_run(args)
 
     try:
         settings, defaulted_fields = build_settings(args, first_run_ok=is_first_run)

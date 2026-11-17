@@ -262,7 +262,7 @@ class TestAuthFlow:
 
         # Use token to access protected endpoint
         async_client.headers["Authorization"] = f"Bearer {token}"
-        response = await async_client.get("/api/v1/nodes/")
+        response = await async_client.get("/api/v1/jobs/")
         assert response.status_code == 200
 
     @pytest.mark.asyncio
@@ -278,7 +278,6 @@ class TestAuthFlow:
             "/api/v1/auth/token",
             "/api/v1/auth/refresh",
             "/api/v1/jobs/",
-            "/api/v1/nodes/",
             # Syncthing endpoints skipped
             # (require app.state.syncthing_service from lifespan)
         ]

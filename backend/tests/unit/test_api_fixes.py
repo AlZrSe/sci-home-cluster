@@ -104,14 +104,6 @@ class TestErrorCodesAreExplicit:
         assert first.json()["error_code"] == "JOB_NOT_FOUND"
         assert second.json()["error_code"] == "JOB_NOT_FOUND"
 
-    @pytest.mark.asyncio
-    async def test_node_and_job_not_found_are_distinct(self, async_client):
-        job = await async_client.get("/api/v1/jobs/job-999999")
-        node = await async_client.get("/api/v1/nodes/node-999999")
-
-        assert job.json()["error_code"] == "JOB_NOT_FOUND"
-        assert node.json()["error_code"] == "NODE_NOT_FOUND"
-
     def test_api_error_carries_its_code(self):
         err = job_not_found("job-1")
         assert isinstance(err, APIError)
@@ -177,7 +169,6 @@ class TestNoPrivateStoreAccess:
             "backend/services/syncthing_service.py",
             "backend/services/node_service.py",
             "backend/api/v1/jobs.py",
-            "backend/api/v1/nodes.py",
             "backend/api/v1/syncthing.py",
             "backend/api/v1/auth.py",
         ],

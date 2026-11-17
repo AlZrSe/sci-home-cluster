@@ -23,433 +23,554 @@ pytestmark = pytest.mark.unit
 # --- _detect_first_run --------------------------------------------------------
 
 
-def test_detects_missing_env_at_repo_root(tmp_path: Path, monkeypatch: Any) -> None:
-    """ENV_FILE.exists() == False triggers first-run flow."""
-    with patch("agent.run_agent.REPO_ROOT", tmp_path):
-        with patch("agent.run_agent.ENV_FILE", tmp_path / ".env"):
-            with patch("agent.run_agent.ENV_EXAMPLE", tmp_path / ".env.example"):
-                (tmp_path / ".env.example").write_text(
-                    "NODE_ID=node-01\nSYNCTHING_ROOT=/tmp\n", encoding="utf-8"
-                )
+def test_detects_missing_env_at_agent_dir(tmp_path: Path, monkeypatch: Any) -> None:
+    """Missing .env at agent dir triggers first-run flow."""
+    agent_dir = tmp_path / "agent"
+    agent_dir.mkdir()
+    (agent_dir / ".env.example").write_text(
+        "NODE_ID=node-01\nSYNCTHING_ROOT=/tmp\n", encoding="utf-8"
+    )
+    # Ensure repo root has no .env
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
 
+    with patch("agent.run_agent.AGENT_DIR", agent_dir):
+        with patch("agent.run_agent.REPO_ROOT", repo_root):
+            with patch("agent.run_agent.ENV_FILE", repo_root / ".env"):
                 is_first_run, missing = _detect_first_run(
-                    {"NODE_ID": "node-01", "SYNCTHING_ROOT": "/tmp"}
+                    [],  # argv
+                    {"NODE_ID": "node-01", "SYNCTHING_ROOT": "/tmp"},  # environ
                 )
                 assert is_first_run is True
                 assert missing == set()
 
 
-def test_detects_existing_env_at_repo_root(tmp_path: Path, monkeypatch: Any) -> None:
-    """ENV_FILE.exists() == True skips prompt when all required vars present."""
-    with patch("agent.run_agent.REPO_ROOT", tmp_path):
-        with patch("agent.run_agent.ENV_FILE", tmp_path / ".env"):
-            with patch("agent.run_agent.ENV_EXAMPLE", tmp_path / ".env.example"):
-                (tmp_path / ".env").write_text(
-                    "NODE_ID=node-01\nSYNCTHING_ROOT=/tmp\n", encoding="utf-8"
-                )
-                (tmp_path / ".env.example").write_text(
-                    "NODE_ID=node-01\nSYNCTHING_ROOT=/tmp\n", encoding="utf-8"
-                )
+def test_detects_existing_env_at_agent_dir(tmp_path: Path, monkeypatch: Any) -> None:
+    """.env exists at agent dir skips prompt when all required vars present."""
+    agent_dir = tmp_path / "agent"
+    agent_dir.mkdir()
+    (agent_dir / ".env").write_text(
+        "NODE_ID=node-01\nSYNCTHING_ROOT=/tmp\n", encoding="utf-8"
+    )
+    (agent_dir / ".env.example").write_text(
+        "NODE_ID=node-01\nSYNCTHING_ROOT=/tmp\n", encoding="utf-8"
+    )
 
+    with patch("agent.run_agent.AGENT_DIR", agent_dir):
+        is_first_run, missing = _detect_first_run(
+            [],  # argv
+            {"NODE_ID": "node-01", "SYNCTHING_ROOT": "/tmp"},  # environ
+        )
+        assert is_first_run is False
+        assert missing == set()
+
+
+def test_detects_missing_required_vars_with_env_file(tmp_path: Path) -> None:
+    """.env exists at agent dir but required vars missing ->
+    first run with missing vars.
+    """
+    agent_dir = tmp_path / "agent"
+    agent_dir.mkdir()
+    (agent_dir / ".env").write_text("# empty or incomplete\n", encoding="utf-8")
+    (agent_dir / ".env.example").write_text(
+        "NODE_ID=node-01\nSYNCTHING_ROOT=/tmp\n", encoding="utf-8"
+    )
+
+    with patch("agent.run_agent.AGENT_DIR", agent_dir):
+        # Neither NODE_ID nor SYNCTHING_ROOT in environ
+        is_first_run, missing = _detect_first_run([], {})
+        assert is_first_run is True
+        assert missing == REQUIRED_VARS
+
+        # Only NODE_ID in environ
+        is_first_run, missing = _detect_first_run([], {"NODE_ID": "node-01"})
+        assert is_first_run is True
+        assert missing == {"SYNCTHING_ROOT"}
+
+        # Only SYNCTHING_ROOT in environ
+        is_first_run, missing = _detect_first_run([], {"SYNCTHING_ROOT": "/tmp"})
+        assert is_first_run is True
+        assert missing == {"NODE_ID"}
+
+
+def test_detects_fallback_to_repo_root(tmp_path: Path) -> None:
+    """.env missing at agent dir but exists at repo root -> not first run."""
+    agent_dir = tmp_path / "agent"
+    agent_dir.mkdir()
+    # No .env at agent dir
+
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+    (repo_root / ".env").write_text(
+        "NODE_ID=node-01\nSYNCTHING_ROOT=/tmp\n", encoding="utf-8"
+    )
+    (repo_root / ".env.example").write_text(
+        "NODE_ID=node-01\nSYNCTHING_ROOT=/tmp\n", encoding="utf-8"
+    )
+
+    with patch("agent.run_agent.AGENT_DIR", agent_dir):
+        with patch("agent.run_agent.REPO_ROOT", repo_root):
+            with patch("agent.run_agent.ENV_FILE", repo_root / ".env"):
                 is_first_run, missing = _detect_first_run(
-                    {"NODE_ID": "node-01", "SYNCTHING_ROOT": "/tmp"}
+                    [],  # argv
+                    {"NODE_ID": "node-01", "SYNCTHING_ROOT": "/tmp"},  # environ
                 )
                 assert is_first_run is False
                 assert missing == set()
 
 
-def test_detects_missing_required_vars_with_env_file(tmp_path: Path) -> None:
-    """.env exists but required vars missing -> first run with missing vars."""
-    with patch("agent.run_agent.REPO_ROOT", tmp_path):
-        with patch("agent.run_agent.ENV_FILE", tmp_path / ".env"):
-            with patch("agent.run_agent.ENV_EXAMPLE", tmp_path / ".env.example"):
-                (tmp_path / ".env").write_text(
-                    "# empty or incomplete\n", encoding="utf-8"
-                )
-                (tmp_path / ".env.example").write_text(
-                    "NODE_ID=node-01\nSYNCTHING_ROOT=/tmp\n", encoding="utf-8"
-                )
-
-                # Neither NODE_ID nor SYNCTHING_ROOT in environ
-                is_first_run, missing = _detect_first_run({})
-                assert is_first_run is True
-                assert missing == REQUIRED_VARS
-
-                # Only NODE_ID in environ
-                is_first_run, missing = _detect_first_run({"NODE_ID": "node-01"})
-                assert is_first_run is True
-                assert missing == {"SYNCTHING_ROOT"}
+# --- _prompt_create_env --------------------------------------------------------
 
 
-# --- _prompt_create_env -------------------------------------------------------
+def test_prompt_create_env_accepts_y(tmp_path: Path) -> None:
+    """Prompt returns True on 'y' input."""
+    agent_dir = tmp_path / "agent"
+    agent_dir.mkdir()
+    (agent_dir / ".env.example").write_text(
+        "NODE_ID=node-01\nSYNCTHING_ROOT=/tmp\n", encoding="utf-8"
+    )
+
+    # Mock selectors to return ready immediately
+    with patch("selectors.DefaultSelector") as mock_selector:
+        mock_sel = MagicMock()
+        mock_selector.return_value = mock_sel
+        mock_sel.select.return_value = [(None, selectors.EVENT_READ)]
+
+        with patch("sys.stdin.readline", return_value="y\n"):
+            with patch("sys.stderr.write", lambda _: None):
+                with patch("agent.run_agent.AGENT_DIR", agent_dir):
+                    result = _prompt_create_env()
+
+    assert result is True
 
 
-def test_prompt_shown_only_in_tty(tmp_path: Path, monkeypatch: Any) -> None:
-    """Mock sys.stdin.isatty() -> True/False."""
-    with patch("agent.run_agent.REPO_ROOT", tmp_path):
-        with patch("agent.run_agent.ENV_FILE", tmp_path / ".env"):
-            with patch("agent.run_agent.ENV_EXAMPLE", tmp_path / ".env.example"):
-                (tmp_path / ".env.example").write_text(
-                    "NODE_ID=node-01\nSYNCTHING_ROOT=/tmp\n", encoding="utf-8"
-                )
+def test_prompt_create_env_rejects_n(tmp_path: Path) -> None:
+    """Prompt returns False on 'n' input."""
+    agent_dir = tmp_path / "agent"
+    agent_dir.mkdir()
+    (agent_dir / ".env.example").write_text(
+        "NODE_ID=node-01\nSYNCTHING_ROOT=/tmp\n", encoding="utf-8"
+    )
 
-                # Test TTY=True -> prompt is shown
-                mock_selector = MagicMock()
-                mock_selector.select.return_value = [(None, selectors.EVENT_READ)]
-                with patch("sys.stdin.isatty", return_value=True):
-                    with patch("selectors.DefaultSelector", return_value=mock_selector):
-                        with patch("sys.stdin.readline", return_value="y\n"):
-                            result = _prompt_create_env()
-                            assert result is True
+    with patch("selectors.DefaultSelector") as mock_selector:
+        mock_sel = MagicMock()
+        mock_selector.return_value = mock_sel
+        mock_sel.select.return_value = [(None, selectors.EVENT_READ)]
 
-                # Test TTY=False -> should not be called in practice,
-                # but function would still work
-                # This is more of a design test - the caller checks isatty()
+        with patch("sys.stdin.readline", return_value="n\n"):
+            with patch("sys.stderr.write", lambda _: None):
+                with patch("agent.run_agent.AGENT_DIR", agent_dir):
+                    result = _prompt_create_env()
+
+    assert result is False
 
 
-def test_prompt_creates_env_from_example(tmp_path: Path, monkeypatch: Any) -> None:
-    """Simulate 'y' input via _run_first_run_flow, verify copy and re-check."""
-    with patch("agent.run_agent.REPO_ROOT", tmp_path):
-        with patch("agent.run_agent.ENV_FILE", tmp_path / ".env"):
-            with patch("agent.run_agent.ENV_EXAMPLE", tmp_path / ".env.example"):
-                (tmp_path / ".env.example").write_text(
-                    "NODE_ID=node-01\nSYNCTHING_ROOT=/tmp\n", encoding="utf-8"
-                )
+def test_prompt_create_env_timeout(tmp_path: Path) -> None:
+    """Prompt returns False on timeout."""
+    agent_dir = tmp_path / "agent"
+    agent_dir.mkdir()
+    (agent_dir / ".env.example").write_text(
+        "NODE_ID=node-01\nSYNCTHING_ROOT=/tmp\n", encoding="utf-8"
+    )
 
-                mock_selector = MagicMock()
-                mock_selector.select.return_value = [(None, selectors.EVENT_READ)]
-                with patch("sys.stdin.isatty", return_value=True):
-                    with patch("selectors.DefaultSelector", return_value=mock_selector):
-                        with patch("sys.stdin.readline", return_value="y\n"):
-                            result = _run_first_run_flow([], environ={})
-                            assert result is True
-                            assert (tmp_path / ".env").exists()
-                            content = (tmp_path / ".env").read_text(encoding="utf-8")
-                            assert "NODE_ID=node-01" in content
-                            assert "SYNCTHING_ROOT=/tmp" in content
+    with patch("selectors.DefaultSelector") as mock_selector:
+        mock_sel = MagicMock()
+        mock_selector.return_value = mock_sel
+        mock_sel.select.return_value = []  # Timeout - no input ready
+
+        with patch("sys.stderr.write", lambda _: None):
+            with patch("agent.run_agent.AGENT_DIR", agent_dir):
+                result = _prompt_create_env()
+
+    assert result is False
 
 
-def test_prompt_declined_proceeds_to_validation(tmp_path: Path) -> None:
-    """Simulate 'n' input, verify returns False."""
-    with patch("agent.run_agent.REPO_ROOT", tmp_path):
-        with patch("agent.run_agent.ENV_FILE", tmp_path / ".env"):
-            with patch("agent.run_agent.ENV_EXAMPLE", tmp_path / ".env.example"):
-                (tmp_path / ".env.example").write_text(
-                    "NODE_ID=node-01\nSYNCTHING_ROOT=/tmp\n", encoding="utf-8"
-                )
+def test_prompt_create_env_ctrl_c(tmp_path: Path) -> None:
+    """Prompt returns False on KeyboardInterrupt."""
+    agent_dir = tmp_path / "agent"
+    agent_dir.mkdir()
+    (agent_dir / ".env.example").write_text(
+        "NODE_ID=node-01\nSYNCTHING_ROOT=/tmp\n", encoding="utf-8"
+    )
 
-                with patch("sys.stdin.isatty", return_value=True):
-                    with patch(
-                        "selectors.DefaultSelector.select",
-                        return_value=[(None, selectors.EVENT_READ)],
-                    ):
-                        with patch("sys.stdin.readline", return_value="n\n"):
-                            result = _prompt_create_env()
-                            assert result is False
-                            assert not (tmp_path / ".env").exists()
+    with patch("sys.stdin.readline", side_effect=KeyboardInterrupt):
+        with patch("sys.stderr.write", lambda _: None):
+            with patch("agent.run_agent.AGENT_DIR", agent_dir):
+                result = _prompt_create_env()
+
+    assert result is False
 
 
-def test_prompt_timeout_proceeds_to_validation(tmp_path: Path) -> None:
-    """Input times out (5s) -> treat as decline."""
-    with patch("agent.run_agent.REPO_ROOT", tmp_path):
-        with patch("agent.run_agent.ENV_FILE", tmp_path / ".env"):
-            with patch("agent.run_agent.ENV_EXAMPLE", tmp_path / ".env.example"):
-                (tmp_path / ".env.example").write_text(
-                    "NODE_ID=node-01\nSYNCTHING_ROOT=/tmp\n", encoding="utf-8"
-                )
+def test_prompt_create_env_missing_example(tmp_path: Path) -> None:
+    """Prompt returns False when .env.example is missing."""
+    agent_dir = tmp_path / "agent"
+    agent_dir.mkdir()
+    # No .env.example
 
-                with patch("sys.stdin.isatty", return_value=True):
-                    with patch("selectors.DefaultSelector.select", return_value=[]):
-                        result = _prompt_create_env()
-                        assert result is False
-                        assert not (tmp_path / ".env").exists()
+    with patch("sys.stderr.write", lambda _: None):
+        with patch("agent.run_agent.AGENT_DIR", agent_dir):
+            result = _prompt_create_env()
+
+    assert result is False
 
 
-def test_prompt_ctrl_c_exits_cleanly(tmp_path: Path) -> None:
-    """Ctrl+C during prompt -> returns False."""
-    with patch("agent.run_agent.REPO_ROOT", tmp_path):
-        with patch("agent.run_agent.ENV_FILE", tmp_path / ".env"):
-            with patch("agent.run_agent.ENV_EXAMPLE", tmp_path / ".env.example"):
-                (tmp_path / ".env.example").write_text(
-                    "NODE_ID=node-01\nSYNCTHING_ROOT=/tmp\n", encoding="utf-8"
-                )
-
-                with patch("sys.stdin.isatty", return_value=True):
-                    with patch(
-                        "selectors.DefaultSelector.select",
-                        side_effect=KeyboardInterrupt,
-                    ):
-                        result = _prompt_create_env()
-                        assert result is False
-
-
-def test_prompt_missing_example_fails_fast(tmp_path: Path) -> None:
-    """.env.example missing -> fail fast with clear error."""
-    with patch("agent.run_agent.REPO_ROOT", tmp_path):
-        with patch("agent.run_agent.ENV_FILE", tmp_path / ".env"):
-            with patch("agent.run_agent.ENV_EXAMPLE", tmp_path / ".env.example"):
-                # .env.example does NOT exist
-                with patch("sys.stdin.isatty", return_value=True):
-                    with patch(
-                        "selectors.DefaultSelector.select",
-                        return_value=[(None, selectors.EVENT_READ)],
-                    ):
-                        with patch("sys.stdin.readline", return_value="y\n"):
-                            result = _prompt_create_env()
-                            assert result is False
-
-
-# --- _run_first_run_flow ------------------------------------------------------
+# --- _run_first_run_flow -------------------------------------------------------
 
 
 def test_first_run_flow_interactive_creates_env(tmp_path: Path) -> None:
     """Interactive TTY, user confirms -> creates .env and proceeds."""
-    with patch("agent.run_agent.REPO_ROOT", tmp_path):
-        with patch("agent.run_agent.ENV_FILE", tmp_path / ".env"):
-            with patch("agent.run_agent.ENV_EXAMPLE", tmp_path / ".env.example"):
-                (tmp_path / ".env.example").write_text(
-                    "NODE_ID=node-01\nSYNCTHING_ROOT=/tmp\n", encoding="utf-8"
-                )
+    agent_dir = tmp_path / "agent"
+    agent_dir.mkdir()
+    (agent_dir / ".env.example").write_text(
+        "NODE_ID=node-01\nSYNCTHING_ROOT=/tmp\n", encoding="utf-8"
+    )
+    # Ensure repo root has no .env
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
 
-                mock_selector = MagicMock()
-                mock_selector.select.return_value = [(None, selectors.EVENT_READ)]
-                with patch("sys.stdin.isatty", return_value=True):
-                    with patch("selectors.DefaultSelector", return_value=mock_selector):
-                        with patch("sys.stdin.readline", return_value="y\n"):
-                            result = _run_first_run_flow([], environ={})
-                            assert result is True
-                            assert (tmp_path / ".env").exists()
+    with patch("agent.run_agent.AGENT_DIR", agent_dir):
+        with patch("agent.run_agent.REPO_ROOT", repo_root):
+            with patch("agent.run_agent.ENV_FILE", repo_root / ".env"):
+                with patch("agent.run_agent.ENV_EXAMPLE", agent_dir / ".env.example"):
+                    with patch("sys.stdin.isatty", return_value=True):
+                        with patch("selectors.DefaultSelector") as mock_selector:
+                            mock_sel = MagicMock()
+                            mock_selector.return_value = mock_sel
+                            mock_sel.select.return_value = [
+                                (None, selectors.EVENT_READ)
+                            ]
+
+                            with patch("sys.stdin.readline", return_value="y\n"):
+                                with patch("sys.stderr.write", lambda _: None):
+                                    result = _run_first_run_flow(
+                                        [],
+                                        {
+                                            "NODE_ID": "node-01",
+                                            "SYNCTHING_ROOT": "/tmp",
+                                        },
+                                    )
+
+    assert result is True
+    assert (agent_dir / ".env").exists()
+    # .env should be empty since we no longer copy from .env.example
+    content = (agent_dir / ".env").read_text(encoding="utf-8")
+    assert content == ""
 
 
 def test_first_run_flow_interactive_declines(tmp_path: Path) -> None:
     """Interactive TTY, user declines -> proceeds without .env."""
-    with patch("agent.run_agent.REPO_ROOT", tmp_path):
-        with patch("agent.run_agent.ENV_FILE", tmp_path / ".env"):
-            with patch("agent.run_agent.ENV_EXAMPLE", tmp_path / ".env.example"):
-                (tmp_path / ".env.example").write_text(
-                    "NODE_ID=node-01\nSYNCTHING_ROOT=/tmp\n", encoding="utf-8"
-                )
+    agent_dir = tmp_path / "agent"
+    agent_dir.mkdir()
+    (agent_dir / ".env.example").write_text(
+        "NODE_ID=node-01\nSYNCTHING_ROOT=/tmp\n", encoding="utf-8"
+    )
 
-                with patch("sys.stdin.isatty", return_value=True):
-                    with patch(
-                        "selectors.DefaultSelector.select",
-                        return_value=[(None, selectors.EVENT_READ)],
-                    ):
-                        with patch("sys.stdin.readline", return_value="n\n"):
-                            result = _run_first_run_flow([], environ={})
-                            assert result is True
-                            assert not (tmp_path / ".env").exists()
+    with patch("agent.run_agent.AGENT_DIR", agent_dir):
+        with patch("sys.stdin.isatty", return_value=True):
+            with patch("selectors.DefaultSelector") as mock_selector:
+                mock_sel = MagicMock()
+                mock_selector.return_value = mock_sel
+                mock_sel.select.return_value = [(None, selectors.EVENT_READ)]
+
+                with patch("sys.stdin.readline", return_value="n\n"):
+                    with patch("sys.stderr.write", lambda _: None):
+                        result = _run_first_run_flow(
+                            [],
+                            {"NODE_ID": "node-01", "SYNCTHING_ROOT": "/tmp"},
+                        )
+
+    assert result is True
+    assert not (agent_dir / ".env").exists()
 
 
 def test_first_run_flow_non_interactive_logs_warning(
     tmp_path: Path, capsys: Any
 ) -> None:
     """Non-TTY skips prompt, logs warning to stderr."""
-    with patch("agent.run_agent.REPO_ROOT", tmp_path):
-        with patch("agent.run_agent.ENV_FILE", tmp_path / ".env"):
-            with patch("agent.run_agent.ENV_EXAMPLE", tmp_path / ".env.example"):
-                (tmp_path / ".env.example").write_text(
-                    "NODE_ID=node-01\nSYNCTHING_ROOT=/tmp\n", encoding="utf-8"
-                )
+    agent_dir = tmp_path / "agent"
+    agent_dir.mkdir()
+    (agent_dir / ".env.example").write_text(
+        "NODE_ID=node-01\nSYNCTHING_ROOT=/tmp\n", encoding="utf-8"
+    )
+    # Ensure repo root has no .env
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
 
+    with patch("agent.run_agent.AGENT_DIR", agent_dir):
+        with patch("agent.run_agent.REPO_ROOT", repo_root):
+            with patch("agent.run_agent.ENV_FILE", repo_root / ".env"):
                 with patch("sys.stdin.isatty", return_value=False):
-                    result = _run_first_run_flow([], environ={})
-                    assert result is True
-                    captured = capsys.readouterr()
-                    assert "WARNING: Running in non-interactive mode" in captured.err
-                    assert "NODE_ID" in captured.err
-                    assert "SYNCTHING_ROOT" in captured.err
+                    result = _run_first_run_flow(
+                        [],
+                        {"NODE_ID": "node-01", "SYNCTHING_ROOT": "/tmp"},
+                    )
+
+    assert result is True
+    captured = capsys.readouterr()
+    assert "WARNING: Running in non-interactive mode" in captured.err
+    assert "SYNCTHING_ROOT via environment or CLI flags" in captured.err
 
 
 def test_first_run_flow_already_configured_skips(tmp_path: Path) -> None:
-    """.env exists with required vars -> skips first-run flow entirely."""
-    with patch("agent.run_agent.REPO_ROOT", tmp_path):
-        with patch("agent.run_agent.ENV_FILE", tmp_path / ".env"):
-            with patch("agent.run_agent.ENV_EXAMPLE", tmp_path / ".env.example"):
-                (tmp_path / ".env").write_text(
-                    "NODE_ID=node-01\nSYNCTHING_ROOT=/tmp\n", encoding="utf-8"
-                )
-                (tmp_path / ".env.example").write_text(
-                    "NODE_ID=node-01\nSYNCTHING_ROOT=/tmp\n", encoding="utf-8"
-                )
+    """.env exists at agent dir with required vars -> skips first-run flow entirely."""
+    agent_dir = tmp_path / "agent"
+    agent_dir.mkdir()
+    (agent_dir / ".env").write_text(
+        "NODE_ID=node-01\nSYNCTHING_ROOT=/tmp\n", encoding="utf-8"
+    )
+    (agent_dir / ".env.example").write_text(
+        "NODE_ID=node-01\nSYNCTHING_ROOT=/tmp\n", encoding="utf-8"
+    )
 
-                with patch("sys.stdin.isatty", return_value=True):
-                    result = _run_first_run_flow(
-                        [], environ={"NODE_ID": "node-01", "SYNCTHING_ROOT": "/tmp"}
-                    )
-                    assert result is True
+    with patch("agent.run_agent.AGENT_DIR", agent_dir):
+        with patch("sys.stderr.write", lambda _: None):
+            result = _run_first_run_flow(
+                [],
+                {"NODE_ID": "node-01", "SYNCTHING_ROOT": "/tmp"},
+            )
+
+    assert result is True
 
 
-# --- build_settings defaulted fields ------------------------------------------
+# --- build_settings integration ------------------------------------------------
 
 
 def test_required_vars_fail_fast_with_existing_messages(tmp_path: Path) -> None:
     """Missing NODE_ID/SYNCTHING_ROOT raises ConfigError with actionable messages."""
-    with patch("agent.run_agent.REPO_ROOT", tmp_path):
-        with patch("agent.run_agent.ENV_FILE", tmp_path / ".env"):
-            with patch("agent.run_agent.ENV_EXAMPLE", tmp_path / ".env.example"):
-                (tmp_path / ".env.example").write_text(
-                    "NODE_ID=node-01\nSYNCTHING_ROOT=/tmp\n", encoding="utf-8"
-                )
+    agent_dir = tmp_path / "agent"
+    agent_dir.mkdir()
 
-                # Missing NODE_ID
-                with pytest.raises(ConfigError) as excinfo:
-                    build_settings(["--syncthing-root", str(tmp_path)], environ={})
-                message = str(excinfo.value)
-                assert "NODE_ID" in message
-                assert "replicated" in message
+    with patch("agent.run_agent.AGENT_DIR", agent_dir):
+        # Missing SYNCTHING_ROOT (validated first - needed to locate config file)
+        with pytest.raises(ConfigError) as excinfo:
+            build_settings(
+                [],
+                first_run_ok=True,
+            )
+        assert "SYNCTHING_ROOT is required" in str(excinfo.value)
 
-                # Missing SYNCTHING_ROOT
-                with pytest.raises(ConfigError) as excinfo:
-                    build_settings(["--node-id", "node-01"], environ={})
-                message = str(excinfo.value)
-                assert "SYNCTHING_ROOT" in message
-                assert "no default" in message
+        # Missing NODE_ID (when SYNCTHING_ROOT provided)
+        with pytest.raises(ConfigError) as excinfo:
+            build_settings(
+                ["--syncthing-root", "/tmp"],
+                first_run_ok=True,
+            )
+        assert "NODE_ID is required" in str(excinfo.value)
+
+
+# --- Default configuration behavior --------------------------------------------
 
 
 def test_optional_vars_default_and_warn(tmp_path: Path) -> None:
-    """No optional vars set -> defaulted_fields contains all optional field names."""
-    settings, defaulted = build_settings(
-        ["--node-id", "node-01", "--syncthing-root", str(tmp_path)],
-        environ={},
+    """When first_run_ok=True, optional vars get defaults and warning is emitted."""
+    agent_dir = tmp_path / "agent"
+    agent_dir.mkdir()
+    (agent_dir / ".env.example").write_text(
+        "NODE_ID=node-01\nSYNCTHING_ROOT=/tmp\n", encoding="utf-8"
     )
-    expected_optional = {
-        "LOG_LEVEL",
-        "SHELL",
-        "SHUTDOWN_GRACE_S",
-        "FOLDER_WATCH_INTERVAL_S",
-        "FOLDER_RETRY_MAX_S",
-        "WATCHER_LIVENESS_INTERVAL_S",
-        "HEARTBEAT_INTERVAL_S",
-        "HEARTBEAT_JITTER_S",
-        "AGENT_STATE_DIR",
-    }
-    assert defaulted == expected_optional
-    # Verify defaults are correct
+
+    with patch("agent.run_agent.AGENT_DIR", agent_dir):
+        settings, defaulted = build_settings(
+            ["--node-id", "node-01", "--syncthing-root", "/tmp"],
+            first_run_ok=True,
+        )
+
+    # Required vars provided
+    assert settings.NODE_ID == "node-01"
+    assert settings.SYNCTHING_ROOT == Path("/tmp").resolve()
+
+    # Optional vars defaulted
+    assert "LOG_LEVEL" in defaulted
     assert settings.LOG_LEVEL == "INFO"
+    assert "SHELL" in defaulted
     assert settings.SHELL == "auto"
-    assert settings.SHUTDOWN_GRACE_S == 30.0
-    assert settings.FOLDER_WATCH_INTERVAL_S == 30.0
-    assert settings.FOLDER_RETRY_MAX_S == 60.0
-    assert settings.WATCHER_LIVENESS_INTERVAL_S == 60.0
-    assert settings.HEARTBEAT_INTERVAL_S == 22.0
-    assert settings.HEARTBEAT_JITTER_S == 2.0
-    assert settings.AGENT_STATE_DIR == tmp_path / ".agent" / "node-01"
+    assert "SHUTDOWN_GRACE_S" in defaulted
+    assert "FOLDER_WATCH_INTERVAL_S" in defaulted
+    assert "FOLDER_RETRY_MAX_S" in defaulted
+    assert "WATCHER_LIVENESS_INTERVAL_S" in defaulted
+    assert "HEARTBEAT_INTERVAL_S" in defaulted
+    assert "HEARTBEAT_JITTER_S" in defaulted
+    assert "AGENT_STATE_DIR" in defaulted
 
 
 def test_explicit_cli_suppresses_warning(tmp_path: Path) -> None:
-    """--log-level DEBUG -> LOG_LEVEL not in defaulted_fields."""
-    settings, defaulted = build_settings(
-        [
-            "--node-id",
-            "node-01",
-            "--syncthing-root",
-            str(tmp_path),
-            "--log-level",
-            "DEBUG",
-        ],
-        environ={},
+    """Explicit CLI flag suppresses warning for that setting."""
+    agent_dir = tmp_path / "agent"
+    agent_dir.mkdir()
+    (agent_dir / ".env.example").write_text(
+        "NODE_ID=node-01\nSYNCTHING_ROOT=/tmp\n", encoding="utf-8"
     )
+
+    with patch("agent.run_agent.AGENT_DIR", agent_dir):
+        settings, defaulted = build_settings(
+            [
+                "--node-id",
+                "node-01",
+                "--syncthing-root",
+                "/tmp",
+                "--log-level",
+                "DEBUG",
+                "--shell",
+                "bash",
+            ],
+            first_run_ok=True,
+        )
+
     assert "LOG_LEVEL" not in defaulted
     assert settings.LOG_LEVEL == "DEBUG"
-    # Other optional fields should still be defaulted
-    assert "SHELL" in defaulted
-    assert "SHUTDOWN_GRACE_S" in defaulted
+    assert "SHELL" not in defaulted
+    assert settings.SHELL == "bash"
 
 
 def test_explicit_env_suppresses_warning(tmp_path: Path) -> None:
-    """AGENT_LOG_LEVEL=DEBUG in environ -> LOG_LEVEL not in defaulted_fields."""
-    settings, defaulted = build_settings(
-        ["--node-id", "node-01", "--syncthing-root", str(tmp_path)],
-        environ={"AGENT_LOG_LEVEL": "DEBUG"},
+    """Explicit env var suppresses warning for that setting."""
+    agent_dir = tmp_path / "agent"
+    agent_dir.mkdir()
+    (agent_dir / ".env.example").write_text(
+        "NODE_ID=node-01\nSYNCTHING_ROOT=/tmp\n", encoding="utf-8"
     )
+
+    with patch("agent.run_agent.AGENT_DIR", agent_dir):
+        settings, defaulted = build_settings(
+            ["--node-id", "node-01", "--syncthing-root", "/tmp"],
+            environ={"AGENT_LOG_LEVEL": "DEBUG", "AGENT_SHELL": "bash"},
+            first_run_ok=True,
+        )
+
     assert "LOG_LEVEL" not in defaulted
     assert settings.LOG_LEVEL == "DEBUG"
+    assert "SHELL" not in defaulted
+    assert settings.SHELL == "bash"
 
 
 def test_toml_suppresses_warning(tmp_path: Path) -> None:
-    """TOML sets AGENT_LOG_LEVEL=WARNING -> LOG_LEVEL not in defaulted_fields."""
-    nodes_dir = tmp_path / "nodes"
+    """TOML config file suppresses warning for that setting."""
+    agent_dir = tmp_path / "agent"
+    agent_dir.mkdir()
+    syncthing_root = tmp_path / "syncthing"
+    syncthing_root.mkdir()
+    (agent_dir / ".env.example").write_text(
+        "NODE_ID=node-01\nSYNCTHING_ROOT=/tmp\n", encoding="utf-8"
+    )
+    # Create nodes/agent.toml in syncthing root
+    nodes_dir = syncthing_root / "nodes"
     nodes_dir.mkdir()
     (nodes_dir / "agent.toml").write_text(
-        'AGENT_LOG_LEVEL = "WARNING"\n', encoding="utf-8"
+        'AGENT_LOG_LEVEL = "DEBUG"\nAGENT_SHELL = "bash"\n',
+        encoding="utf-8",
     )
 
-    settings, defaulted = build_settings(
-        ["--node-id", "node-01", "--syncthing-root", str(tmp_path)],
-        environ={},
-    )
+    with patch("agent.run_agent.AGENT_DIR", agent_dir):
+        settings, defaulted = build_settings(
+            ["--node-id", "node-01", "--syncthing-root", str(syncthing_root)],
+            first_run_ok=True,
+        )
+
     assert "LOG_LEVEL" not in defaulted
-    assert settings.LOG_LEVEL == "WARNING"
+    assert settings.LOG_LEVEL == "DEBUG"
+    assert "SHELL" not in defaulted
+    assert settings.SHELL == "bash"
 
 
 def test_cli_beats_env_beats_toml_beats_default(tmp_path: Path) -> None:
     """Precedence: CLI > env > TOML > default."""
-    nodes_dir = tmp_path / "nodes"
+    agent_dir = tmp_path / "agent"
+    agent_dir.mkdir()
+    syncthing_root = tmp_path / "syncthing"
+    syncthing_root.mkdir()
+    (agent_dir / ".env.example").write_text(
+        "NODE_ID=node-01\nSYNCTHING_ROOT=/tmp\n", encoding="utf-8"
+    )
+    nodes_dir = syncthing_root / "nodes"
     nodes_dir.mkdir()
     (nodes_dir / "agent.toml").write_text(
-        'AGENT_LOG_LEVEL = "WARNING"\n', encoding="utf-8"
+        'AGENT_LOG_LEVEL = "DEBUG"\nAGENT_SHELL = "bash"\n',
+        encoding="utf-8",
     )
 
-    # CLI wins
-    settings, defaulted = build_settings(
-        [
-            "--node-id",
-            "node-01",
-            "--syncthing-root",
-            str(tmp_path),
-            "--log-level",
-            "DEBUG",
-        ],
-        environ={"AGENT_LOG_LEVEL": "ERROR"},
-    )
-    assert settings.LOG_LEVEL == "DEBUG"
-    assert "LOG_LEVEL" not in defaulted
+    with patch("agent.run_agent.AGENT_DIR", agent_dir):
+        # CLI beats env beats TOML
+        settings, _ = build_settings(
+            [
+                "--node-id",
+                "node-01",
+                "--syncthing-root",
+                str(syncthing_root),
+                "--log-level",
+                "INFO",
+            ],
+            environ={"AGENT_LOG_LEVEL": "WARNING", "AGENT_SHELL": "bash"},
+            first_run_ok=True,
+        )
+        assert settings.LOG_LEVEL == "INFO"
+        assert settings.SHELL == "bash"
 
-    # Env wins over TOML
-    settings, defaulted = build_settings(
-        ["--node-id", "node-01", "--syncthing-root", str(tmp_path)],
-        environ={"AGENT_LOG_LEVEL": "ERROR"},
-    )
-    assert settings.LOG_LEVEL == "ERROR"
-    assert "LOG_LEVEL" not in defaulted
+        # Env beats TOML
+        settings, _ = build_settings(
+            ["--node-id", "node-01", "--syncthing-root", str(syncthing_root)],
+            environ={"AGENT_LOG_LEVEL": "WARNING", "AGENT_SHELL": "bash"},
+            first_run_ok=True,
+        )
+        assert settings.LOG_LEVEL == "WARNING"
+        assert settings.SHELL == "bash"
 
-    # TOML wins over default
-    settings, defaulted = build_settings(
-        ["--node-id", "node-01", "--syncthing-root", str(tmp_path)],
-        environ={},
-    )
-    assert settings.LOG_LEVEL == "WARNING"
-    assert "LOG_LEVEL" not in defaulted
+        # TOML beats default
+        settings, _ = build_settings(
+            ["--node-id", "node-01", "--syncthing-root", str(syncthing_root)],
+            first_run_ok=True,
+        )
+        assert settings.LOG_LEVEL == "DEBUG"
+        assert settings.SHELL == "bash"
 
 
 def test_first_run_ok_allows_missing_required_for_optional_defaults(
     tmp_path: Path,
 ) -> None:
-    """first_run_ok=True fails for required vars but allows optional defaults."""
-    # This test verifies that first_run_ok doesn't change required var behavior
-    with pytest.raises(ConfigError) as excinfo:
-        build_settings(
-            ["--syncthing-root", str(tmp_path)],
-            environ={},
-            first_run_ok=True,
-        )
-    assert "NODE_ID" in str(excinfo.value)
-
-    with pytest.raises(ConfigError) as excinfo:
-        build_settings(
-            ["--node-id", "node-01"],
-            environ={},
-            first_run_ok=True,
-        )
-    assert "SYNCTHING_ROOT" in str(excinfo.value)
-
-
-def test_AGENT_STATE_DIR_default_uses_resolved_root_and_node_id(tmp_path: Path) -> None:
-    """AGENT_STATE_DIR default is <root>/.agent/<node_id>."""
-    settings, defaulted = build_settings(
-        ["--node-id", "node-01", "--syncthing-root", str(tmp_path)],
-        environ={},
+    """first_run_ok=True allows optional defaults but still requires
+    NODE_ID/SYNCTHING_ROOT.
+    """
+    agent_dir = tmp_path / "agent"
+    agent_dir.mkdir()
+    (agent_dir / ".env.example").write_text(
+        "NODE_ID=node-01\nSYNCTHING_ROOT=/tmp\n", encoding="utf-8"
     )
+
+    with patch("agent.run_agent.AGENT_DIR", agent_dir):
+        # Missing NODE_ID still fails
+        with pytest.raises(ConfigError) as excinfo:
+            build_settings(
+                ["--syncthing-root", "/tmp"],
+                first_run_ok=True,
+            )
+        assert "NODE_ID is required" in str(excinfo.value)
+
+        # Missing SYNCTHING_ROOT still fails
+        with pytest.raises(ConfigError) as excinfo:
+            build_settings(
+                ["--node-id", "node-01"],
+                first_run_ok=True,
+            )
+        assert "SYNCTHING_ROOT is required" in str(excinfo.value)
+
+
+def test_AGENT_STATE_DIR_default_uses_resolved_root_and_node_id(
+    tmp_path: Path,
+) -> None:
+    """AGENT_STATE_DIR default is <syncthing_root>/.agent/<node_id>."""
+    agent_dir = tmp_path / "agent"
+    agent_dir.mkdir()
+    syncthing_root = tmp_path / "syncthing"
+    syncthing_root.mkdir()
+    (agent_dir / ".env.example").write_text(
+        "NODE_ID=node-01\nSYNCTHING_ROOT=/tmp\n", encoding="utf-8"
+    )
+
+    with patch("agent.run_agent.AGENT_DIR", agent_dir):
+        settings, defaulted = build_settings(
+            ["--node-id", "node-01", "--syncthing-root", str(syncthing_root)],
+            first_run_ok=True,
+        )
+
     assert "AGENT_STATE_DIR" in defaulted
-    assert settings.AGENT_STATE_DIR == tmp_path / ".agent" / "node-01"
+    expected = syncthing_root.resolve() / ".agent" / "node-01"
+    assert settings.AGENT_STATE_DIR == expected

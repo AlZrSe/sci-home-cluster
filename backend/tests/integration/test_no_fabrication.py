@@ -193,39 +193,6 @@ class TestUnknownResourcesAre404:
 
 
 # ---------------------------------------------------------------------------
-# I6 / AC-6: nodes
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.integration
-class TestNodeMetricsOverHttp:
-    """AC-6: a quiet node is empty, a nonexistent node is 404."""
-
-    @pytest.mark.asyncio
-    async def test_node_metrics_empty_series_and_unknown_node_404(
-        self, auth_client, seeding_disabled
-    ):
-        """I6: both halves, and the counts are untouched by either."""
-        await create_node_in_store("quiet-node")
-
-        response = await auth_client.get("/api/v1/nodes/quiet-node/metrics")
-
-        assert response.status_code == 200
-        assert response.json() == {
-            "job_id": "node:quiet-node",
-            "gpu_metrics": [],
-            "cpu_metrics": [],
-            "summary": ZERO_SUMMARY,
-        }
-
-        missing = await auth_client.get(f"/api/v1/nodes/{UNKNOWN_NODE}/metrics")
-        assert missing.status_code == 404
-        assert missing.json()["error_code"] == "NODE_METRICS_NOT_FOUND"
-
-        assert await metric_row_counts() == (0, 0, 0)
-
-
-# ---------------------------------------------------------------------------
 # I7 / AC-7: reads have no side effects, end to end
 # ---------------------------------------------------------------------------
 
@@ -252,10 +219,8 @@ class TestReadsDoNotWriteOverHttp:
             f"/api/v1/jobs/{job_id}/metrics",
             f"/api/v1/jobs/{job_id}/logs",
             f"/api/v1/jobs/{job_id}/logs/history",
-            "/api/v1/nodes/side-effect-node/metrics",
             f"/api/v1/jobs/{UNKNOWN_JOB}/metrics",
             f"/api/v1/jobs/{UNKNOWN_JOB}/logs",
-            f"/api/v1/nodes/{UNKNOWN_NODE}/metrics",
         ]
 
         before = await metric_row_counts()
@@ -286,7 +251,6 @@ class TestOpenApiDocumentsThe404s:
         "/api/v1/jobs/{job_id}/metrics",
         "/api/v1/jobs/{job_id}/logs",
         "/api/v1/jobs/{job_id}/logs/history",
-        "/api/v1/nodes/{node_id}/metrics",
     ]
 
     @pytest.mark.asyncio
