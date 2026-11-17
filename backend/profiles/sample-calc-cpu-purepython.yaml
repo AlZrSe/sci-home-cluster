@@ -1,0 +1,16 @@
+id: sample-calc-cpu-purepython
+name: Sample Calculation CPU (purepython)
+software: sample_calc
+description: ~60 s CPU run using purepython backend (portable, no dependencies)
+command: "python bin/sample_calc.py --backend purepython --size 128 --iters 529 --seed 42 --progress-every 50"
+working_dir: "."
+gpus: 0
+cpus: 4
+memory_gb: 8
+vram_gb: 0
+input: ""
+output: ""
+max_retries: 0
+retry_delay_seconds: 0
+env: []
+builtin: true

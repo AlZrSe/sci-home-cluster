@@ -1,0 +1,16 @@
+id: sample-calc-smoke
+name: Sample Calculation Smoke Test
+software: sample_calc
+description: Quick smoke test (< 5 s) using the sample calculation program
+command: "python bin/sample_calc.py --preset smoke --seed 42"
+working_dir: "."
+gpus: 0
+cpus: 1
+memory_gb: 2
+vram_gb: 0
+input: ""
+output: ""
+max_retries: 0
+retry_delay_seconds: 0
+env: []
+builtin: true

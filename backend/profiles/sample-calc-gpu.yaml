@@ -1,0 +1,16 @@
+id: sample-calc-gpu
+name: Sample Calculation GPU
+software: sample_calc
+description: ~60 s GPU run using torch CUDA backend
+command: "python bin/sample_calc.py --preset gpu-1min --device cuda --seed 42 --progress-every 100"
+working_dir: "."
+gpus: 1
+cpus: 4
+memory_gb: 8
+vram_gb: 8
+input: ""
+output: ""
+max_retries: 0
+retry_delay_seconds: 0
+env: []
+builtin: true

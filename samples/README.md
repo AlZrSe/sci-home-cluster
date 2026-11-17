@@ -85,17 +85,18 @@ Or run `python scripts/install_sample_calc.py --syncthing-root PATH`.
 
 ## Job profiles
 
-Pre-built job YAMLs for submitting via the cluster:
+Pre-built profiles in `backend/profiles/` for submitting via the cluster API:
 
-| File | Description | Target runtime |
+| Profile ID | Description | Target runtime |
 |---|---|---|
-| `job-sample-calc-smoke.yaml` | Quick smoke test (< 5 s) | < 5 s |
-| `job-sample-calc-cpu.yaml` | CPU 1-min using `torch`/`numpy` presets | ~60 s |
-| `job-sample-calc-cpu-purepython.yaml` | CPU 1-min purepython (portable) | ~60 s |
-| `job-sample-calc-gpu.yaml` | GPU 1-min using `torch` CUDA | ~60 s |
+| `sample-calc-smoke` | Quick smoke test (< 5 s) | < 5 s |
+| `sample-calc-cpu` | CPU 1-min using `torch`/`numpy` presets | ~60 s |
+| `sample-calc-cpu-purepython` | CPU 1-min purepython (portable) | ~60 s |
+| `sample-calc-gpu` | GPU 1-min using `torch` CUDA | ~60 s |
 
-Submit with the backend API or CLI. The `working_dir: "."` resolves to
-`SYNCTHING_ROOT`, so `bin/sample_calc.py` is found on all nodes.
+Submit via the profiles API endpoint or CLI using the profile ID. The
+`working_dir: "."` resolves to `SYNCTHING_ROOT`, so `bin/sample_calc.py`
+is found on all nodes.
 
 ## Exit codes
 
