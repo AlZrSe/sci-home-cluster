@@ -1,15 +1,17 @@
 # Run the Scientific Home Cluster Docker Compose stack in a chosen mode.
 #
 # Usage:
-#   .\scripts\docker-run.ps1 -Mode dev
-#   .\scripts\docker-run.ps1 -Mode prod
-#   .\scripts\docker-run.ps1 -Mode localhost
+#   .\scripts\docker-run.ps1 -Mode dev [-Rebuild]
+#   .\scripts\docker-run.ps1 -Mode prod [-Rebuild]
+#   .\scripts\docker-run.ps1 -Mode localhost [-Rebuild]
 #
 # Note: scripts never start the db-seed service and rely on SEED_DEMO_DATA=false
 # (the application default), so no demo data is seeded.
+# --Rebuild  - force rebuild of the docker image before starting (default for prod).
 param(
     [ValidateSet("dev", "prod", "localhost")]
-    [string]$Mode = "dev"
+    [string]$Mode = "dev",
+    [switch]$Rebuild
 )
 
 $RootDir = Resolve-Path (Join-Path $PSScriptRoot "..")
@@ -25,10 +27,19 @@ services:
 "@ -Encoding utf8
 
 try {
+    # Determine if we should build
+    $shouldBuild = $Rebuild.IsPresent -or ($Mode -eq "prod")
+
+    $composeCmd = "docker compose -f docker-compose.yaml -f $override up -d"
+    if ($shouldBuild) {
+        $composeCmd += " --build"
+    }
+    $composeCmd += " backend"
+
     switch ($Mode) {
     "dev" {
         Write-Host "Starting development stack (no seed)..."
-        docker compose -f docker-compose.yaml -f $override up -d backend
+        Invoke-Expression $composeCmd
     }
     "prod" {
         $hasEnvVar = -not [string]::IsNullOrWhiteSpace($env:VITE_API_URL)
@@ -41,11 +52,11 @@ try {
             exit 1
         }
         Write-Host "Starting production stack (build enabled, no seed)..."
-        docker compose -f docker-compose.yaml -f $override up -d --build backend
+        Invoke-Expression $composeCmd
     }
     "localhost" {
         Write-Host "Starting localhost stack (no seed)..."
-        docker compose -f docker-compose.yaml -f $override up -d backend
+        Invoke-Expression $composeCmd
     }
 }
 } finally {
