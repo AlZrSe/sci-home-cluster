@@ -199,9 +199,9 @@ jobs:
       # check nothing at all.
       - name: No escape hatches anywhere in this workflow (AC-11)
         run: |
-          # Exclude line 473 (e2e job's continue-on-error: true for known flaky test #140/#141)
+          # Exclude line 474 (e2e job's continue-on-error: true for known flaky test #140/#141)
           # Also exclude line 202 (this comment line)
-          if grep -nE 'continue-on-err[o]r|\|\| tr[u]e|\|\| exit [0]|--runxfa[i]l|-p no:cacheprovi[d]er|--no-cov-fail- unde[r]|\|\| [:]|-k[[:space:]]*.?no[t]|pytest --l[f]|npm run typecheck:e[2]e' .github/workflows/ci.yml | grep -v -E '^(202|473):'; then
+          if grep -nE 'continue-on-err[o]r|\|\| tr[u]e|\|\| exit [0]|--runxfa[i]l|-p no:cacheprovi[d]er|--no-cov-fail- unde[r]|\|\| [:]|-k[[:space:]]*.?no[t]|pytest --l[f]|npm run typecheck:e[2]e' .github/workflows/ci.yml | grep -v -E '^(202|474):'; then
             echo "::error::this workflow contains a prohibited escape hatch"
             exit 1
           fi
