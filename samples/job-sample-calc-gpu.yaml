@@ -1,0 +1,12 @@
+name: sample-calc-gpu
+command: "python bin/sample_calc.py --preset gpu-1min --device cuda --seed 42 --progress-every 100"
+working_dir: "."
+env: {}
+resources:
+  gpus: 1
+  cpus: 4
+  memory_gb: 8
+  vram_gb: 8
+paths:
+  input: null
+  output: null

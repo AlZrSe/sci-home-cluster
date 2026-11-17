@@ -1,7 +1,7 @@
 # Scientific Home Cluster - Development Makefile
 # Provides convenient commands for backend and frontend development
 
-.PHONY: help install install-dev test test-unit test-integration test-compose test-watch lint format typecheck clean
+.PHONY: help install install-dev test test-unit test-integration test-compose test-watch lint format typecheck clean install-sample
 .PHONY: backend-dev backend-migrate frontend-dev frontend-build frontend-build-dev frontend-lint frontend-format
 .PHONY: check dev dev-full
 .PHONY: run-agent db-upgrade db-downgrade db-revision run
@@ -58,6 +58,9 @@ install-dev:
 
 install:
 	pip install -e .
+
+install-sample:
+	python scripts/install_sample_calc.py
 
 # Testing
 test:
