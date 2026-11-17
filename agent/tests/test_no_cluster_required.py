@@ -56,17 +56,17 @@ NETWORK_MODULES = {
     "xmlrpc",
 }
 
-#: ``psutil`` and ``gputil`` arrived with hardware detection (issue #95, spec
-#: Q1): psutil for CPU and memory, gputil for GPUs behind a guarded import. Both
+#: ``psutil`` and ``GPUtil`` arrived with hardware detection (issue #95, spec
+#: Q1): psutil for CPU and memory, GPUtil for GPUs behind a guarded import. Both
 #: are declared dependencies in ``pyproject.toml`` and neither can speak a
 #: protocol -- they read /proc, /sys and the NVML library. The allowlist stays
 #: pinned, so the next third-party import has to be argued for here rather than
 #: arriving unnoticed.
-THIRD_PARTY_ALLOWED = {"pydantic", "pydantic_settings", "watchdog", "psutil", "gputil"}
+THIRD_PARTY_ALLOWED = {"pydantic", "pydantic_settings", "watchdog", "psutil", "GPUtil"}
 
 #: The subset of that which may be imported at **module scope**. ``psutil`` is a
 #: hard dependency that is always installed and does nothing at import;
-#: ``gputil`` is declared but not installed everywhere, so it stays behind the
+#: ``GPUtil`` is declared but not installed everywhere, so it stays behind the
 #: guarded lazy import in ``agent/hardware.py`` -- see
 #: ``test_a_third_party_module_is_imported_at_module_scope_only_if_allowed``.
 THIRD_PARTY_AT_MODULE_SCOPE = {"pydantic", "pydantic_settings", "watchdog", "psutil"}
@@ -170,7 +170,7 @@ def test_every_third_party_import_is_expected() -> None:
 def test_a_third_party_module_is_imported_at_module_scope_only_if_allowed() -> None:
     """Being on the allowlist does not buy a module-scope import.
 
-    ``gputil`` is the case that matters: it is declared in ``pyproject.toml``,
+    ``GPUtil`` is the case that matters: it is declared in ``pyproject.toml``,
     it is **not installed** in every environment, and ``getGPUs()`` raises on a
     machine with no NVIDIA driver (issue #95 Q1). ``agent/hardware.py`` imports
     it inside ``_gputil()`` so its absence is a supported state rather than an
@@ -188,8 +188,8 @@ def test_a_third_party_module_is_imported_at_module_scope_only_if_allowed() -> N
         f"it. Module scope: {sorted(at_module_scope)}, allowed: "
         f"{sorted(THIRD_PARTY_AT_MODULE_SCOPE)}"
     )
-    assert "gputil" in THIRD_PARTY_ALLOWED, (
-        "gputil is still an expected dependency; it is only its import that is "
+    assert "GPUtil" in THIRD_PARTY_ALLOWED, (
+        "GPUtil is still an expected dependency; it is only its import that is "
         "confined to a lazy call"
     )
 

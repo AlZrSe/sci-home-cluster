@@ -53,26 +53,26 @@ The issue left four questions open. Each is decided here, with rationale.
 
 ### Q1 — Which hardware-detection library?
 
-**Decision: `psutil` for CPU and memory; `gputil` for GPUs, imported lazily and tolerating
+**Decision: `psutil` for CPU and memory; `GPUtil` for GPUs, imported lazily and tolerating
 absence; no `nvidia-smi` subprocess.**
 
 - `psutil` is already a hard dependency (`pyproject.toml:23`) and is installed.
-- `gputil` is already declared (`pyproject.toml:24`) — **but is not currently installed** in the
-  development virtualenv, and calling `gputil.getGPUs()` raises `ValueError` on a machine with no
+- `GPUtil` is already declared (`pyproject.toml:24`) — **but is not currently installed** in the
+  development virtualenv, and calling `GPUtil.getGPUs()` raises `ValueError` on a machine with no
   NVIDIA driver. A declared dependency that raises on a CPU-only box is unusable as-is, so the
   import and the call must both be guarded.
 - `pynvml` is **not** added. It is a new dependency with an NVIDIA-only assumption, and the issue
   explicitly asks whether the agent is expected to work without vendor tooling. It must.
 - An `nvidia-smi` subprocess is rejected: it puts a binary on `PATH` in the critical path of
-  registration, adds a timeout that must be defended against, and buys nothing `gputil` does not.
+  registration, adds a timeout that must be defended against, and buys nothing `GPUtil` does not.
 
 **Degradation contract — a node with no GPU is normal, not an error:**
 
 | Situation | Result |
 |---|---|
-| `gputil` importable, `getGPUs()` returns devices | one `GPUInfo` per device |
-| `gputil` importable, raises / returns `[]` | `gpus: []` |
-| `gputil` **not installed** (today's venv) | `gpus: []` |
+| `GPUtil` importable, `getGPUs()` returns devices | one `GPUInfo` per device |
+| `GPUtil` importable, raises / returns `[]` | `gpus: []` |
+| `GPUtil` **not installed** (today's venv) | `gpus: []` |
 | individual GPU lookup raises | that device is skipped; the rest are kept |
 
 `gpus: []` must be **written as an empty list**, never omitted — `gpus` is a required field and an
@@ -157,7 +157,7 @@ Field-by-field detection strategy (**this table is the documentation the issue a
 | `hostname` | `platform.node()` | same answer as `socket.gethostname()`; `socket` stays out of the agent's pinned import surface (issue #93 AC-15) |
 | `cpus` | `psutil.cpu_count()` | **logical** count, floored at 1 (see below) |
 | `memory_gb` | `psutil.virtual_memory().total // 1024**3` | floored at 1 |
-| `gpus` | `gputil.getGPUs()`, guarded | `[]` when absent/unavailable |
+| `gpus` | `GPUtil.getGPUs()`, guarded | `[]` when absent/unavailable |
 | `os` | `platform.system().lower()` | see Q2 |
 | `status` | literal `"ONLINE"` | see §6 |
 | `last_heartbeat` | `datetime.now()` | **naive local** — see the correction below |
@@ -260,7 +260,7 @@ What the agent must **not** do is rebuild the path by hand. Use `AgentPaths.node
 
 - **AC-3** — A unit test drives the probe against **faked** detection functions and asserts the
   resulting `NodeSpec` exactly, covering: a normal multi-GPU node, a CPU-only node, and a
-  `gputil` that raises.
+  `GPUtil` that raises.
 
 - **AC-4** — The written file **round-trips** through `read_yaml(path, NodeSpec)` without raising.
   This single check catches every schema constraint in §1 at once.
@@ -316,7 +316,7 @@ What the agent must **not** do is rebuild the path by hand. Use `AgentPaths.node
 - **AC-12** — `ruff check . && ruff format --check . && mypy .` all exit 0. No new
   `type: ignore`, and no widening of the existing narrow overrides in `pyproject.toml`.
 - **AC-13** — The detection-strategy table in §5 is reflected in the `agent/hardware.py` module
-  docstring, including the no-GPU and missing-`gputil` cases.
+  docstring, including the no-GPU and missing-`GPUtil` cases.
 
 ---
 
@@ -325,11 +325,11 @@ What the agent must **not** do is rebuild the path by hand. Use `AgentPaths.node
 | Risk | Likelihood | Impact | Mitigation |
 |---|---|---|---|
 | The backend's bare `except` drops a malformed file, so registration "silently fails" | Medium | High | AC-4 round-trip test; agent logs the resolved path at INFO on every successful write so an operator can compare against the watcher |
-| `gputil` raises on a CPU-only machine | **Certain today** | High | Guarded import and guarded call; `[]` on any failure (Q1) |
+| `GPUtil` raises on a CPU-only machine | **Certain today** | High | Guarded import and guarded call; `[]` on any failure (Q1) |
 | `memory_gb` truncates to `0` on a small machine and the node is dropped | Low | High | Floor at 1 (§5); AC-1 asserts the floor |
 | Write cadence drifts above 90s and the monitor flips a healthy node offline | Medium | Medium | 30s cadence (AC-9); #96 will make the threshold configurable |
 | A later HTTP transport decision invalidates the write | Medium | Medium | Probe is pure (§5, Q4); only `write_node_spec` is transport-specific |
-| `gputil` is declared but not installed — CI installs it, a dev box may not | **High** | Medium | Guarded import makes absence a supported state, not a crash |
+| `GPUtil` is declared but not installed — CI installs it, a dev box may not | **High** | Medium | Guarded import makes absence a supported state, not a crash |
 | A tz-aware `last_heartbeat` is silently reinterpreted as local by the store and the monitor, so a healthy node is flipped `OFFLINE` forever | **Was certain** (the first draft of this spec said tz-aware) | **High** | The agent writes naive local `datetime.now()` to match every other writer (§5 correction); a direct convention test and an AC-9 that seeds the agent's own value make a regression visible. **#121** owns the backend repair |
 
 ---
