@@ -741,7 +741,7 @@ jobs:
         run: python scripts/build_agent.py --target ${{ matrix.target }}
 
       - name: Publish agent into Syncthing folder
-        run: python scripts/build_agent.py --publish --target ${{ matrix.target }}
+        run: python scripts/publish_agent.py --target ${{ matrix.target }}
 
       - name: Smoke test frozen binary
         shell: bash
