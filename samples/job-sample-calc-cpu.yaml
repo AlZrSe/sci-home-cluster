@@ -1,0 +1,12 @@
+name: sample-calc-cpu
+command: "python bin/sample_calc.py --preset cpu-1min --seed 42 --progress-every 100"
+working_dir: "."
+env: {}
+resources:
+  gpus: 0
+  cpus: 4
+  memory_gb: 8
+  vram_gb: 0
+paths:
+  input: null
+  output: null

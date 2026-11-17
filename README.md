@@ -338,6 +338,12 @@ Every log line carries the node id (`[node=node-01]`), so four nodes writing int
 separable. Exit codes: `0` clean shutdown, `1` configuration error, `2` unexpected internal error,
 `3` watcher liveness lost, `4` shutdown grace expired with tasks still running.
 
+**Sample workload** (issue #181): a self-contained deterministic matrix-multiplication
+program lives in `samples/`. Copy `samples/*` (excluding `job-*.yaml`) into
+`<SYNCTHING_ROOT>/bin/` (or run `python scripts/install_sample_calc.py --syncthing-root PATH`) so it
+syncs to every node, then submit `samples/job-sample-calc-cpu.yaml` (or the GPU variant) as a job.
+See `samples/README.md` for presets, profiling, and exit codes.
+
 > **Which codes a stock process actually produces.** `1` (bad configuration) and `3` (a dead watcher)
 > are reachable by themselves. `0` needs a `SIGTERM`/`SIGINT` the agent can catch: POSIX delivers
 > one, Windows has no `add_signal_handler`, so there the agent only stops when the OS stops it and

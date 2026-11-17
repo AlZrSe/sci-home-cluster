@@ -63,6 +63,14 @@ Exit codes: `0` clean shutdown, `1` configuration error, `2` internal error,
 Deleting `state.yaml` deletes the job from the backend's view (issue #92). The
 agent never deletes command files (issue #106 D5).
 
+## Shared `bin/` distribution (issue #181)
+
+Shared executables can be distributed through `<SYNCTHING_ROOT>/bin/` and
+referenced by jobs with `working_dir: "."` and a relative command such as
+`python bin/sample_calc.py --preset cpu-1min`. Because `SYNCTHING_ROOT` is
+stripped from the child environment, programs must be located by relative path
+resolved against the job's working directory.
+
 ## Standalone executable
 
 Operators without a Python installation can copy the prebuilt binary from the
