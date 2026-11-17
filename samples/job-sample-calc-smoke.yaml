@@ -1,0 +1,12 @@
+name: sample-calc-smoke
+command: "python bin/sample_calc.py --preset smoke --seed 42"
+working_dir: "."
+env: {}
+resources:
+  gpus: 0
+  cpus: 1
+  memory_gb: 2
+  vram_gb: 0
+paths:
+  input: null
+  output: null
