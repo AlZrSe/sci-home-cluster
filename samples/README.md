@@ -35,8 +35,42 @@ Final GPU numbers must be re-profiled on a GPU node with `--calibrate`.
 |---|---|---|---|---|
 | torch (CPU) | 2048 | 0.0508 | 1200 | MKL/oneDNN |
 | numpy | 2048 | 0.1209 | 500 | OpenBLAS |
-| purepython | 128 | 0.1304 | 460 | triple loop |
+| purepython | 128 | 0.1155 | 519 | triple loop (measured on this host) |
+| purepython | 32 | 0.0019 | 31598 | triple loop (smoke) |
 | torch (CUDA) | 4096 | to be profiled | 2000 (initial) | no CUDA on dev host; use `--calibrate` |
+
+> **Note**: `torch` and `numpy` rows are from the original dev host (PM's measurements).
+> The `purepython` rows are measured on this host (Windows 11, Python 3.12).
+> Run `--calibrate --json` on each node to derive presets for that hardware.
+
+## Profiling / Calibration
+
+The `--calibrate` mode measures iterations/second for the selected backend/size
+and prints a suggested `--iters` value for a 60 s run:
+
+```bash
+python sample_calc.py --preset cpu-1min --calibrate --calibrate-seconds 5 --json
+```
+
+Example output (purepython, size=128):
+```json
+{
+  "backend": "purepython",
+  "device": "cpu",
+  "size": 128,
+  "calibrate_seconds": 5.0,
+  "iters_completed": 43,
+  "iters_per_second": 8.6,
+  "suggested_iters_for_60s": 516
+}
+```
+
+Use the suggested value with explicit flags to get a ~60 s run on the current
+machine:
+
+```bash
+python sample_calc.py --backend purepython --size 128 --iters 516 --seed 42
+```
 
 ## Distribution via Syncthing
 
