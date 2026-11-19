@@ -822,9 +822,9 @@ async def test_the_same_monitor_does_flip_a_stale_node_offline(
 def test_the_heartbeat_cadence_leaves_room_under_the_offline_threshold() -> None:
     """The coupling recorded in the spec's §4, asserted rather than assumed.
 
-    ``SyncthingService._heartbeat_monitor`` uses HEARTBEAT_TIMEOUT_SECONDS (default 300);
-    #96 makes that configurable. The default agent interval (22 s) buys many missed
-    writes plus watcher latency before a healthy node is at risk.
+    ``SyncthingService._heartbeat_monitor`` uses HEARTBEAT_TIMEOUT_SECONDS
+    (default 300); #96 makes that configurable. The default agent interval (22 s)
+    buys many missed writes plus watcher latency before a healthy node is at risk.
     """
     assert AGENT_HEARTBEAT_INTERVAL_S == 22.0
     assert 2 * AGENT_HEARTBEAT_INTERVAL_S < 300, "one missed write must not be fatal"
