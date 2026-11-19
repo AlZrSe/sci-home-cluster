@@ -761,8 +761,8 @@ def test_heartbeat_check_interval_less_than_timeout():
         Settings(
             _env_file=None,
             SECRET_KEY="test",
-            HEARTBEAT_TIMEOUT_SECONDS=90,
-            HEARTBEAT_CHECK_INTERVAL_SECONDS=90,
+            HEARTBEAT_TIMEOUT_SECONDS=300,
+            HEARTBEAT_CHECK_INTERVAL_SECONDS=300,
         )
 
     # check_interval > timeout should fail
@@ -770,23 +770,23 @@ def test_heartbeat_check_interval_less_than_timeout():
         Settings(
             _env_file=None,
             SECRET_KEY="test",
-            HEARTBEAT_TIMEOUT_SECONDS=90,
-            HEARTBEAT_CHECK_INTERVAL_SECONDS=120,
+            HEARTBEAT_TIMEOUT_SECONDS=300,
+            HEARTBEAT_CHECK_INTERVAL_SECONDS=400,
         )
 
     # check_interval < timeout should succeed
     settings = Settings(
         _env_file=None,
         SECRET_KEY="test",
-        HEARTBEAT_TIMEOUT_SECONDS=90,
+        HEARTBEAT_TIMEOUT_SECONDS=300,
         HEARTBEAT_CHECK_INTERVAL_SECONDS=30,
     )
-    assert settings.HEARTBEAT_TIMEOUT_SECONDS == 90
+    assert settings.HEARTBEAT_TIMEOUT_SECONDS == 300
     assert settings.HEARTBEAT_CHECK_INTERVAL_SECONDS == 30
 
 
 def test_heartbeat_defaults():
-    """AC-1: Default heartbeat settings are 90 and 30."""
+    """AC-1: Default heartbeat settings are 300 and 30."""
     settings = Settings(_env_file=None, SECRET_KEY="test")
-    assert settings.HEARTBEAT_TIMEOUT_SECONDS == 90
+    assert settings.HEARTBEAT_TIMEOUT_SECONDS == 300
     assert settings.HEARTBEAT_CHECK_INTERVAL_SECONDS == 30

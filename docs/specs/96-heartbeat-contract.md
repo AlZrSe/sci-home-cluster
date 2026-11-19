@@ -1,6 +1,6 @@
 # Spec: Heartbeat Contract — Configurable Timeout, Documented Cadence, Pinned by Tests
 
-**Issue**: #96 — "The 90-second offline threshold is hardcoded in two places, documented nowhere, and pinned by no test"
+**Issue**: #96 — "The 90-second offline threshold is hardcoded in two places, documented nowhere, and pinned by no test" (Fixed: now configurable, default 300s)
 **Labels**: `agent`, `phase-2`, `ready-for-grooming` → `groomed`
 **Author**: PM
 **Date**: 2026-10-14
@@ -9,7 +9,7 @@
 
 ## 1. Verified Problem Statement
 
-Node liveness is decided by two hardcoded numbers in one function, and neither is configurable, documented as a contract, or pinned by a test. An agent author has no way to learn that it must beat a 90-second deadline except by reading `syncthing_service.py`.
+Node liveness is decided by two hardcoded numbers in one function, and neither is configurable, documented as a contract, or pinned by a test. An agent author has no way to learn that it must beat a 90-second deadline except by reading `syncthing_service.py`. (This has been fixed: the timeout is now configurable with a default of 300 seconds.)
 
 `backend/services/syncthing_service.py:346-378`:
 
@@ -32,8 +32,8 @@ async def _heartbeat_monitor(self):
 
 Three facts follow, and none of them is written down anywhere an agent author would look:
 
-1. **90 seconds is the offline deadline.** An agent whose heartbeat interval exceeds it will be marked `OFFLINE` while it is perfectly healthy.
-2. **The effective deadline is worse than 90 seconds.** The monitor only *observes* every 30 s, so a node can be stale by up to 120 s before the flip happens. The threshold that matters in practice is the observation cadence, not the comparison.
+1. **300 seconds (5 minutes) is the offline deadline.** An agent whose heartbeat interval exceeds it will be marked `OFFLINE` while it is perfectly healthy.
+2. **The effective deadline is better than 300 seconds.** The monitor only *observes* every 30 s, so a node can be stale by up to 330 s before the flip happens. The threshold that matters in practice is the observation cadence, not the comparison.
 3. **Recovery is asymmetric with the file transport.** A node returns to `ONLINE` via the DB, but if the transport is file-based, the agent's next heartbeat write also carries `status` — and `syncthing_service.py:321` writes `status` straight from the YAML. So the file and the monitor can disagree, and the file wins on the next tick.
 
 `docs/syncthing-sync-service-spec.md:56` explicitly flagged this and it was never done: *"Consider making heartbeat timeout configurable."*
@@ -60,10 +60,10 @@ The issue left several questions open. Each is decided here, with rationale.
 
 **Decision: Two settings in `backend/core/config.py`:**
 
-- `HEARTBEAT_TIMEOUT_SECONDS` — default `90` (the offline threshold)
+- `HEARTBEAT_TIMEOUT_SECONDS` — default `300` (the offline threshold, 5 minutes)
 - `HEARTBEAT_CHECK_INTERVAL_SECONDS` — default `30` (the monitor's sleep interval)
 
-Names and defaults preserve today's behaviour exactly. The agent will read these from the shared config file (`nodes/agent.toml`) or environment.
+Names and defaults preserve today's behaviour for check_interval while extending the timeout to 5 minutes to better support laptops that sleep/resume. The agent will read these from the shared config file (`nodes/agent.toml`) or environment.
 
 ### Q2 — Is the relationship between check interval and timeout enforced?
 
@@ -75,7 +75,7 @@ The monitor wakes every `check_interval` seconds and compares `delta > timeout`.
 
 **Decision: `22` seconds with jitter of `±2` seconds (uniform).**
 
-The recommended cadence is `timeout / 4` (~22 s at the default 90 s). This leaves room for two missed writes plus watcher latency before the monitor's 30 s tick could observe a stale heartbeat. The interval is configurable via `AGENT_HEARTBEAT_INTERVAL_S` in the shared config, defaulting to `22`. A test asserts `interval < timeout` with margin.
+The recommended cadence is `timeout / 4` (~75 s at the default 300 s). The agent's default of 22s provides plenty of margin (it writes ~13 times within the timeout). This leaves room for many missed writes plus watcher latency before the monitor's 30 s tick could observe a stale heartbeat. The interval is configurable via `AGENT_HEARTBEAT_INTERVAL_S` in the shared config, defaulting to `22`. A test asserts `interval < timeout` with margin.
 
 ### Q4 — Should the agent's heartbeat writes be jittered?
 
@@ -129,7 +129,7 @@ Add two fields to `Settings`:
 
 ```python
 # Heartbeat contract (issue #96)
-HEARTBEAT_TIMEOUT_SECONDS: int = 90
+HEARTBEAT_TIMEOUT_SECONDS: int = 300
 HEARTBEAT_CHECK_INTERVAL_SECONDS: int = 30
 
 
@@ -265,7 +265,7 @@ If errors remain, fix them in this issue rather than keeping the override.
   ```bash
   python -c "
   from backend.core.config import settings
-  assert settings.HEARTBEAT_TIMEOUT_SECONDS == 90
+  assert settings.HEARTBEAT_TIMEOUT_SECONDS == 300
   assert settings.HEARTBEAT_CHECK_INTERVAL_SECONDS == 30
   "
   ```
@@ -279,9 +279,9 @@ If errors remain, fix them in this issue rather than keeping the override.
   ```
 
 - **AC-3** — Backend tests cover:
-  - **Stale → OFFLINE**: Node with `last_heartbeat = now - 120s` → status becomes `OFFLINE`.
+  - **Stale → OFFLINE**: Node with `last_heartbeat = now - 400s` → status becomes `OFFLINE`.
   - **Fresh → ONLINE**: Node with `last_heartbeat = now - 10s` and status `OFFLINE` → status becomes `ONLINE`.
-  - **Boundary `delta == timeout` → ONLINE**: Node with `last_heartbeat = now - 90s` (exactly at threshold) → status stays/ becomes `ONLINE` (because condition is `delta > timeout`).
+  - **Boundary `delta == timeout` → ONLINE**: Node with `last_heartbeat = now - 300s` (exactly at threshold) → status stays/ becomes `ONLINE` (because condition is `delta > timeout`).
   - **No redundant write**: Node already `ONLINE` with fresh heartbeat → no `update_node` call; node already `OFFLINE` with stale heartbeat → no `update_node` call.
 
 - **AC-4** — Agent default heartbeat interval satisfies `interval < timeout` with margin, asserted by test.

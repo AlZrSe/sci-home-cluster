@@ -119,15 +119,14 @@ no I/O, so it is reusable either way.
 | Writing `nodes/<node_id>.yaml` atomically via `write_yaml` | Any HTTP transport for registration |
 | Ensuring `nodes/` exists before the first write | Setting `current_job_id` (belongs to #97) |
 | Periodic rewrite as a heartbeat | Metrics writes (#102) |
-| Re-registration: create-then-update | Fixing the hardcoded 90s threshold (#96) |
+| Re-registration: create-then-update | Fixed: configurable threshold (#96, default 300s) |
 
-### Coupling to #96 — recorded, not fixed
+### Coupling to #96 — resolved
 
-`backend/services/syncthing_service.py:341` hardcodes `delta > 90`. The heartbeat monitor wakes
+`backend/services/syncthing_service.py` now uses `HEARTBEAT_TIMEOUT_SECONDS` (default 300s). The heartbeat monitor wakes
 every 30s. For a healthy node to never be flipped `OFFLINE`, the agent's rewrite cadence must be
-comfortably below 90s. This spec picks **30s** (§6), which leaves room for two missed writes plus
-watcher latency. #96 makes that constant configurable; that is a separate change and is **not**
-made here.
+comfortably below 300s. This spec picks **30s** (§6), which leaves ample room for multiple missed writes plus
+watcher latency. #96 made that constant configurable; this is now implemented.
 
 ---
 
@@ -220,7 +219,7 @@ What the agent must **not** do is rebuild the path by hand. Use `AgentPaths.node
 
 ## 6. Decisions on Cadence and Status
 
-- **Cadence: 30s.** Below the 90s offline threshold with room for two missed writes plus watcher
+- **Cadence: 30s.** Below the 300s (5 min) offline threshold with room for multiple missed writes plus watcher
   latency (§4).
 - **`status` is always written as `"ONLINE"`.** The heartbeat monitor owns the other direction
   (`syncthing_service.py:341-349`) and will overwrite anything else. Writing `OFFLINE` on shutdown
@@ -327,7 +326,7 @@ What the agent must **not** do is rebuild the path by hand. Use `AgentPaths.node
 | The backend's bare `except` drops a malformed file, so registration "silently fails" | Medium | High | AC-4 round-trip test; agent logs the resolved path at INFO on every successful write so an operator can compare against the watcher |
 | `GPUtil` raises on a CPU-only machine | **Certain today** | High | Guarded import and guarded call; `[]` on any failure (Q1) |
 | `memory_gb` truncates to `0` on a small machine and the node is dropped | Low | High | Floor at 1 (§5); AC-1 asserts the floor |
-| Write cadence drifts above 90s and the monitor flips a healthy node offline | Medium | Medium | 30s cadence (AC-9); #96 will make the threshold configurable |
+| Write cadence drifts above 300s and the monitor flips a healthy node offline | Low | Medium | 30s cadence (AC-9); #96 made the threshold configurable (default 300s) |
 | A later HTTP transport decision invalidates the write | Medium | Medium | Probe is pure (§5, Q4); only `write_node_spec` is transport-specific |
 | `GPUtil` is declared but not installed — CI installs it, a dev box may not | **High** | Medium | Guarded import makes absence a supported state, not a crash |
 | A tz-aware `last_heartbeat` is silently reinterpreted as local by the store and the monitor, so a healthy node is flipped `OFFLINE` forever | **Was certain** (the first draft of this spec said tz-aware) | **High** | The agent writes naive local `datetime.now()` to match every other writer (§5 correction); a direct convention test and an AC-9 that seeds the agent's own value make a regression visible. **#121** owns the backend repair |
@@ -347,7 +346,7 @@ What the agent must **not** do is rebuild the path by hand. Use `AgentPaths.node
 ## 10. Related
 
 - #93 — agent skeleton (`AgentPaths.node_file`, the `_write_final_state` seam)
-- #96 — 90s offline threshold hardcoded (coupling recorded in §4, **not** fixed here)
+- #96 — 300s offline threshold (configurable via HEARTBEAT_TIMEOUT_SECONDS)
 - #97 — agent claims a job (owns `current_job_id`)
 - #100 — terminal job status on shutdown
 - #102 — node metrics writer

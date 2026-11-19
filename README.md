@@ -331,7 +331,7 @@ behaviour. On startup and on resume from suspend (detected via monotonic
 clock jump > `2 * interval`), the agent writes an immediate heartbeat.
 The backend monitor checks every `HEARTBEAT_CHECK_INTERVAL_SECONDS` (default
 30s) and marks a node OFFLINE if its heartbeat is older than
-`HEARTBEAT_TIMEOUT_SECONDS` (default 90s). The invariant
+`HEARTBEAT_TIMEOUT_SECONDS` (default 300s / 5 min). The invariant
 `check_interval < timeout` is enforced at startup on both sides.
 
 Every log line carries the node id (`[node=node-01]`), so four nodes writing into one journal stay

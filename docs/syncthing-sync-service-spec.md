@@ -51,9 +51,9 @@ It does not cover:
   - For nodes: update status, last_heartbeat, current_job_id, etc.
   - Preserve manually set fields that aren't in the YAML (if any)
 - [ ] Node heartbeat monitoring:
-  - Mark node as OFFLINE after 90 seconds without heartbeat update
+  - Mark node as OFFLINE after 300 seconds (5 minutes) without heartbeat update
   - Reset to ONLINE when new heartbeat received
-  - Consider making heartbeat timeout configurable
+  - Heartbeat timeout is configurable via `HEARTBEAT_TIMEOUT_SECONDS` setting
 - [ ] Timestamp handling:
   - Properly parse ISO format datetime strings from YAML
   - Store as timezone-aware UTC datetime objects in database
@@ -261,7 +261,7 @@ at least twice within the timeout window.
 
 - `AGENT_HEARTBEAT_INTERVAL_S` (default: 22.0): How often the agent writes
   its node file (and thus updates `last_heartbeat`). The recommended value
-  is `timeout / 4` (22s at the default 90s timeout). This leaves room for
+  is `timeout / 4` (75s at the default 300s timeout). This leaves room for
   two missed writes plus watcher latency before the monitor could observe
   a stale heartbeat.
 - `AGENT_HEARTBEAT_JITTER_S` (default: 2.0): Uniform jitter applied to the
@@ -275,7 +275,7 @@ at least twice within the timeout window.
 - Watcher debounce latency (500ms)
 
 A healthy node at default settings can be stale by up to ~52.5s before the
-monitor observes it as stale, well within the 90s timeout.
+monitor observes it as stale, well within the 300s timeout.
 
 **Resume Behaviour**: On wake from suspend, the agent detects a monotonic
 clock jump > `2 * interval` and writes an immediate heartbeat rather than

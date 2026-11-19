@@ -66,8 +66,9 @@ _NODE_ID_RE: Final[re.Pattern[str]] = re.compile(NODE_ID_PATTERN)
 FOLDER_RETRY_INTERVAL_S: Final[float] = 1.0
 
 #: Default agent heartbeat interval and jitter (issue #96).
-#: The interval is timeout/4 (90/4 ≈ 22) to leave room for two missed writes
+#: The interval is timeout/4 (300/4 = 75) to leave room for multiple missed writes
 #: plus watcher latency before the monitor's tick could observe a stale heartbeat.
+#: The default of 22s provides even more margin (~13 writes within timeout).
 #: Jitter of ±2 seconds prevents synchronized fleet wake-ups from overwhelming
 #: the watcher debounce. Both are configurable via the shared config file.
 AGENT_HEARTBEAT_INTERVAL_S: Final[float] = 22.0

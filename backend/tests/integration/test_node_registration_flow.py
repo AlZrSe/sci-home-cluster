@@ -381,7 +381,7 @@ class TestNodeRegistrationFlow:
             memory_gb=64,
             os="Ubuntu 24.04",
             status="ONLINE",
-            last_heartbeat=datetime.now(timezone.utc) - timedelta(seconds=120),  # Stale
+            last_heartbeat=datetime.now(timezone.utc) - timedelta(seconds=360),  # Stale (> 300s timeout)
             current_job_id=None,
         )
 

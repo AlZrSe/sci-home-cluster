@@ -247,7 +247,7 @@ ack.
 
 ### Coupling to #96 — recorded, not fixed here
 
-The 90 s timeout and 30 s observation interval are #96's contract. Recovery
+The 300 s timeout and 30 s observation interval are #96's contract. Recovery
 inherits that latency floor and documents it as user-visible. No new threshold
 is introduced.
 

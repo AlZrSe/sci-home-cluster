@@ -337,9 +337,9 @@ class TestHeartbeatMonitor:
 
     @pytest.mark.asyncio
     async def test_stale_node_marked_offline(self, fake_store):
-        """Stale → OFFLINE: heartbeat 120s old → status becomes OFFLINE."""
+        """Stale → OFFLINE: heartbeat > timeout → status becomes OFFLINE."""
         now = datetime.now(timezone.utc)
-        stale_hb = now - timedelta(seconds=120)
+        stale_hb = now - timedelta(seconds=settings.HEARTBEAT_TIMEOUT_SECONDS + 60)
         node = self._make_node("node-stale", stale_hb, status="ONLINE")
         await fake_store.create_node(node)
 
@@ -397,7 +397,7 @@ class TestHeartbeatMonitor:
     async def test_no_redundant_write_when_already_offline(self, fake_store):
         """Already OFFLINE with stale heartbeat → no update_node call."""
         now = datetime.now(timezone.utc)
-        stale_hb = now - timedelta(seconds=120)
+        stale_hb = now - timedelta(seconds=400)
         node = self._make_node("node-offline", stale_hb, status="OFFLINE")
         await fake_store.create_node(node)
 
@@ -411,7 +411,7 @@ class TestHeartbeatMonitor:
     async def test_recovery_fails_orphaned_job_on_offline_node(self, fake_store):
         """Offline node with RUNNING job -> job FAILED, current_job_id cleared."""
         now = datetime.now(timezone.utc)
-        stale_hb = now - timedelta(seconds=120)
+        stale_hb = now - timedelta(seconds=400)
         node = self._make_node(
             "node-dead", stale_hb, status="OFFLINE", current_job_id="job-42"
         )
@@ -429,7 +429,7 @@ class TestHeartbeatMonitor:
     async def test_recovery_idempotent(self, fake_store):
         """Running recovery twice yields same state, no error."""
         now = datetime.now(timezone.utc)
-        stale_hb = now - timedelta(seconds=120)
+        stale_hb = now - timedelta(seconds=400)
         node = self._make_node(
             "node-dead2", stale_hb, status="OFFLINE", current_job_id="job-7"
         )
@@ -447,7 +447,7 @@ class TestHeartbeatMonitor:
     async def test_recovery_clears_dangling_job_ref(self, fake_store):
         """Offline node referencing missing job -> current_job_id cleared."""
         now = datetime.now(timezone.utc)
-        stale_hb = now - timedelta(seconds=120)
+        stale_hb = now - timedelta(seconds=400)
         node = self._make_node(
             "node-dangle", stale_hb, status="OFFLINE", current_job_id="job-missing"
         )
@@ -462,7 +462,7 @@ class TestHeartbeatMonitor:
     async def test_recovery_does_not_touch_terminal_job(self, fake_store):
         """Offline node with COMPLETED job -> no job update, ref cleared."""
         now = datetime.now(timezone.utc)
-        stale_hb = now - timedelta(seconds=120)
+        stale_hb = now - timedelta(seconds=400)
         node = self._make_node(
             "node-done", stale_hb, status="OFFLINE", current_job_id="job-done"
         )

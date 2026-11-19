@@ -30,7 +30,7 @@ tick 2: delta=10860s -> OFFLINE
 tick 3: delta=10890s -> OFFLINE
 ```
 
-The node can never return `ONLINE`, because the monitor only flips back to `ONLINE` when `delta <= 90` (line 371), which is unreachable while the two clocks disagree by the UTC offset.
+The node can never return `ONLINE`, because the monitor only flips back to `ONLINE` when `delta <= 300` (line 371), which is unreachable while the two clocks disagree by the UTC offset.
 
 ### Why it is easy to miss
 
@@ -79,9 +79,9 @@ The issue left the fix direction open. Each is decided here, with rationale.
 - The test `test_the_heartbeat_is_naive_local_because_the_store_is` in `agent/tests/test_hardware.py:379` currently *asserts* naive local. That test must flip to assert aware UTC.
 - The pure function `probe_hardware` takes `now: datetime` as a required argument (line 113) — the caller owns the clock convention. The loop calls `collect_node_spec` without `now`, which defaults to `datetime.now()` (line 164). That default changes.
 
-### Q4 — Does the 90s/30s threshold change?
+### Q4 — Does the 300s/30s threshold change?
 
-**Decision: No. #96 owns threshold configurability. This issue only fixes the timezone comparison bug.**
+**Decision: No. #96 owns threshold configurability (now default 300s). This issue only fixes the timezone comparison bug.**
 
 ---
 
@@ -91,7 +91,7 @@ The issue left the fix direction open. Each is decided here, with rationale.
 |---|---|
 | `NodeModel.last_heartbeat` → `DateTime(timezone=True)` | Changing `JobModel` or other `DateTime` columns |
 | Alembic migration for the column change | Backfilling historical data (see Q2) |
-| `_heartbeat_monitor`: `datetime.now(timezone.utc)` + aware-to-aware compare | Making the 90s threshold configurable (#96) |
+| `_heartbeat_monitor`: `datetime.now(timezone.utc)` + aware-to-aware compare | Making the 300s threshold configurable (#96) |
 | `agent/hardware.py`: `collect_node_spec` → aware UTC | HTTP transport for registration (file write stays) |
 | Tests updated to expect aware UTC | Fixing other naive-local writers in the codebase |
 
@@ -252,7 +252,7 @@ The module docstring (lines 28-39) and the comment at line 151-155 must be updat
 ## 9. Related
 
 - #95 — node registration file (agent writes `last_heartbeat`; workaround was naive local; this issue fixes the backend so the agent can write aware UTC)
-- #96 — 90s offline threshold hardcoded (coupling recorded in §4, **not** fixed here)
+- #96 — 300s offline threshold (configurable via HEARTBEAT_TIMEOUT_SECONDS)
 - #102 — node metrics writer (may also write timestamps; out of scope)
 - `backend/core/security.py` — already uses `datetime.now(timezone.utc)` for JWT expiry, the pattern this fix adopts
 - `shared/auth/localhost_hosts.json` — unrelated but noted: the localhost bypass list is duplicated in backend and frontend; this issue does not touch it

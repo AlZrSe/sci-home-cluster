@@ -50,7 +50,7 @@ Build a **React + Vite + Tailwind CSS** dashboard for a distributed scientific c
 
 #### Node List
 - **Card or Table** view: Node ID, Status (ONLINE/OFFLINE), GPU info, CPU cores, Memory, Last heartbeat, Current job
-- **Status indicator**: Green (online), Red (offline >90s), Yellow (degraded)
+- **Status indicator**: Green (online), Red (offline >300s), Yellow (degraded - heartbeat >90s)
 - **Filter** by status
 
 #### Node Detail (`/nodes/:id`)

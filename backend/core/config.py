@@ -615,7 +615,7 @@ class Settings(BaseSettings):
         return LocalhostBypassMode.SOCKET
 
     # Heartbeat contract (issue #96)
-    HEARTBEAT_TIMEOUT_SECONDS: int = 90
+    HEARTBEAT_TIMEOUT_SECONDS: int = 300
     HEARTBEAT_CHECK_INTERVAL_SECONDS: int = 30
 
     @field_validator("HEARTBEAT_CHECK_INTERVAL_SECONDS")

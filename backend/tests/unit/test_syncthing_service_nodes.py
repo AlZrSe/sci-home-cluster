@@ -469,7 +469,7 @@ class TestRescanTaskLifecycle:
         with patch("backend.services.syncthing_service.settings") as mock_settings:
             mock_settings.SYNCTHING_RESCAN_INTERVAL_SECONDS = 120
             mock_settings.HEARTBEAT_CHECK_INTERVAL_SECONDS = 30
-            mock_settings.HEARTBEAT_TIMEOUT_SECONDS = 90
+            mock_settings.HEARTBEAT_TIMEOUT_SECONDS = 300
 
             service = SyncthingService(temp_syncthing_root)
             await service.start()

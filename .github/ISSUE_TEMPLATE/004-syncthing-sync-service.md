@@ -14,7 +14,7 @@ Create a file system watcher that synchronizes YAML state files in the Syncthing
 - [ ] On startup: walk folders, read all state.yaml and node.yaml files → populate SQLite database
 - [ ] On file change: debounced YAML parsing → update corresponding SQLite records
 - [ ] Handle missing or corrupt YAML files gracefully (log error, skip file)
-- [ ] Node heartbeat monitoring: mark node as OFFLINE after 90 seconds without heartbeat update
+- [ ] Node heartbeat monitoring: mark node as OFFLINE after 300 seconds (5 minutes) without heartbeat update
 - [ ] Only update specific fields when YAML changes (don't overwrite unrelated data)
 - [ ] Unit tests for sync logic and file parsing
 - [ ] Integration tests: create YAML files → verify SQLite updated correctly

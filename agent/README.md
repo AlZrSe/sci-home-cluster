@@ -213,7 +213,7 @@ Precedence: --flag > $ENV_VAR > nodes/agent.toml > default
 - **Agent up but node not appearing:** check `SYNCTHING_ROOT` points at the
   synced folder and that Syncthing has finished the initial sync. The agent
   writes `nodes/<id>.yaml`; if it is absent, the folder is wrong or unwritable.
-- **Node OFFLINE:** heartbeat older than `HEARTBEAT_TIMEOUT_SECONDS` (default 90s).
+- **Node OFFLINE:** heartbeat older than `HEARTBEAT_TIMEOUT_SECONDS` (default 300s / 5 min).
   Check the agent process and the folder sync.
 - **Job stuck RUNNING:** the process may have ignored SIGTERM; the agent
   escalates to SIGKILL after the grace period. Check agent logs for

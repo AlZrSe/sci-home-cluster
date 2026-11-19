@@ -781,7 +781,7 @@ async def test_a_fresh_node_is_never_flipped_offline(
     backend_store: FakeStore,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """AC-9: a 10 s heartbeat is well inside the monitor's 90 s threshold.
+    """AC-9: a 10 s heartbeat is well inside the monitor's 300 s threshold.
 
     The value under test is the agent's own (aware UTC), seeded through the
     store (which now preserves aware UTC via #121). The monitor compares
@@ -811,7 +811,7 @@ async def test_the_same_monitor_does_flip_a_stale_node_offline(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, backend_store: FakeStore
 ) -> None:
     """The control for the test above: without it, that one proves nothing."""
-    await seed_node(backend_store, 120.0)
+    await seed_node(backend_store, 400.0)  # > 300s timeout
     service = SyncthingService(fresh_paths(tmp_path).root)
 
     await drive_monitor(service, monkeypatch)
@@ -822,12 +822,12 @@ async def test_the_same_monitor_does_flip_a_stale_node_offline(
 def test_the_heartbeat_cadence_leaves_room_under_the_offline_threshold() -> None:
     """The coupling recorded in the spec's §4, asserted rather than assumed.
 
-    ``SyncthingService._heartbeat_monitor`` uses HEARTBEAT_TIMEOUT_SECONDS (default 90);
-    #96 makes that configurable. The default agent interval (22 s) buys two missed
+    ``SyncthingService._heartbeat_monitor`` uses HEARTBEAT_TIMEOUT_SECONDS (default 300);
+    #96 makes that configurable. The default agent interval (22 s) buys many missed
     writes plus watcher latency before a healthy node is at risk.
     """
     assert AGENT_HEARTBEAT_INTERVAL_S == 22.0
-    assert 2 * AGENT_HEARTBEAT_INTERVAL_S < 90, "one missed write must not be fatal"
+    assert 2 * AGENT_HEARTBEAT_INTERVAL_S < 300, "one missed write must not be fatal"
 
 
 # --- AC-10 and the cadence, through the running agent -----------------------
