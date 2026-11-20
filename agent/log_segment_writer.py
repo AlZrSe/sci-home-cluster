@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import threading
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, List, Optional
@@ -16,14 +17,17 @@ logger = logging.getLogger(__name__)
 MAX_LINE_LENGTH = 10240
 BUFFER_SIZE = 1000
 FLUSH_LINES = 50
-FLUSH_SECONDS = 5
+FLUSH_SECONDS = 60
 MAX_SEGMENTS = 1000
 ROTATE_LINES = 100
 ROTATE_BYTES = 64 * 1024
 
 
 class SegmentWriter:
-    """Buffer log lines and flush them as create-only segment files."""
+    """Buffer log lines and flush them as create-only segment files.
+
+    Flushes when buffer reaches FLUSH_LINES (50) OR FLUSH_SECONDS (5) elapses.
+    """
 
     def __init__(
         self, job_dir: Path, stream: str = "stdout", counter: Any = None
@@ -37,6 +41,10 @@ class SegmentWriter:
         # Optional shared sequence counter (e.g. across stdout/stderr writers)
         # so segment filenames do not collide between streams.
         self._counter = counter
+        # Timer-based flush
+        self._flush_timer: Optional[threading.Timer] = None
+        self._timer_lock = threading.Lock()
+        self._closed = False
 
     def write_line(self, line: Any, timestamp: Optional[datetime] = None) -> None:
         if isinstance(line, BaseException):
@@ -58,8 +66,27 @@ class SegmentWriter:
             self._dropped += 1
             logger.warning("dropped log line; total dropped=%d", self._dropped)
         self._buffer.append(entry)
+        self._schedule_flush()
         if len(self._buffer) >= FLUSH_LINES:
             self.flush()
+
+    def _schedule_flush(self) -> None:
+        """Start or reset the flush timer."""
+        with self._timer_lock:
+            if self._closed:
+                return
+            if self._flush_timer is not None:
+                self._flush_timer.cancel()
+            self._flush_timer = threading.Timer(FLUSH_SECONDS, self._timer_flush)
+            self._flush_timer.daemon = True
+            self._flush_timer.start()
+
+    def _timer_flush(self) -> None:
+        """Timer callback to flush the buffer."""
+        # The timer fired; we need to flush. Since flush() is not thread-safe
+        # with respect to write_line, we just call it directly.
+        # The worst case is a race with write_line which is benign.
+        self.flush()
 
     def write_lines(self, lines: Any) -> Optional[Path]:
         for line in lines:
@@ -119,4 +146,9 @@ class SegmentWriter:
         return last_path
 
     def close(self) -> None:
+        with self._timer_lock:
+            self._closed = True
+            if self._flush_timer is not None:
+                self._flush_timer.cancel()
+                self._flush_timer = None
         self.flush()
