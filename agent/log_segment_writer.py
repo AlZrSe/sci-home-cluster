@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 MAX_LINE_LENGTH = 10240
 BUFFER_SIZE = 1000
 FLUSH_LINES = 50
-FLUSH_SECONDS = 60
+FLUSH_SECONDS = 5
 MAX_SEGMENTS = 1000
 ROTATE_LINES = 100
 ROTATE_BYTES = 64 * 1024
@@ -27,6 +27,8 @@ class SegmentWriter:
     """Buffer log lines and flush them as create-only segment files.
 
     Flushes when buffer reaches FLUSH_LINES (50) OR FLUSH_SECONDS (5) elapses.
+    Thread-safe: flush() can be called from timer thread while write_line()
+    runs on reader thread.
     """
 
     def __init__(
@@ -41,6 +43,8 @@ class SegmentWriter:
         # Optional shared sequence counter (e.g. across stdout/stderr writers)
         # so segment filenames do not collide between streams.
         self._counter = counter
+        # Thread safety for buffer access from timer thread and reader thread
+        self._buffer_lock = threading.Lock()
         # Timer-based flush
         self._flush_timer: Optional[threading.Timer] = None
         self._timer_lock = threading.Lock()
@@ -60,12 +64,13 @@ class SegmentWriter:
             suffix = f"...[truncated {excess} bytes]"
             line = line[: MAX_LINE_LENGTH - len(suffix)] + suffix
         entry = LogEntry(timestamp=timestamp, line=line, origin="real")
-        if len(self._buffer) >= BUFFER_SIZE:
-            # drop oldest
-            self._buffer.pop(0)
-            self._dropped += 1
-            logger.warning("dropped log line; total dropped=%d", self._dropped)
-        self._buffer.append(entry)
+        with self._buffer_lock:
+            if len(self._buffer) >= BUFFER_SIZE:
+                # drop oldest
+                self._buffer.pop(0)
+                self._dropped += 1
+                logger.warning("dropped log line; total dropped=%d", self._dropped)
+            self._buffer.append(entry)
         self._schedule_flush()
         if len(self._buffer) >= FLUSH_LINES:
             self.flush()
@@ -83,9 +88,7 @@ class SegmentWriter:
 
     def _timer_flush(self) -> None:
         """Timer callback to flush the buffer."""
-        # The timer fired; we need to flush. Since flush() is not thread-safe
-        # with respect to write_line, we just call it directly.
-        # The worst case is a race with write_line which is benign.
+        # flush() is now thread-safe
         self.flush()
 
     def write_lines(self, lines: Any) -> Optional[Path]:
@@ -94,14 +97,19 @@ class SegmentWriter:
         return self.flush() if self._buffer else None
 
     def flush(self) -> Optional[Path]:
-        if not self._buffer:
-            return None
+        # Take a snapshot of the buffer under the lock, then release it
+        # while doing I/O.
+        with self._buffer_lock:
+            if not self._buffer:
+                return None
+            buffer_snapshot = list(self._buffer)
+            self._buffer.clear()
 
-        # Split the buffer into rotation-sized chunks first.
+        # Split the snapshot into rotation-sized chunks.
         chunks: List[List[LogEntry]] = []
         chunk: List[LogEntry] = []
         chunk_bytes = 0
-        for entry in self._buffer:
+        for entry in buffer_snapshot:
             entry_bytes = len(entry.line.encode("utf-8"))
             if chunk and (
                 len(chunk) >= ROTATE_LINES or chunk_bytes + entry_bytes > ROTATE_BYTES
@@ -117,7 +125,8 @@ class SegmentWriter:
         last_path: Optional[Path] = None
         for ch in chunks:
             if self._segments_written >= MAX_SEGMENTS:
-                self._dropped += len(ch)
+                with self._buffer_lock:
+                    self._dropped += len(ch)
                 logger.warning("segment cap reached; dropping")
                 continue
             if self._counter is not None:
@@ -142,7 +151,6 @@ class SegmentWriter:
             write_yaml(str(path), segment)
             last_path = path
 
-        self._buffer.clear()
         return last_path
 
     def close(self) -> None:
@@ -151,4 +159,5 @@ class SegmentWriter:
             if self._flush_timer is not None:
                 self._flush_timer.cancel()
                 self._flush_timer = None
+        # Final flush (thread-safe)
         self.flush()
