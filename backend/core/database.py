@@ -199,18 +199,33 @@ async def close_database() -> None:
 
 
 async def run_migrations() -> None:
-    """Run Alembic migrations to ensure database schema is up to date."""
-    from alembic.config import Config
-    from alembic import command
+    """Run Alembic migrations to ensure database schema is up to date.
+
+    Runs `alembic upgrade head` in a subprocess to avoid the ThreadPoolExecutor
+    deadlock in alembic's env.py when there's a running event loop.
+    """
+    import subprocess
+    import sys
     from pathlib import Path
 
     try:
-        alembic_ini_path = Path(__file__).parent.parent / "alembic.ini"
-        alembic_cfg = Config(str(alembic_ini_path))
-        # The URL is resolved from settings inside backend/alembic/env.py,
-        # which is also what the `alembic` CLI uses, so both paths migrate
-        # the same database.
-        command.upgrade(alembic_cfg, "head")
+        # Same lazy mkdir the application uses
+        from backend.core.database import ensure_sqlite_parent_directory
+
+        ensure_sqlite_parent_directory()
+
+        # Run alembic as a subprocess - this avoids the threading issue entirely
+        alembic_ini = Path(__file__).parent.parent / "alembic.ini"
+        result = subprocess.run(
+            [sys.executable, "-m", "alembic", "-c", str(alembic_ini), "upgrade", "head"],
+            capture_output=True,
+            text=True,
+            cwd=Path(__file__).parent.parent,
+            timeout=120,
+        )
+        if result.returncode != 0:
+            logger.error(f"Alembic upgrade failed: {result.stderr}")
+            raise RuntimeError(f"Alembic upgrade failed: {result.stderr}")
         logger.info("Database migrations applied successfully")
     except Exception as e:
         logger.error(f"Failed to apply database migrations: {e}")

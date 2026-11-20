@@ -221,6 +221,14 @@ Precedence: --flag > $ENV_VAR > nodes/agent.toml > default
 - **No logs:** log capture is issue #101; until then stdout/stderr go to the
   agent's own stdout (capture in the service journal).
 - **No metrics:** metrics sampling is issue #102.
+- **Job never claimed / "pending job doesn't start":** another agent on the
+  same Syncthing folder may be claiming it. Check `nodes/*.yaml` for other
+  `node_id`s with recent heartbeats and `current_job_id` set. The agent
+  refuses a second in-flight job (`current_job_id` is set). Run only one
+  agent per node ID, or stop other agents with `stop-process -name run-agent -force`
+  (Windows) / `pkill -f run_agent` (Linux). The startup sweep and idle sweep
+  (agent/loop.py) now claim PENDING jobs on disk at startup and on every
+  event-drain tick when idle.
 
 ## Transport
 

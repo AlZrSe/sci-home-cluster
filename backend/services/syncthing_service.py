@@ -151,26 +151,26 @@ class SyncthingEventHandler(FileSystemEventHandler):
             if relative_path.parts[0] == "jobs" and len(relative_path.parts) >= 3:
                 job_id = relative_path.parts[1]
                 if relative_path.parts[2] == "state.yaml":
-                    await self.service._process_job_file(job_id, file_path)
+                    await self._process_job_file(job_id, file_path)
                 elif (
                     relative_path.parts[2] == "logs"
                     and len(relative_path.parts) == 4
                     and relative_path.parts[3].endswith(".yaml")
                 ):
-                    await self.service._process_log_segment_file(job_id, file_path)
+                    await self._process_log_segment_file(job_id, file_path)
                 elif (
                     relative_path.parts[2] == "metrics"
                     and len(relative_path.parts) == 4
                     and relative_path.parts[3].endswith(".yaml")
                 ):
-                    await self.service._process_metrics_file(None, job_id, file_path)
+                    await self._process_metrics_file(None, job_id, file_path)
                 elif (
                     relative_path.parts[2] in ("commands", "acks")
                     and len(relative_path.parts) == 4
                     and relative_path.parts[3].endswith(".yaml")
                 ):
                     command_id = relative_path.parts[3][:-5]
-                    await self.service._process_command_file(
+                    await self._process_command_file(
                         job_id, command_id, file_path
                     )
                 else:
@@ -180,7 +180,7 @@ class SyncthingEventHandler(FileSystemEventHandler):
                     )
             elif relative_path.parts[0] == "nodes" and len(relative_path.parts) == 2:
                 node_id = relative_path.parts[1].replace(".yaml", "")
-                await self.service._process_node_file(node_id, file_path)
+                await self._process_node_file(node_id, file_path)
             elif (
                 relative_path.parts[0] == "nodes"
                 and len(relative_path.parts) == 4
@@ -188,7 +188,7 @@ class SyncthingEventHandler(FileSystemEventHandler):
                 and relative_path.parts[3].endswith(".yaml")
             ):
                 node_id = relative_path.parts[1]
-                await self.service._process_metrics_file(node_id, None, file_path)
+                await self._process_metrics_file(node_id, None, file_path)
             elif relative_path.parts[0] == "nodes":
                 logger.debug("ignoring %s: not a top-level node file", file_path)
             else:
@@ -201,19 +201,19 @@ class SyncthingEventHandler(FileSystemEventHandler):
         """Process a deleted YAML file."""
         try:
             path_obj = Path(file_path)
-            relative_path = path_obj.relative_to(self.service.root_path)
+            relative_path = path_obj.relative_to(self.root_path)
 
             if relative_path.parts[0] == "jobs" and len(relative_path.parts) >= 3:
                 job_id = relative_path.parts[1]
                 if relative_path.parts[2] == "state.yaml":
-                    await self.service._handle_job_deleted(job_id)
+                    await self._handle_job_deleted(job_id)
                 elif relative_path.parts[2] in ("commands", "acks", "logs", "metrics"):
                     logger.debug("file removed: %s", file_path)
                 else:
                     logger.debug("ignoring deletion of %s", file_path)
             elif relative_path.parts[0] == "nodes" and len(relative_path.parts) == 2:
                 node_id = relative_path.parts[1].replace(".yaml", "")
-                await self.service._handle_node_deleted(node_id)
+                await self._handle_node_deleted(node_id)
 
         except Exception as e:
             logger.error(f"Error processing delete for {file_path}: {e}")
@@ -345,7 +345,7 @@ class SyncthingService:
                     if logs_dir.exists() and logs_dir.is_dir():
                         for yaml_file in logs_dir.glob("*.yaml"):
                             if yaml_file.is_file():
-                                await self.service._process_log_segment_file(
+                                await self._process_log_segment_file(
                                     job_dir.name, str(yaml_file)
                                 )
                     # sweep metrics/
@@ -353,7 +353,7 @@ class SyncthingService:
                     if metrics_dir.exists() and metrics_dir.is_dir():
                         for yaml_file in metrics_dir.glob("*.yaml"):
                             if yaml_file.is_file():
-                                await self.service._process_metrics_file(
+                                await self._process_metrics_file(
                                     None, job_dir.name, str(yaml_file)
                                 )
 
@@ -369,7 +369,7 @@ class SyncthingService:
                     if metrics_dir.exists() and metrics_dir.is_dir():
                         for yaml_file in metrics_dir.glob("*.yaml"):
                             if yaml_file.is_file():
-                                await self.service._process_metrics_file(
+                                await self._process_metrics_file(
                                     node_id, None, str(yaml_file)
                                 )
 

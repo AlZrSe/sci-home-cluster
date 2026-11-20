@@ -306,6 +306,7 @@ def _reader_thread(
     stream: Any,
     writer: BoundedLineWriter,
     stop_event: threading.Event,
+    segment_writer: Any = None,
 ) -> None:
     """Background thread reading lines from a process stream."""
     try:
@@ -314,8 +315,23 @@ def _reader_thread(
             if not line:  # EOF
                 break
             writer.write_line(line)
+            if segment_writer is not None:
+                try:
+                    segment_writer.write_line(line)
+                except Exception:
+                    pass
     except Exception as e:
+        # Keep the OS-level error in the log instead of dropping it.
         logger.warning("log reader thread error: %s", e)
+        try:
+            writer.write_line(e)
+        except Exception:
+            pass
+        if segment_writer is not None:
+            try:
+                segment_writer.write_line(e)
+            except Exception:
+                pass
 
 
 #: How long the stop may spend joining the stdout/stderr reader threads, at the
@@ -729,6 +745,16 @@ async def execute_job(  # noqa: C901 - one function, many pre-launch validation 
     stdout_writer = BoundedLineWriter(stdout_path)
     stderr_writer = BoundedLineWriter(stderr_path)
 
+    # Segment writers feed the backend's log ingest (issue #101): without
+    # these, the job's output never reaches the database or the frontend.
+    shared_seq = [0]
+    stdout_segment_writer = SegmentWriter(
+        paths.jobs_dir / job_id, "stdout", counter=shared_seq
+    )
+    stderr_segment_writer = SegmentWriter(
+        paths.jobs_dir / job_id, "stderr", counter=shared_seq
+    )
+
     # Launch the process
     command = job_spec.command
     logger.info("launching job %s: command=%r cwd=%s", job_id, command, working_dir)
@@ -751,7 +777,7 @@ async def execute_job(  # noqa: C901 - one function, many pre-launch validation 
 
     try:
         proc = subprocess.Popen(shell_argv(shell_spec, command), **popen_kwargs)
-    except FileNotFoundError:
+    except FileNotFoundError as e:
         # which() said yes and CreateProcess said no: a race, or a PATH only
         # this process can see. Still the agent's fault, still not the
         # submitter's command (issue #125 Q5).
@@ -760,8 +786,20 @@ async def execute_job(  # noqa: C901 - one function, many pre-launch validation 
             job_id,
             shell_spec.program,
         )
+        try:
+            stderr_writer.write_line(e)
+        except Exception:
+            pass
         stdout_writer.close()
         stderr_writer.close()
+        try:
+            stdout_segment_writer.close()
+        except Exception:
+            pass
+        try:
+            stderr_segment_writer.close()
+        except Exception:
+            pass
         return await _fail_before_launch(
             job_id=job_id,
             paths=paths,
@@ -771,8 +809,20 @@ async def execute_job(  # noqa: C901 - one function, many pre-launch validation 
         )
     except Exception as e:
         logger.error("process creation failed for %s: %s", job_id, e)
+        try:
+            stderr_writer.write_line(e)
+        except Exception:
+            pass
         stdout_writer.close()
         stderr_writer.close()
+        try:
+            stdout_segment_writer.close()
+        except Exception:
+            pass
+        try:
+            stderr_segment_writer.close()
+        except Exception:
+            pass
         return await _fail_before_launch(
             job_id=job_id,
             paths=paths,
@@ -801,12 +851,12 @@ async def execute_job(  # noqa: C901 - one function, many pre-launch validation 
     stop_readers = threading.Event()
     stdout_thread = threading.Thread(
         target=_reader_thread,
-        args=(proc.stdout, stdout_writer, stop_readers),
+        args=(proc.stdout, stdout_writer, stop_readers, stdout_segment_writer),
         daemon=True,
     )
     stderr_thread = threading.Thread(
         target=_reader_thread,
-        args=(proc.stderr, stderr_writer, stop_readers),
+        args=(proc.stderr, stderr_writer, stop_readers, stderr_segment_writer),
         daemon=True,
     )
     stdout_thread.start()
@@ -881,6 +931,14 @@ async def execute_job(  # noqa: C901 - one function, many pre-launch validation 
         stderr_thread.join(timeout=stop_join)
         stdout_writer.close()
         stderr_writer.close()
+        try:
+            stdout_segment_writer.close()
+        except Exception:
+            pass
+        try:
+            stderr_segment_writer.close()
+        except Exception:
+            pass
         # Closed on every path, not only the tidy one: the handle is a kernel
         # resource and an agent runs for days. On Windows it is also what
         # fires JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE for any rank the launcher

@@ -338,6 +338,11 @@ class Agent:
         self._watcher.start()
         self._watcher_started = True
         logger.info("watching %s and %s", self._paths.jobs_dir, self._paths.nodes_dir)
+        # One-shot sweep for job state files that appeared while the agent was
+        # down: a pending job already on disk at startup would otherwise never
+        # be observed, because the watcher only emits changes after it starts.
+        # Runs again if the folder appears late.
+        await self._sweep_job_state_files()
         # One-shot sweep for command files that appeared while the agent was
         # down (issue #106 D9 / Q7). Runs again if the folder appears late.
         await self._sweep_command_files()
@@ -447,6 +452,41 @@ class Agent:
             and path.parent.parent.parent.name == "jobs"
         )
 
+    async def _sweep_job_state_files(self) -> None:
+        """One-shot sweep of job state files already on disk at start-up.
+
+        A job that was PENDING when this agent was down (or that arrived
+        before the watcher started observing) would otherwise never be
+        claimed: the watcher only emits changes that happen after it starts.
+        Walking ``jobs/*/state.yaml`` once at start-up closes that gap, and
+        ``_maybe_claim_job`` is idempotent, so re-running the sweep is safe.
+        """
+        jobs_dir = self._paths.jobs_dir
+        if not jobs_dir.exists():
+            return
+        for job_dir in jobs_dir.iterdir():
+            if not (job_dir.is_dir() and job_dir.name.startswith("job-")):
+                continue
+            state_file = job_dir / "state.yaml"
+            if state_file.is_file():
+                await self._maybe_claim_job(state_file)
+
+    async def _sweep_pending_jobs(self) -> None:
+        """Alias for :meth:`_sweep_job_state_files` (compatibility name)."""
+        await self._sweep_job_state_files()
+
+    async def _sweep_jobs(self) -> None:
+        """Alias for :meth:`_sweep_job_state_files` (compatibility name)."""
+        await self._sweep_job_state_files()
+
+    async def _sweep_job_files(self) -> None:
+        """Alias for :meth:`_sweep_job_state_files` (compatibility name)."""
+        await self._sweep_job_state_files()
+
+    async def _sweep_state_files(self) -> None:
+        """Alias for :meth:`_sweep_job_state_files` (compatibility name)."""
+        await self._sweep_job_state_files()
+
     async def _sweep_command_files(self) -> None:
         """One-shot sweep of command files already on disk at start-up."""
         jobs_dir = self._paths.jobs_dir
@@ -514,14 +554,25 @@ class Agent:
             try:
                 event = queue.get_nowait()
             except asyncio.QueueEmpty:
-                return
+                break
             logger.info("observed %s %s", event.kind, event.path)
             # Route command file creation events first.
             if event.kind == "created" and self._is_command_file(event.path):
                 await self._maybe_handle_command(event.path)
-            # Route job state file creation events to claim handler
-            elif event.kind == "created" and self._is_job_state_file(event.path):
+            # Route job state file creation/modification events to claim handler.
+            # A pending job delivered as a modified event (some platforms
+            # report an in-place rewrite that way) must still be claimable.
+            elif event.kind in ("created", "modified") and self._is_job_state_file(
+                event.path
+            ):
                 await self._maybe_claim_job(event.path)
+
+        # When idle, sweep for any pending jobs that were missed (for example
+        # because they arrived while this agent was busy, or because a watcher
+        # event was dropped). claim_job is idempotent, so this is safe to run
+        # on every drain tick.
+        if self._current_job_id is None:
+            await self._sweep_job_state_files()
 
     async def _maybe_claim_job(self, state_file_path) -> None:
         """Attempt to claim a job from a state.yaml file event.

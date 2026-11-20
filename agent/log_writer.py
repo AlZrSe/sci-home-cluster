@@ -8,6 +8,7 @@ undecodable bytes according to a documented policy (errors="replace").
 import asyncio
 import logging
 from pathlib import Path
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -26,13 +27,30 @@ class BoundedLineWriter:
     def __init__(self, file_path: Path) -> None:
         self._file_path = file_path
 
-    def write_line(self, line: bytes) -> None:
-        """Decode with errors='replace', truncate to MAX_LINE_LENGTH, write."""
+    def write_line(self, line: Any) -> None:
+        """Normalise *line* to text, truncate, and append to the log.
+
+        Accepts the bytes a process writes to its stdout/stderr, a ``str``
+        (for example an OS error message), or an exception raised while
+        reading the stream, so that **all** output -- including OS-level
+        errors -- ends up in the log rather than being dropped.
+        """
         # Ensure parent directory exists
         self._file_path.parent.mkdir(parents=True, exist_ok=True)
 
-        # Decode with replacement for undecodable bytes
-        decoded = line.decode("utf-8", errors="replace")
+        # Normalise input to text.  Bytes are decoded with replacement for
+        # undecodable sequences (the documented policy); strings pass
+        # through; exceptions (e.g. OSError raised by readline) are
+        # rendered with their type so the failure is visible in the log.
+        if isinstance(line, BaseException):
+            decoded = f"{type(line).__name__}: {line}"
+        elif isinstance(line, str):
+            decoded = line
+        else:
+            try:
+                decoded = bytes(line).decode("utf-8", errors="replace")
+            except Exception:
+                decoded = str(line)
 
         # Ensure newline termination
         if not decoded.endswith("\n"):

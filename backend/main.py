@@ -111,11 +111,14 @@ async def lifespan(app: FastAPI):
     # Startup
     logger.info("Starting Scientific Home Cluster API")
 
+    # Run database migrations FIRST, before creating the app's engine.
+    # This avoids a deadlock where alembic (running in a separate thread
+    # with its own event loop) creates a second engine that conflicts
+    # with the app's engine on SQLite.
+    await run_migrations()
+
     # Initialize database connection
     await init_database()
-
-    # Run database migrations
-    await run_migrations()
 
     # Initialize the store (singleton)
     get_store()
