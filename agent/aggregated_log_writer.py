@@ -29,6 +29,7 @@ class AggregatedWriter:
         self._path = self.job_dir / "logs" / f"{stream}.yaml"
         self._segments_written = 0
         self._lines: list[LogEntry] = []
+        self._flushed_count = 0
 
     def write_line(self, line: Any, timestamp: datetime | None = None) -> None:
         if isinstance(line, BaseException):
@@ -47,20 +48,22 @@ class AggregatedWriter:
         self._lines.append(entry)
 
     def flush(self) -> None:
-        if not self._lines:
+        # Only flush new lines since last flush
+        new_lines = self._lines[self._flushed_count :]
+        if not new_lines:
             return
-        # Write the accumulated lines as a single LogSegment with all lines
         self._path.parent.mkdir(parents=True, exist_ok=True)
         self._segments_written += 1
         segment = LogSegment(
             job_id=self.job_dir.name,
             stream=self.stream,  # type: ignore[arg-type]
             sequence=self._segments_written,
-            lines=list(self._lines),
+            lines=list(new_lines),
             dropped=0,
             created_at=datetime.now(timezone.utc),
         )
         write_yaml(str(self._path), segment)
+        self._flushed_count = len(self._lines)
 
     def close(self) -> None:
         self.flush()
