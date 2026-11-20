@@ -307,6 +307,7 @@ def _reader_thread(
     writer: BoundedLineWriter,
     stop_event: threading.Event,
     segment_writer: Any = None,
+    aggregated_writer: Any = None,
 ) -> None:
     """Background thread reading lines from a process stream."""
     try:
@@ -320,6 +321,11 @@ def _reader_thread(
                     segment_writer.write_line(line)
                 except Exception:
                     pass
+            if aggregated_writer is not None:
+                try:
+                    aggregated_writer.write_line(line)
+                except Exception:
+                    pass
     except Exception as e:
         # Keep the OS-level error in the log instead of dropping it.
         logger.warning("log reader thread error: %s", e)
@@ -330,6 +336,11 @@ def _reader_thread(
         if segment_writer is not None:
             try:
                 segment_writer.write_line(e)
+            except Exception:
+                pass
+        if aggregated_writer is not None:
+            try:
+                aggregated_writer.write_line(e)
             except Exception:
                 pass
 
@@ -755,6 +766,12 @@ async def execute_job(  # noqa: C901 - one function, many pre-launch validation 
         paths.jobs_dir / job_id, "stderr", counter=shared_seq
     )
 
+    # Aggregated writers for human-readable single-file per stream
+    from agent.aggregated_log_writer import AggregatedWriter
+
+    stdout_aggregated_writer = AggregatedWriter(paths.jobs_dir / job_id, "stdout")
+    stderr_aggregated_writer = AggregatedWriter(paths.jobs_dir / job_id, "stderr")
+
     # Launch the process
     command = job_spec.command
     logger.info("launching job %s: command=%r cwd=%s", job_id, command, working_dir)
@@ -800,6 +817,14 @@ async def execute_job(  # noqa: C901 - one function, many pre-launch validation 
             stderr_segment_writer.close()
         except Exception:
             pass
+        try:
+            stdout_aggregated_writer.close()
+        except Exception:
+            pass
+        try:
+            stderr_aggregated_writer.close()
+        except Exception:
+            pass
         return await _fail_before_launch(
             job_id=job_id,
             paths=paths,
@@ -821,6 +846,14 @@ async def execute_job(  # noqa: C901 - one function, many pre-launch validation 
             pass
         try:
             stderr_segment_writer.close()
+        except Exception:
+            pass
+        try:
+            stdout_aggregated_writer.close()
+        except Exception:
+            pass
+        try:
+            stderr_aggregated_writer.close()
         except Exception:
             pass
         return await _fail_before_launch(
@@ -851,12 +884,24 @@ async def execute_job(  # noqa: C901 - one function, many pre-launch validation 
     stop_readers = threading.Event()
     stdout_thread = threading.Thread(
         target=_reader_thread,
-        args=(proc.stdout, stdout_writer, stop_readers, stdout_segment_writer),
+        args=(
+            proc.stdout,
+            stdout_writer,
+            stop_readers,
+            stdout_segment_writer,
+            stdout_aggregated_writer,
+        ),
         daemon=True,
     )
     stderr_thread = threading.Thread(
         target=_reader_thread,
-        args=(proc.stderr, stderr_writer, stop_readers, stderr_segment_writer),
+        args=(
+            proc.stderr,
+            stderr_writer,
+            stop_readers,
+            stderr_segment_writer,
+            stderr_aggregated_writer,
+        ),
         daemon=True,
     )
     stdout_thread.start()
@@ -937,6 +982,14 @@ async def execute_job(  # noqa: C901 - one function, many pre-launch validation 
             pass
         try:
             stderr_segment_writer.close()
+        except Exception:
+            pass
+        try:
+            stdout_aggregated_writer.close()
+        except Exception:
+            pass
+        try:
+            stderr_aggregated_writer.close()
         except Exception:
             pass
         # Closed on every path, not only the tidy one: the handle is a kernel
