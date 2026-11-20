@@ -19,7 +19,7 @@ Distributed platform for running scientific workloads on a home GPU cluster.
 | Backend test | `pytest --cov=backend` |
 | Build agent exe | `python scripts/build_agent.py` (wrappers: `scripts\build-agent.cmd`, `scripts\build-agent.ps1`, `scripts/build-agent.sh`) |
 | Build app exe | `python scripts/build_app.py` (after building frontend) |
-| **After agent code changes** | **MANDATORY**: Run `python scripts/build_agent.py` and publish the new `run-agent.exe` to `syncthing/bin/` so all nodes pick up the updated agent. The CI `build-agent` job does this on merge, but local changes must be built manually before testing. |
+| **After agent code changes** | **MANDATORY**: Run the build wrapper (`scripts\build-agent.cmd` on Windows, `scripts/build-agent.sh` on Linux) and publish the new `run-agent.exe` to `syncthing/bin/` so all nodes pick up the updated agent. The CI `build-agent` job does this on merge, but local changes must be built manually before testing. |
 | **CI** | `.github/workflows/ci.yml` — six jobs, no edges: `backend-gates`, `frontend-gates`, `compose-suite`, `e2e` (required) plus `build-agent`, `build-app` (non-required). Push or PR to `main`; weekly Monday 06:17 UTC; manual dispatch. Four required status checks on `main`. |
 | Compose test | `make test-compose` (**opt-in, destructive-adjacent** — creates and deletes `shc-e2e-*` volumes, never `shc-data`/`shc-state`; needs Docker; see `docker/README.md` §"Testing the compose file") |
 | API server | `uvicorn backend.main:app --reload` |
