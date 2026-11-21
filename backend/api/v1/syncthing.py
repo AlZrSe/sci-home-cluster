@@ -10,6 +10,8 @@ from backend.core.config import settings
 from backend.core.deps import get_current_token_payload
 from backend.core.errors import syncthing_unavailable
 from backend.services.syncthing_service import SyncthingService
+import os
+from shared.schemas.syncthing_folders import SyncthingFolderList
 from shared.schemas.syncthing_status import SyncthingStatus
 from shared.schemas import HTTPValidationError
 
@@ -219,6 +221,46 @@ async def trigger_syncthing_scan(
         "scanned": result["scanned"],
         "total_processed": result["total_processed"],
     }
+
+
+@router.get(
+    "/folders",
+    response_model=SyncthingFolderList,
+    responses={
+        503: {"model": HTTPValidationError, "description": "Syncthing not configured"},
+    },
+)
+async def list_syncthing_folders(
+    request: Request, payload: dict = Depends(get_current_token_payload)
+) -> SyncthingFolderList:
+    """
+    List all directories under the Syncthing root folder.
+    Returns a flat list of relative paths for client-side tree building.
+    """
+    # Reuse existing Syncthing unavailable check from get_syncthing_status
+    if not settings.SYNCTHING_ROOT or not Path(settings.SYNCTHING_ROOT).exists():
+        raise syncthing_unavailable(
+            "Syncthing is not configured on the server. "
+            "Set SYNCTHING_ROOT env var and restart the API server."
+        )
+
+    root = Path(settings.SYNCTHING_ROOT)
+    folders: list[str] = []
+
+    for dirpath, dirnames, _ in os.walk(root):
+        # Get relative path from root
+        rel = Path(dirpath).relative_to(root)
+        if rel != Path("."):
+            # Normalize to forward slashes for cross-platform consistency
+            folders.append(str(rel).replace("\\", "/"))
+
+        # Skip hidden directories (starting with .)
+        dirnames[:] = [d for d in dirnames if not d.startswith(".")]
+
+    # Sort for consistent ordering
+    folders.sort()
+
+    return SyncthingFolderList(root=settings.SYNCTHING_ROOT, folders=folders)
 
 
 # ---------------------------------------------------------------------------

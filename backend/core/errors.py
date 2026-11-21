@@ -26,9 +26,11 @@ class APIError(HTTPException):
         detail: str,
         error_code: str,
         headers: Optional[dict] = None,
+        title: Optional[str] = None,
     ) -> None:
         super().__init__(status_code=status_code, detail=detail, headers=headers)
         self.error_code = error_code
+        self.title = title
 
 
 # --- Auth -------------------------------------------------------------------
@@ -193,5 +195,8 @@ def job_id_collision(job_id: str, existing_path: str) -> APIError:
 
 def syncthing_unavailable(detail: str) -> APIError:
     return APIError(
-        status.HTTP_503_SERVICE_UNAVAILABLE, detail, "SYNCTHING_UNAVAILABLE"
+        status.HTTP_503_SERVICE_UNAVAILABLE,
+        detail,
+        "SYNCTHING_UNAVAILABLE",
+        title="Syncthing Unavailable",
     )

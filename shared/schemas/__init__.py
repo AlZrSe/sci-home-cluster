@@ -35,6 +35,7 @@ from .token_validation import (
     TokenValidationRequest,
     TokenValidationResponse,
 )
+from .syncthing_folders import SyncthingFolderList
 from .syncthing_status import SyncthingStatus, FolderInfo, GuiInfo
 
 __all__ = [
@@ -64,6 +65,7 @@ __all__ = [
     "ProfileEnvEntry",
     "ProfileSpec",
     "Resources",
+    "SyncthingFolderList",
     "SyncthingStatus",
     "FolderInfo",
     "GuiInfo",
