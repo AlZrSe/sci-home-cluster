@@ -245,7 +245,7 @@ here to prevent misconfiguration.
 
 **Backend Settings** (`backend.core.config.Settings`):
 
-- `HEARTBEAT_TIMEOUT_SECONDS` (default: 90): The offline threshold. A node
+- `HEARTBEAT_TIMEOUT_SECONDS` (default: 300): The offline threshold. A node
   whose last heartbeat is older than this value (strictly greater) is marked
   OFFLINE. A node with a heartbeat at or within this threshold is considered
   ONLINE.

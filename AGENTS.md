@@ -5,7 +5,7 @@ All development work MUST follow the agent-team workflow with PM, SWE, QA, and O
 
 ## Quick Reference
 Distributed platform for running scientific workloads on a home GPU cluster.
-**Phase 1**: Backend Foundation (FastAPI + SQLite + Syncthing sync). Frontend ✅ Complete. Worker Agent ✅ Implemented.
+**Phase 1**: Backend Foundation (FastAPI + SQLite + Syncthing sync). Frontend ✅ Complete. Worker Agent ✅ Implemented. MCP ✅ Implemented. Docker/Production ✅ Done.
 
 | Area | Command |
 |------|---------|
@@ -140,11 +140,17 @@ feat: set up backend project structure with FastAPI and dependencies
 scientific-home-cluster/
 ├── frontend/          # git SUBMODULE — see "Frontend lives in another repo" below
 ├── backend/           # FastAPI + SQLite API server (COMPLETE)
+│   ├── api/v1/        # REST endpoints (jobs, nodes, profiles, auth, syncthing, mcp)
+│   ├── mcp/           # MCP server (stdio + SSE/HTTP)
+│   └── profiles/      # Built-in job profiles (YAML)
 ├── shared/            # Shared schemas, types, utilities (COMPLETE)
 ├── agent/             # Worker node agent (implemented)
 ├── cli/               # Typer CLI for job submission (stub)
+├── samples/           # Sample calculation program (issue #181)
+├── scripts/           # Build/publish/run helpers
+├── docker/            # Dockerfile + container reference
+├── observability/     # Separate Compose project: OTel Collector + Grafana Cloud
 ├── backend/tests/     # Unit & integration tests
-├── docker/            # Docker configs (planned)
 ├── docs/              # Architecture specs
 ├── openapi.yaml       # API contract
 ├── PROCESS.md         # Development workflow

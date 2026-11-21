@@ -12,6 +12,7 @@ A distributed platform for running scientific long-running applications on vario
 | API Server Core | ✅ **Done** | Issue [#3](https://github.com/AlZrSe/sci-home-cluster/issues/3) |
 | Syncthing Sync Service | ✅ **Done** | Issue [#4](https://github.com/AlZrSe/sci-home-cluster/issues/4) |
 | Worker Agent | ✅ **Implemented** | Issues #93-#106 - config, logging, supervised loop, job execution, command files. See agent/README.md |
+| MCP Server | ✅ **Implemented** | Issue #163 - stdio (`run-mcp`) and SSE/HTTP transports for AI clients. See docs/mcp.md |
 | CLI | ✅ **Stub Implemented** | Phase 2 - commands scaffolded, needs API integration |
 | Docker/Production | ✅ **Done** | Issues [#123](https://github.com/AlZrSe/sci-home-cluster/issues/123) (image + static serving), [#129](https://github.com/AlZrSe/sci-home-cluster/issues/129) (compose) - see [Docker Compose](#docker-compose-single-container-one-port) |
 
@@ -58,10 +59,11 @@ This platform uses a client-server architecture with:
 - Localhost bypass for development
 - SQLite database with Alembic migrations
 - WebSocket log streaming
+- MCP (Model Context Protocol) server for AI clients (stdio + SSE/HTTP)
 
 **Planned (Phase 2+):**
 - CLI full API integration
-- Windows and Linux support (currently Linux-focused)
+- Additional job types and schedulers
 
 ---
 
@@ -472,6 +474,10 @@ sci-run logs <job-id> --follow
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | OTLP endpoint for traces/metrics | unset |
 | `OTEL_ENABLED` | Enable OpenTelemetry instrumentation | `true` |
 | `OTEL_SDK_DISABLED` | Disable SDK entirely | `false` |
+| `MCP_ENABLED` | Enable MCP server (stdio + SSE) | `true` |
+| `MCP_READ_ONLY` | Force read-only MCP mode | `false` |
+| `MCP_SSE_PATH` | SSE/HTTP mount path | `/mcp` |
+| `SHC_MCP_TOKEN` | Token for stdio transport | unset |
 
 > **Note on agent variables:** The worker agent has its own environment variables (`NODE_ID`, `AGENT_LOG_LEVEL`, `AGENT_SHELL`, etc.) documented in `agent/README.md`. On first run, the agent prompts to create `.env` from `.env.example` in interactive terminals; in non-interactive contexts it uses documented defaults for optional settings and emits a consolidated `WARNING`. Required agent variables (`NODE_ID`, `SYNCTHING_ROOT`) always fail fast.
 
@@ -871,6 +877,9 @@ scientific-home-cluster/
 ├── frontend/              # React Dashboard (Vite + Tailwind) ✅ COMPLETE
 ├── shared/                # Shared code (schemas, utilities)
 ├── backend/               # API Server (FastAPI + SQLite) — COMPLETE
+│   ├── api/v1/            # REST endpoints (jobs, nodes, profiles, auth, syncthing, mcp)
+│   ├── mcp/               # MCP server (stdio + SSE/HTTP transports)
+│   └── profiles/          # Built-in job profiles (YAML)
 ├── agent/                 # Worker Node Agent (implemented)
 ├── cli/                   # User CLI (Typer) (stub)
 ├── backend/tests/         # Unit & integration tests
