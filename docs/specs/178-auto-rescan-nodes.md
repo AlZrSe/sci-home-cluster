@@ -250,7 +250,7 @@ Search for and remove any references to `POST /nodes/register` or similar HTTP n
 |---------|---------|-------------|
 | `SYNCTHING_RESCAN_INTERVAL_SECONDS` | 60 | Periodic full rescan interval |
 | `HEARTBEAT_CHECK_INTERVAL_SECONDS` | 30 | Existing: heartbeat monitor interval |
-| `HEARTBEAT_TIMEOUT_SECONDS` | 90 | Existing: node offline threshold |
+| `HEARTBEAT_TIMEOUT_SECONDS` | 300 | Existing: node offline threshold |
 
 The rescan interval (60s) is 2x the heartbeat interval (30s), ensuring at least 2 heartbeats per rescan cycle.
 

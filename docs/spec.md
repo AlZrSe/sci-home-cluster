@@ -66,7 +66,7 @@ src/
 | `/jobs/$jobId` | `JobDetailPage` | Live logs, metrics charts, job controls (retry/cancel/delete) | `useQuery(['job', id])`, `useQuery(['job-metrics', id])`, WebSocket stream |
 | `/nodes` | `NodesPage` | Node grid with status, specs, current job | `useQuery(['nodes'])` |
 | `/nodes/$nodeId` | `NodeDetailPage` | Hardware specs, GPU/CPU history, heartbeat timeline | `useQuery(['node', id])`, `useQuery(['node-metrics', id])` |
-| `/profiles` | `ProfilesPage` | Browse builtin/custom profiles, edit/create/delete | `useProfiles()` (localStorage only) |
+| `/profiles` | `ProfilesPage` | Browse builtin/custom profiles, edit/create/delete | `useProfiles()` (backend-first, localStorage fallback) |
 | `/profiles/new` | `NewProfilePage` | Create new profile | `useProfiles()` |
 | `/profiles/$profileId` | `EditProfilePage` | Edit existing profile | `useProfiles()` |
 | `/settings` | `SettingsPage` | API URL, token, polling, theme | `useSettings()` (localStorage) |
@@ -200,16 +200,23 @@ flow is blocked by CORS, which is a separate issue, not by this list.
 
 ---
 
-## Profiles System (localStorage Only)
+## Profiles System (backend-backed, localStorage fallback)
 
-**No backend calls** — entirely client-side.
+Profiles are now served by the backend from `backend/profiles/*.yaml` (issue #91) and
+fetched by the frontend with a built-in fallback (issue #181). Custom/override state
+is still kept client-side in localStorage, but the canonical list comes from the API.
 
-- **Storage key**: `shc.profiles`
+- **API**: `GET /api/v1/profiles` (and CRUD under `/api/v1/profiles/{id}`) — see `openapi.yaml`.
+- **Storage key**: `shc.profiles` (client-side overrides/hidden list only)
 - **Structure**: `{ custom: Profile[], overrides: Record<id, Profile>, hidden: string[] }`
-- **Built-in profiles** (9): VASP (std/GPU), LAMMPS, RMCProfile, GROMACS, Quantum ESPRESSO, CP2K, PyTorch
+- **Built-in profiles** (shipped in `backend/profiles/`): VASP (std/GPU/CPU-docker/GPU-docker),
+  LAMMPS, RMCProfile, GROMACS, Quantum ESPRESSO, CP2K, PyTorch, Monte Carlo,
+  sample-calc (smoke/CPU/CPU-purepython/GPU). See `backend/profiles/README.md` for the full list.
 - **Profile fields**: name, software, description, command, working_dir, resources (gpus/cpus/memory), paths (input/output), retry policy, env vars
 - **YAML preview**: Live preview in job submission (`jobs.new.tsx`) and profile editor
 - **Usage**: Profiles pre-fill job submission form via `?profile=<id>` search param
+- **Fallback**: When the backend is unreachable, the frontend falls back to its built-in
+  profile set (`.env.test` keeps `VITE_CLUSTER_BACKEND=mock`, which returns built-ins).
 
 ---
 

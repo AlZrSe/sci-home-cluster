@@ -218,9 +218,13 @@ Precedence: --flag > $ENV_VAR > nodes/agent.toml > default
 - **Job stuck RUNNING:** the process may have ignored SIGTERM; the agent
   escalates to SIGKILL after the grace period. Check agent logs for
   `tree_survived`.
-- **No logs:** log capture is issue #101; until then stdout/stderr go to the
-  agent's own stdout (capture in the service journal).
-- **No metrics:** metrics sampling is issue #102.
+- **No logs in the UI:** log capture is implemented (issue #101) via segment
+  files under `jobs/<job_id>/logs/`; if nothing appears, check the agent's own
+  stdout/service journal and Syncthing sync status in the LogViewer empty state.
+- **No metrics in the UI:** metrics sampling is implemented (issue #102) via
+  segment files under `jobs/<job_id>/metrics/` (or the node metrics dir); the
+  agent currently emits zero-valued sample placeholders until sensor collection
+  lands.
 - **Job never claimed / "pending job doesn't start":** another agent on the
   same Syncthing folder may be claiming it. Check `nodes/*.yaml` for other
   `node_id`s with recent heartbeats and `current_job_id` set. The agent
