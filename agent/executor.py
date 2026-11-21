@@ -302,6 +302,15 @@ def _apply_cpu_affinity(job_id: str, pid: int, requested: int) -> None:
     logger.info("pinned job %s to CPUs %s (pid %d)", job_id, cpus, pid)
 
 
+def _safe_write(writer: Any, line: Any) -> None:
+    """Write line to writer, silently ignoring any exception."""
+    try:
+        if writer is not None:
+            writer.write_line(line)
+    except Exception:
+        pass
+
+
 def _reader_thread(
     stream: Any,
     writer: BoundedLineWriter,
@@ -316,33 +325,14 @@ def _reader_thread(
             if not line:  # EOF
                 break
             writer.write_line(line)
-            if segment_writer is not None:
-                try:
-                    segment_writer.write_line(line)
-                except Exception:
-                    pass
-            if aggregated_writer is not None:
-                try:
-                    aggregated_writer.write_line(line)
-                except Exception:
-                    pass
+            _safe_write(segment_writer, line)
+            _safe_write(aggregated_writer, line)
     except Exception as e:
         # Keep the OS-level error in the log instead of dropping it.
         logger.warning("log reader thread error: %s", e)
-        try:
-            writer.write_line(e)
-        except Exception:
-            pass
-        if segment_writer is not None:
-            try:
-                segment_writer.write_line(e)
-            except Exception:
-                pass
-        if aggregated_writer is not None:
-            try:
-                aggregated_writer.write_line(e)
-            except Exception:
-                pass
+        _safe_write(writer, e)
+        _safe_write(segment_writer, e)
+        _safe_write(aggregated_writer, e)
 
 
 #: How long the stop may spend joining the stdout/stderr reader threads, at the
