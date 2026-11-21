@@ -18,7 +18,6 @@ import os
 import shutil
 import sys
 import selectors
-import subprocess
 from pathlib import Path
 from typing import Mapping, Sequence
 
@@ -26,6 +25,7 @@ from agent.config import (
     EXIT_CONFIG_ERROR,
     EXIT_INTERNAL_ERROR,
     EXIT_OK,
+    AgentSettings,
     ConfigError,
     build_settings,
 )
@@ -274,6 +274,50 @@ def _run_first_run_flow(
         return True
 
 
+def _check_existing_lock(node_id: str, lock_file: Path, current_pid: int) -> None:
+    """Check if an existing lock file indicates a running agent.
+
+    Exits with error if another agent with the same node_id is running.
+    """
+    if not lock_file.exists():
+        return
+
+    try:
+        content = lock_file.read_text().strip()
+        if not content:
+            return
+        parts = content.split()
+        locked_pid = int(parts[0]) if parts else 0
+    except (ValueError, IndexError):
+        return
+
+    if locked_pid <= 0 or locked_pid == current_pid:
+        return
+
+    try:
+        import psutil
+    except ImportError:
+        return
+
+    if not psutil.pid_exists(locked_pid):
+        return
+
+    try:
+        proc = psutil.Process(locked_pid)
+        cmdline = proc.cmdline()
+        if any("run_agent" in c or "run-agent" in c for c in cmdline):
+            msg = (
+                f"ERROR: Another agent is running with "
+                f"node_id={node_id} (PID {locked_pid}). "
+                f"Stop it first.\n"
+            )
+            sys.stderr.write(msg)
+            sys.stderr.flush()
+            sys.exit(1)
+    except (psutil.NoSuchProcess, psutil.AccessDenied):
+        pass
+
+
 def _check_single_agent_lock(node_id: str) -> None:
     """Ensure only one agent runs per node_id using a lock file.
 
@@ -281,9 +325,9 @@ def _check_single_agent_lock(node_id: str) -> None:
     If lock exists and process is alive, exits with error.
     Lock file is removed on normal exit.
     """
-    import tempfile
     import atexit
     import signal
+    import time
 
     # Get syncthing root from args or environment
     syncthing_root = _extract_syncthing_root_from_argv(sys.argv[1:]) or os.environ.get(
@@ -299,44 +343,9 @@ def _check_single_agent_lock(node_id: str) -> None:
     current_pid = os.getpid()
 
     # Check existing lock
-    if lock_file.exists():
-        try:
-            content = lock_file.read_text().strip()
-            if content:
-                parts = content.split()
-                locked_pid = int(parts[0]) if parts else 0
-                locked_time = float(parts[1]) if len(parts) > 1 else 0
-
-                # Check if the locked process is still alive
-                if locked_pid > 0:
-                    try:
-                        import psutil
-
-                        if psutil.pid_exists(locked_pid):
-                            proc = psutil.Process(locked_pid)
-                            # Verify it's an agent process
-                            try:
-                                cmdline = proc.cmdline()
-                                if any(
-                                    "run_agent" in c or "run-agent" in c
-                                    for c in cmdline
-                                ):
-                                    sys.stderr.write(
-                                        f"ERROR: Another agent is running with node_id={node_id} "
-                                        f"(PID {locked_pid}). Stop it first.\n"
-                                    )
-                                    sys.stderr.flush()
-                                    sys.exit(1)
-                            except (psutil.NoSuchProcess, psutil.AccessDenied):
-                                pass
-                    except ImportError:
-                        pass
-        except (ValueError, IndexError):
-            pass
+    _check_existing_lock(node_id, lock_file, current_pid)
 
     # Write our lock
-    import time
-
     lock_file.write_text(f"{current_pid} {time.time()}")
 
     # Register cleanup
@@ -357,6 +366,42 @@ def _check_single_agent_lock(node_id: str) -> None:
             signal.signal(sig, lambda s, f: (cleanup_lock(), sys.exit(0)))
         except (OSError, ValueError):
             pass
+
+
+def _warn_defaulted_fields(
+    settings: "AgentSettings", defaulted_fields: set[str]
+) -> None:
+    """Emit consolidated WARNING for optional settings that fell back to defaults."""
+    precedence_note = "Precedence: --flag > $ENV_VAR > nodes/agent.toml > default"
+    warning_lines = [
+        "WARNING: Using default configuration for the following settings "
+        "(override via CLI, env, or nodes/agent.toml):"
+    ]
+    env_var_map: dict[str, tuple[str, str | None]] = {
+        "LOG_LEVEL": ("AGENT_LOG_LEVEL", "--log-level"),
+        "SHELL": ("AGENT_SHELL", "--shell"),
+        "SHUTDOWN_GRACE_S": ("AGENT_SHUTDOWN_GRACE_S", None),
+        "FOLDER_WATCH_INTERVAL_S": ("AGENT_FOLDER_WATCH_INTERVAL_S", None),
+        "FOLDER_RETRY_MAX_S": ("AGENT_FOLDER_RETRY_MAX_S", None),
+        "WATCHER_LIVENESS_INTERVAL_S": ("AGENT_WATCHER_LIVENESS_INTERVAL_S", None),
+        "HEARTBEAT_INTERVAL_S": ("AGENT_HEARTBEAT_INTERVAL_S", None),
+        "HEARTBEAT_JITTER_S": ("AGENT_HEARTBEAT_JITTER_S", None),
+        "AGENT_STATE_DIR": ("AGENT_STATE_DIR", None),
+    }
+
+    for field in sorted(defaulted_fields):
+        env_var, cli_flag = env_var_map.get(field, (f"AGENT_{field}", None))
+        override_parts: list[str] = []
+        if cli_flag:
+            override_parts.append(cli_flag)
+        override_parts.append(f"${env_var}")
+        override_str = " or ".join(override_parts)
+        val = getattr(settings, field)
+        warning_lines.append(
+            f"  {field}={val} (default; override with {override_str})"
+        )
+    warning_lines.append(precedence_note)
+    logger.warning("\n".join(warning_lines))
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -399,40 +444,8 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     configure_logging(settings.LOG_LEVEL, settings.NODE_ID)
 
-    # Emit consolidated WARNING for any optional settings that fell back to defaults
     if defaulted_fields:
-        # Build the warning message with precedence order
-        precedence_note = "Precedence: --flag > $ENV_VAR > nodes/agent.toml > default"
-        warning_lines = [
-            "WARNING: Using default configuration for the following settings "
-            "(override via CLI, env, or nodes/agent.toml):"
-        ]
-        # Map field name to env var and CLI flag
-        env_var_map: dict[str, tuple[str, str | None]] = {
-            "LOG_LEVEL": ("AGENT_LOG_LEVEL", "--log-level"),
-            "SHELL": ("AGENT_SHELL", "--shell"),
-            "SHUTDOWN_GRACE_S": ("AGENT_SHUTDOWN_GRACE_S", None),
-            "FOLDER_WATCH_INTERVAL_S": ("AGENT_FOLDER_WATCH_INTERVAL_S", None),
-            "FOLDER_RETRY_MAX_S": ("AGENT_FOLDER_RETRY_MAX_S", None),
-            "WATCHER_LIVENESS_INTERVAL_S": ("AGENT_WATCHER_LIVENESS_INTERVAL_S", None),
-            "HEARTBEAT_INTERVAL_S": ("AGENT_HEARTBEAT_INTERVAL_S", None),
-            "HEARTBEAT_JITTER_S": ("AGENT_HEARTBEAT_JITTER_S", None),
-            "AGENT_STATE_DIR": ("AGENT_STATE_DIR", None),
-        }
-
-        for field in sorted(defaulted_fields):
-            env_var, cli_flag = env_var_map.get(field, (f"AGENT_{field}", None))
-            override_parts: list[str] = []
-            if cli_flag:
-                override_parts.append(cli_flag)
-            override_parts.append(f"${env_var}")
-            override_str = " or ".join(override_parts)
-            val = getattr(settings, field)
-            warning_lines.append(
-                f"  {field}={val} (default; override with {override_str})"
-            )
-        warning_lines.append(precedence_note)
-        logger.warning("\n".join(warning_lines))
+        _warn_defaulted_fields(settings, defaulted_fields)
 
     try:
         return asyncio.run(Agent(settings).run())
