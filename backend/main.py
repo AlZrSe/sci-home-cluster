@@ -365,8 +365,10 @@ async def http_exception_handler(request: Request, exc: StarletteHTTPException):
         exc.status_code, str(exc.detail)
     )
 
-    # Determine title based on status code
-    if exc.status_code == 401:
+    # Determine title: use APIError's title if provided, otherwise based on status code
+    if hasattr(exc, "title") and exc.title:
+        title = exc.title
+    elif exc.status_code == 401:
         title = "Unauthorized"
     elif exc.status_code == 404:
         title = "Not Found"

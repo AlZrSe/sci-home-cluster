@@ -397,9 +397,7 @@ def _warn_defaulted_fields(
         override_parts.append(f"${env_var}")
         override_str = " or ".join(override_parts)
         val = getattr(settings, field)
-        warning_lines.append(
-            f"  {field}={val} (default; override with {override_str})"
-        )
+        warning_lines.append(f"  {field}={val} (default; override with {override_str})")
     warning_lines.append(precedence_note)
     logger.warning("\n".join(warning_lines))
 
