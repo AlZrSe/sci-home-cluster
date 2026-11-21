@@ -64,11 +64,21 @@ def _load_profile_file(p: Path) -> Optional[ProfileSpec]:
     try:
         prof = read_yaml(str(p), ProfileSpec)
         import sys
-        print(f"DEBUG _load_profile_file: loaded {p.name} -> {prof.id}", file=sys.stderr, flush=True)
+
+        print(
+            f"DEBUG _load_profile_file: loaded {p.name} -> {prof.id}",
+            file=sys.stderr,
+            flush=True,
+        )
         return prof
     except Exception as e:
         import sys
-        print(f"DEBUG _load_profile_file: failed to load {p.name}: {e}", file=sys.stderr, flush=True)
+
+        print(
+            f"DEBUG _load_profile_file: failed to load {p.name}: {e}",
+            file=sys.stderr,
+            flush=True,
+        )
         return None
 
 
@@ -78,15 +88,28 @@ def list_profiles() -> List[ProfileSpec]:
     result: List[ProfileSpec] = []
     # builtins
     import sys
-    print(f"DEBUG list_profiles: _PROFILES_DIR={_PROFILES_DIR}, hidden={hidden}", file=sys.stderr, flush=True)
+
+    print(
+        f"DEBUG list_profiles: _PROFILES_DIR={_PROFILES_DIR}, hidden={hidden}",
+        file=sys.stderr,
+        flush=True,
+    )
     for p in sorted(_PROFILES_DIR.glob("*.yaml")):
         print(f"DEBUG list_profiles: found file {p.name}", file=sys.stderr, flush=True)
         if p.name.startswith("."):
-            print(f"DEBUG list_profiles: skipping dotfile {p.name}", file=sys.stderr, flush=True)
+            print(
+                f"DEBUG list_profiles: skipping dotfile {p.name}",
+                file=sys.stderr,
+                flush=True,
+            )
             continue
         prof = _load_profile_file(p)
         if prof is None:
-            print(f"DEBUG list_profiles: failed to load {p.name}", file=sys.stderr, flush=True)
+            print(
+                f"DEBUG list_profiles: failed to load {p.name}",
+                file=sys.stderr,
+                flush=True,
+            )
             continue
         if prof.id in hidden:
             print(f"DEBUG list_profiles: hidden {prof.id}", file=sys.stderr, flush=True)
@@ -97,10 +120,18 @@ def list_profiles() -> List[ProfileSpec]:
             o = _load_profile_file(overlay)
             if o is not None:
                 prof = o
-        print(f"DEBUG list_profiles: added {prof.id} (builtin={prof.builtin})", file=sys.stderr, flush=True)
+        print(
+            f"DEBUG list_profiles: added {prof.id} (builtin={prof.builtin})",
+            file=sys.stderr,
+            flush=True,
+        )
         result.append(prof)
     # Custom profiles stored as <id>.yaml in root.
-    print(f"DEBUG list_profiles: returning {len(result)} profiles", file=sys.stderr, flush=True)
+    print(
+        f"DEBUG list_profiles: returning {len(result)} profiles",
+        file=sys.stderr,
+        flush=True,
+    )
     return result
 
 

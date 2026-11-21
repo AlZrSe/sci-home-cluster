@@ -229,6 +229,14 @@ Precedence: --flag > $ENV_VAR > nodes/agent.toml > default
   (Windows) / `pkill -f run_agent` (Linux). The startup sweep and idle sweep
   (agent/loop.py) now claim PENDING jobs on disk at startup and on every
   event-drain tick when idle.
+- **Agent exits immediately with "Another agent is running":** a lock file
+  at `<SYNCTHING_ROOT>/.agent/<node_id>/agent.lock` indicates an agent is
+  already running. Check `ps aux | grep run_agent` (Linux) or
+  `Get-CimInstance Win32_Process -Filter "CommandLine LIKE '%run_agent%'"`
+  (Windows). If the process is dead, remove the lock file manually:
+  `rm <SYNCTHING_ROOT>/.agent/<node_id>/agent.lock`. The lock is created
+  on startup and removed on graceful shutdown (SIGTERM/atexit); it persists
+  on force-kill (SIGKILL) for safety.
 
 ## Transport
 

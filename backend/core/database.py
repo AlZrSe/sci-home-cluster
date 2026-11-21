@@ -217,7 +217,15 @@ async def run_migrations() -> None:
         # Run alembic as a subprocess - this avoids the threading issue entirely
         alembic_ini = Path(__file__).parent.parent / "alembic.ini"
         result = subprocess.run(
-            [sys.executable, "-m", "alembic", "-c", str(alembic_ini), "upgrade", "head"],
+            [
+                sys.executable,
+                "-m",
+                "alembic",
+                "-c",
+                str(alembic_ini),
+                "upgrade",
+                "head",
+            ],
             capture_output=True,
             text=True,
             cwd=Path(__file__).parent.parent,

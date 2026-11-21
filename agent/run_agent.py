@@ -18,6 +18,7 @@ import os
 import shutil
 import sys
 import selectors
+import subprocess
 from pathlib import Path
 from typing import Mapping, Sequence
 
@@ -273,6 +274,91 @@ def _run_first_run_flow(
         return True
 
 
+def _check_single_agent_lock(node_id: str) -> None:
+    """Ensure only one agent runs per node_id using a lock file.
+
+    Creates a lock file at <SYNCTHING_ROOT>/.agent/<node_id>.lock with our PID.
+    If lock exists and process is alive, exits with error.
+    Lock file is removed on normal exit.
+    """
+    import tempfile
+    import atexit
+    import signal
+
+    # Get syncthing root from args or environment
+    syncthing_root = _extract_syncthing_root_from_argv(sys.argv[1:]) or os.environ.get(
+        "SYNCTHING_ROOT"
+    )
+    if not syncthing_root:
+        return  # Can't check without syncthing_root
+
+    lock_dir = Path(syncthing_root) / ".agent" / node_id
+    lock_dir.mkdir(parents=True, exist_ok=True)
+    lock_file = lock_dir / "agent.lock"
+
+    current_pid = os.getpid()
+
+    # Check existing lock
+    if lock_file.exists():
+        try:
+            content = lock_file.read_text().strip()
+            if content:
+                parts = content.split()
+                locked_pid = int(parts[0]) if parts else 0
+                locked_time = float(parts[1]) if len(parts) > 1 else 0
+
+                # Check if the locked process is still alive
+                if locked_pid > 0:
+                    try:
+                        import psutil
+
+                        if psutil.pid_exists(locked_pid):
+                            proc = psutil.Process(locked_pid)
+                            # Verify it's an agent process
+                            try:
+                                cmdline = proc.cmdline()
+                                if any(
+                                    "run_agent" in c or "run-agent" in c
+                                    for c in cmdline
+                                ):
+                                    sys.stderr.write(
+                                        f"ERROR: Another agent is running with node_id={node_id} "
+                                        f"(PID {locked_pid}). Stop it first.\n"
+                                    )
+                                    sys.stderr.flush()
+                                    sys.exit(1)
+                            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                                pass
+                    except ImportError:
+                        pass
+        except (ValueError, IndexError):
+            pass
+
+    # Write our lock
+    import time
+
+    lock_file.write_text(f"{current_pid} {time.time()}")
+
+    # Register cleanup
+    def cleanup_lock():
+        try:
+            if lock_file.exists():
+                content = lock_file.read_text().strip()
+                parts = content.split()
+                if parts and int(parts[0]) == current_pid:
+                    lock_file.unlink()
+        except Exception:
+            pass
+
+    atexit.register(cleanup_lock)
+    # Also handle signals
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        try:
+            signal.signal(sig, lambda s, f: (cleanup_lock(), sys.exit(0)))
+        except (OSError, ValueError):
+            pass
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """Return the process exit code. See ``agent.config`` for the table."""
     args = list(sys.argv[1:] if argv is None else argv)
@@ -287,6 +373,13 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     # Determine if we're in first-run mode (for allowing defaults on optional vars)
     is_first_run, _ = _detect_first_run(args)
+
+    # Get node_id early to check for other agent copies with the same node_id
+    node_id = _extract_node_id_from_argv(args)
+    if not node_id:
+        node_id = os.environ.get("NODE_ID")
+    if node_id:
+        _check_single_agent_lock(node_id)
 
     try:
         settings, defaulted_fields = build_settings(args, first_run_ok=is_first_run)

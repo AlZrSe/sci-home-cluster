@@ -49,7 +49,12 @@ def publish(target: str) -> Path:
     # Copy sample calculation program to bin/ directory
     syncthing_bin = Path("syncthing") / "bin"
     syncthing_bin.mkdir(parents=True, exist_ok=True)
-    for sample_name in ("sample_calc.py", "sample_calc", "sample_calc.cmd", "README.md"):
+    for sample_name in (
+        "sample_calc.py",
+        "sample_calc",
+        "sample_calc.cmd",
+        "README.md",
+    ):
         src_sample = Path("samples") / sample_name
         if src_sample.is_file():
             shutil.copy2(src_sample, syncthing_bin / sample_name)
