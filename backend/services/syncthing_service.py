@@ -170,7 +170,9 @@ class SyncthingEventHandler(FileSystemEventHandler):
                     and relative_path.parts[3].endswith(".yaml")
                 ):
                     command_id = relative_path.parts[3][:-5]
-                    await self.service._process_command_file(job_id, command_id, file_path)
+                    await self.service._process_command_file(
+                        job_id, command_id, file_path
+                    )
                 else:
                     logger.debug(
                         "ignoring %s: not a recognised file under a job directory",
