@@ -841,6 +841,30 @@ paths:
               schema: {}
       security:
       - Authorization: []
+  /api/v1/syncthing/folders:
+    get:
+      tags:
+      - syncthing
+      summary: List Syncthing Folders
+      description: 'List all directories under the Syncthing root folder.
+
+        Returns a flat list of relative paths for client-side tree building.'
+      operationId: list_syncthing_folders_api_v1_syncthing_folders_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SyncthingFolderList'
+        '503':
+          description: Syncthing not configured
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+      security:
+      - Authorization: []
   /:
     get:
       summary: Root
@@ -1425,6 +1449,23 @@ components:
       - memory_gb
       title: Resources
       description: Computing resources required by a job.
+    SyncthingFolderList:
+      properties:
+        root:
+          type: string
+          title: Root
+          description: Absolute path to Syncthing root
+        folders:
+          items:
+            type: string
+          type: array
+          title: Folders
+          description: Relative directory paths under the root, sorted
+      type: object
+      required:
+      - root
+      title: SyncthingFolderList
+      description: List of directories under the Syncthing root.
     SyncthingStatus:
       properties:
         running:

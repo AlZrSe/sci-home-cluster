@@ -1193,8 +1193,8 @@ class TestTheApiContractIsUnchanged:
                 for code in op.get("responses", {})
                 if code == "503"
             )
-            # Allow 503 on syncthing status endpoint
-            allowed = ["/api/v1/syncthing/status"]
+            # Allow 503 on syncthing endpoints that require Syncthing to be configured
+            allowed = ["/api/v1/syncthing/status", "/api/v1/syncthing/folders"]
             unexpected = [p for p in documented if p not in allowed]
             assert unexpected == [], f"{source} documents a 503 for {unexpected}"
 
