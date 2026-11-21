@@ -84,6 +84,28 @@ cd sci-home-cluster
 git submodule update --init --recursive
 ```
 
+### Troubleshooting: "submodule ref error" / "reference is not a tree"
+
+The frontend is a git submodule tracking `AlZrSe/rendering-replicate` (Lovable-managed).
+That upstream rewrites its history from time to time, so a pinned commit can become
+unreachable. If `git clone --recurse-submodules` or `git submodule update` fails with
+`fatal: reference is not a tree: <sha>` / `did not contain <sha>`:
+
+```bash
+# 1. Make sure you are cloning with full history (not a shallow clone):
+git clone --recurse-submodules https://github.com/AlZrSe/sci-home-cluster.git
+
+# 2. If a previous (shallow or partial) clone left frontend/ empty:
+git submodule sync --recursive
+git submodule update --init --recursive --remote
+
+# 3. If the pinned commit is gone from upstream, reset the submodule to its tip:
+cd frontend && git fetch origin && git checkout origin/main && cd ..
+git add frontend && git commit -m "chore: bump frontend submodule to current tip"
+```
+
+> Do **not** use `--depth 1` / `--shallow-submodules` when cloning this repository.
+
 ### 2. Backend Setup
 ```bash
 # Create virtual environment
