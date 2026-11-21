@@ -1,3 +1,4 @@
 [submodule "frontend"]
 	path = frontend
 	url = https://github.com/AlZrSe/rendering-replicate.git
+	branch = main

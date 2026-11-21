@@ -247,6 +247,10 @@ jobs:
           # checkout leaves it empty and every step below fails on a missing
           # package.json.
           submodules: recursive
+          # Full history (not shallow): the recorded submodule commit may be
+          # an ancestor of the submodule's current tip, so a depth-1 clone can
+          # fail with "reference is not a tree" / "submodule ref error".
+          fetch-depth: 0
 
       - name: Set up Node ${{ env.NODE_VERSION }}
         uses: actions/setup-node@v4
@@ -778,6 +782,9 @@ jobs:
         uses: actions/checkout@v4
         with:
           submodules: true
+          # Full history so the pinned submodule commit is resolvable even
+          # when it is an ancestor of the submodule's current tip.
+          fetch-depth: 0
 
       - name: Set up Node ${{ env.NODE_VERSION }}
         uses: actions/setup-node@v4
